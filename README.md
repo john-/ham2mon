@@ -66,11 +66,11 @@ Example of reading from an IQ file:
 
 `w/q = Spectrum lower scale +/- 10 dB`
 
-`g/f = RF gain +/- 10 dB (G/F for +/- 1dB)`
+`g/f = RF gain (or 1st gain element) +/- 10 dB (G/F for +/- 1dB)`
 
-`u/y = IF Gain +/- 10 dB (U/Y for +/- 1dB)`
+`u/y = IF gain (or 2nd gain element) +/- 10 dB (U/Y for +/- 1dB)`
 
-`]/[ = BB Gain +/- 10 dB (}/{ for +/- 1dB)`
+`]/[ = BB gain (or 3rd gain element) +/- 10 dB (}/{ for +/- 1dB)`
 
 `s/a = Squelch +/- 1 dB`
 
@@ -123,6 +123,12 @@ Example of reading from an IQ file:
 
 `  -o BB_GAIN_DB, --bb_gain=BB_GAIN_DB`
 `                        Hardware BB gain in dB`
+
+`  -j LNA_GAIN_DB, --lna_gain=LNA_GAIN_DB`
+`                        Hardware LNA gain in dB`
+
+`  -k MIX_GAIN_DB, --mix_gain=MIX_GAIN_DB`
+`                        Hardware MIX gain in dB`
 
 `  -s SQUELCH_DB, --squelch=SQUELCH_DB`
 `                        Squelch in dB`
