@@ -149,9 +149,9 @@ def main():
     print("type_demod:          " + str(parser.type_demod))
     print("center_freq:         " + str(parser.center_freq))
     print("ask_samp_rate:       " + str(parser.ask_samp_rate))
-    print("gain_db:             " + str(parser.gain_db))
-    print("if_gain_db:          " + str(parser.if_gain_db))
-    print("bb_gain_db:          " + str(parser.bb_gain_db))
+    for gain in parser.gains:
+        #print(str(gain["value"]))
+        print('{0: <21}'.format(gain["name"] + " gain:") + str(gain["value"]))
     print("squelch_db:          " + str(parser.squelch_db))
     print("volume_db:           " + str(parser.volume_db))
     print("threshold_db:        " + str(parser.threshold_db))
