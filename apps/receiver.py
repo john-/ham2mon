@@ -604,7 +604,7 @@ def main():
     # Set frequency, gain, squelch, and volume
     center_freq = 144.5E6
     receiver.set_center_freq(center_freq)
-    receiver.set_gain(10)
+    receiver.src.set_gain(10.0, "RF")
     print("\n")
     print("Started %s at %.3f Msps" % (hw_args, receiver.samp_rate/1E6))
     print("RX at %.3f MHz with %d dB gain" % (receiver.center_freq/1E6,
