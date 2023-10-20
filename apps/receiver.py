@@ -414,7 +414,7 @@ class Receiver(gr.top_block):
 
         # Default values
         self.center_freq = 144E6
-        self.gain_db = 0
+        self.squelch_db = -60
         self.volume_db = 0
         audio_rate = 8000
 

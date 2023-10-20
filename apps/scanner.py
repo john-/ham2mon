@@ -358,10 +358,6 @@ def main():
     scanner.set_center_freq(parser.center_freq)
     print("\n")
     print("Started %s at %.3f Msps" % (hw_args, scanner.samp_rate/1E6))
-    print("RX at %.3f MHz with %d dB gain" % (scanner.center_freq/1E6,
-                                              scanner.gain_db))
-             
-    print("RX at %.3f MHz" % (scanner.center_freq/1E6))
     scanner.filter_and_set_gains(parser.gains)
     for gain in scanner.gains:
         print("gain %s at %d dB" % (gain["name"], gain["value"]))
