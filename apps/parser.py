@@ -56,7 +56,7 @@ class CLParser(object):
                           default=4E6,
                           help="Hardware ask sample rate in sps (1E6 minimum)")
 
-        parser.add_option("-g", "--gain", type="eng_float", dest="rf_gain_db",
+        parser.add_option("-g", "--gain", "--rf_gain",  type="eng_float", dest="rf_gain_db",
                           default=0, help="Hardware RF gain in dB")
 
         parser.add_option("-i", "--if_gain", type="eng_float", dest="if_gain_db",
