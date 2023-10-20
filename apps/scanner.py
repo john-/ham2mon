@@ -348,11 +348,11 @@ def main():
     record = parser.record
     lockout_file_name = parser.lockout_file_name
     priority_file_name = parser.priority_file_name
+    play = parser.play
     audio_bps = parser.audio_bps
-    #gains = parser.gains
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                       freq_correction, record, lockout_file_name,
-                      priority_file_name, audio_bps)
+                      priority_file_name, play, audio_bps)
 
     # Set frequency, gain, squelch, and volume
     scanner.set_center_freq(parser.center_freq)
