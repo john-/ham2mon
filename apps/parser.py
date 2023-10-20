@@ -60,13 +60,28 @@ class CLParser(object):
                           default=0, help="Hardware RF gain in dB")
 
         parser.add_option("-i", "--if_gain", type="eng_float", dest="if_gain_db",
-                          default=16, help="Hardware IF gain in dB or index (driver dependent)")
+                          default=16, help="Hardware IF gain in dB")
 
         parser.add_option("-o", "--bb_gain", type="eng_float", dest="bb_gain_db",
                           default=16, help="Hardware BB gain in dB")
 
-        parser.add_option("-j", "--lna_gain", type="eng_float", dest="lna_gain_db",
-                          default=8, help="Hardware LNA gain index")
+        parser.add_option("--lna_gain", type="eng_float", dest="lna_gain_db",
+                          default=8, help="Hardware LNA gain in dB")
+
+        parser.add_option("--att_gain", type="eng_float", dest="att_gain_db",
+                          default=8, help="Hardware ATT gain in dB")
+
+        parser.add_option("--lna_mix_bb_gain", type="eng_float", dest="lna_mix_bb_gain_db",
+                          default=8, help="Hardware LNA_MIX_BB gain in dB")
+
+        parser.add_option("--tia_gain", type="eng_float", dest="tia_gain_db",
+                          default=8, help="Hardware TIA gain in dB")
+
+        parser.add_option("--pga_gain", type="eng_float", dest="pga_gain_db",
+                          default=8, help="Hardware PGA gain in dB")
+
+        parser.add_option("--lb_gain", type="eng_float", dest="lb_gain_db",
+                          default=8, help="Hardware LB gain in dB")
 
         parser.add_option("-x", "--mix_gain", type="eng_float", dest="mix_gain_db",
                           default=5, help="Hardware MIX gain index")
@@ -118,11 +133,16 @@ class CLParser(object):
         self.center_freq = float(options.center_freq)
         self.ask_samp_rate = float(options.ask_samp_rate)
         self.gains = [
-            { "name": "RF", "value": float(options.rf_gain_db),  "query": "yes" },
-            { "name": "LNA","value": float(options.lna_gain_db), "query": "no" },
-            { "name": "MIX","value": float(options.mix_gain_db), "query": "no" },
-            { "name": "IF", "value": float(options.if_gain_db),  "query": "no" },
-            { "name": "BB", "value": float(options.bb_gain_db),  "query": "no" }
+            { "name": "RF", "value": float(options.rf_gain_db) },
+            { "name": "LNA","value": float(options.lna_gain_db) },
+            { "name": "MIX","value": float(options.mix_gain_db) },
+            { "name": "IF", "value": float(options.if_gain_db) },
+            { "name": "BB", "value": float(options.bb_gain_db) },
+            { "name": "ATT", "value": float(options.att_gain_db) },
+            { "name": "LNA_MIX_BB", "value": float(options.lna_mix_bb_gain_db) },
+            { "name": "TIA", "value": float(options.tia_gain_db) },
+            { "name": "PGA", "value": float(options.pga_gain_db) },
+            { "name": "LB", "value": float(options.lb_gain_db) }
         ]
         self.squelch_db = float(options.squelch_db)
         self.volume_db = float(options.volume_db)

@@ -540,8 +540,7 @@ class Receiver(gr.top_block):
         """
         for gain in gains:
             self.src.set_gain(gain["value"], gain["name"])
-            if gain["query"] == "yes":
-                gain["value"] = self.src.get_gain(gain["name"])
+            gain["value"] = self.src.get_gain(gain["name"])
         self.gains = gains
         return self.gains
 
