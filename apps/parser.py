@@ -56,7 +56,7 @@ class CLParser(object):
                           default=4E6,
                           help="Hardware ask sample rate in sps (1E6 minimum)")
 
-        parser.add_option("-g", "--gain", type="eng_float", dest="gain_db",
+        parser.add_option("-g", "--gain", "--rf_gain",  type="eng_float", dest="rf_gain_db",
                           default=0, help="Hardware RF gain in dB")
 
         parser.add_option("-i", "--if_gain", type="eng_float", dest="if_gain_db",
@@ -64,6 +64,27 @@ class CLParser(object):
 
         parser.add_option("-o", "--bb_gain", type="eng_float", dest="bb_gain_db",
                           default=16, help="Hardware BB gain in dB")
+
+        parser.add_option("--lna_gain", type="eng_float", dest="lna_gain_db",
+                          default=8, help="Hardware LNA gain in dB")
+
+        parser.add_option("--att_gain", type="eng_float", dest="att_gain_db",
+                          default=8, help="Hardware ATT gain in dB")
+
+        parser.add_option("--lna_mix_bb_gain", type="eng_float", dest="lna_mix_bb_gain_db",
+                          default=8, help="Hardware LNA_MIX_BB gain in dB")
+
+        parser.add_option("--tia_gain", type="eng_float", dest="tia_gain_db",
+                          default=8, help="Hardware TIA gain in dB")
+
+        parser.add_option("--pga_gain", type="eng_float", dest="pga_gain_db",
+                          default=8, help="Hardware PGA gain in dB")
+
+        parser.add_option("--lb_gain", type="eng_float", dest="lb_gain_db",
+                          default=8, help="Hardware LB gain in dB")
+
+        parser.add_option("-x", "--mix_gain", type="eng_float", dest="mix_gain_db",
+                          default=5, help="Hardware MIX gain index")
 
         parser.add_option("-s", "--squelch", type="eng_float",
                           dest="squelch_db", default=-60,
@@ -111,9 +132,18 @@ class CLParser(object):
         self.type_demod = int(options.type_demod)
         self.center_freq = float(options.center_freq)
         self.ask_samp_rate = float(options.ask_samp_rate)
-        self.gain_db = float(options.gain_db)
-        self.if_gain_db = float(options.if_gain_db)
-        self.bb_gain_db = float(options.bb_gain_db)
+        self.gains = [
+            { "name": "RF", "value": float(options.rf_gain_db) },
+            { "name": "LNA","value": float(options.lna_gain_db) },
+            { "name": "MIX","value": float(options.mix_gain_db) },
+            { "name": "IF", "value": float(options.if_gain_db) },
+            { "name": "BB", "value": float(options.bb_gain_db) },
+            { "name": "ATT", "value": float(options.att_gain_db) },
+            { "name": "LNA_MIX_BB", "value": float(options.lna_mix_bb_gain_db) },
+            { "name": "TIA", "value": float(options.tia_gain_db) },
+            { "name": "PGA", "value": float(options.pga_gain_db) },
+            { "name": "LB", "value": float(options.lb_gain_db) }
+        ]
         self.squelch_db = float(options.squelch_db)
         self.volume_db = float(options.volume_db)
         self.threshold_db = float(options.threshold_db)
@@ -139,9 +169,9 @@ def main():
     print("type_demod:          " + str(parser.type_demod))
     print("center_freq:         " + str(parser.center_freq))
     print("ask_samp_rate:       " + str(parser.ask_samp_rate))
-    print("gain_db:             " + str(parser.gain_db))
-    print("if_gain_db:          " + str(parser.if_gain_db))
-    print("bb_gain_db:          " + str(parser.bb_gain_db))
+    for gain in parser.gains:
+        #print(str(gain["value"]))
+        print('{0: <21}'.format(gain["name"] + " gain:") + str(gain["value"]))
     print("squelch_db:          " + str(parser.squelch_db))
     print("volume_db:           " + str(parser.volume_db))
     print("threshold_db:        " + str(parser.threshold_db))

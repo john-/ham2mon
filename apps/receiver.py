@@ -414,9 +414,6 @@ class Receiver(gr.top_block):
 
         # Default values
         self.center_freq = 144E6
-        self.gain_db = 0
-        self.if_gain_db = 16
-        self.bb_gain_db = 16
         self.squelch_db = -60
         self.volume_db = 0
         audio_rate = 8000
@@ -424,9 +421,6 @@ class Receiver(gr.top_block):
         # Setup the USRP source, or use the USRP sim
         self.src = osmosdr.source(args="numchan=" + str(1) + " " + hw_args)
         self.src.set_sample_rate(ask_samp_rate)
-        self.src.set_gain(self.gain_db)
-        self.src.set_if_gain(self.if_gain_db)
-        self.src.set_bb_gain(self.bb_gain_db)
         self.src.set_center_freq(self.center_freq)
         self.src.set_freq_corr(freq_correction)
 
@@ -522,32 +516,33 @@ class Receiver(gr.top_block):
         # Do this to account for slight hardware offsets
         self.center_freq = self.src.get_center_freq()
 
-    def set_gain(self, gain_db):
-        """Sets gain of RF hardware
-
-        Args:
-            gain_db (float): Hardware RF gain in dB
+    def get_gain_names(self):
+        """Get the list of suppoted gain elements
         """
-        self.src.set_gain(gain_db)
-        self.gain_db = self.src.get_gain()
+        return self.src.get_gain_names()
 
-    def set_if_gain(self, if_gain_db):
-        """Sets IF gain of RF hardware
-
+    def filter_and_set_gains(self, all_gains):
+        """Set the supported gains
         Args:
-            if_gain_db (float): Hardware IF gain in dB
+            all_gains (list of dictionary): Supported gains in dB
         """
-        self.src.set_if_gain(if_gain_db)
-        self.if_gain_db = if_gain_db
+        gains = []
+        names = self.get_gain_names()
+        for gain in all_gains:
+            if gain["name"] in names:
+                gains.append(gain)
+        return self.set_gains(gains)
 
-    def set_bb_gain(self, bb_gain_db):
-        """Sets BB gain of RF hardware
-
+    def set_gains(self, gains):
+        """Set all the gains
         Args:
-            bb_gain_db (float): Hardware BB gain in dB
+            gains (list of dictionary): Supported gains in dB
         """
-        self.src.set_bb_gain(bb_gain_db)
-        self.bb_gain_db = bb_gain_db
+        for gain in gains:
+            self.src.set_gain(gain["value"], gain["name"])
+            gain["value"] = self.src.get_gain(gain["name"])
+        self.gains = gains
+        return self.gains
 
     def set_squelch(self, squelch_db):
         """Sets squelch of all demodulators and clamps range
@@ -608,7 +603,7 @@ def main():
     # Set frequency, gain, squelch, and volume
     center_freq = 144.5E6
     receiver.set_center_freq(center_freq)
-    receiver.set_gain(10)
+    receiver.src.set_gain(10.0, "RF")
     print("\n")
     print("Started %s at %.3f Msps" % (hw_args, receiver.samp_rate/1E6))
     print("RX at %.3f MHz with %d dB gain" % (receiver.center_freq/1E6,

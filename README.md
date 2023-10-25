@@ -66,11 +66,11 @@ Example of reading from an IQ file:
 
 `w/q = Spectrum lower scale +/- 10 dB`
 
-`g/f = RF gain +/- 10 dB (G/F for +/- 1dB)`
+`g/f = 1st gain element +/- 10 dB (G/F for +/- 1dB)`
 
-`u/y = IF Gain +/- 10 dB (U/Y for +/- 1dB)`
+`u/y = 2nd gain element +/- 10 dB (U/Y for +/- 1dB)`
 
-`]/[ = BB Gain +/- 10 dB (}/{ for +/- 1dB)`
+`]/[ = 3rd gain element +/- 10 dB (}/{ for +/- 1dB)`
 
 `s/a = Squelch +/- 1 dB`
 
@@ -123,6 +123,8 @@ Example of reading from an IQ file:
 
 `  -o BB_GAIN_DB, --bb_gain=BB_GAIN_DB`
 `                        Hardware BB gain in dB`
+
+`  See "ham2mon.py --help" for all gain options`
 
 `  -s SQUELCH_DB, --squelch=SQUELCH_DB`
 `                        Squelch in dB`
