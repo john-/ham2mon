@@ -27,6 +27,7 @@ class CLParser(object):
         priority_file_name (string): Name of file with channels to for priority
         freq_correction (int): Frequency correction in ppm
         audio_bps (int): Audio bit depth in bps
+        min_duration (float): Minumum length of a recording in seconds
     """
     # pylint: disable=too-few-public-methods
     # pylint: disable=too-many-instance-attributes
@@ -123,6 +124,10 @@ class CLParser(object):
         parser.add_option("-b", "--bps", type="int", dest="audio_bps",
                           default=8,
                           help="Audio bit depth (bps)")
+        
+        parser.add_option("--min_recording", type="eng_float", dest="min_recording",
+                          default=0,
+                          help="Minumum length of a recording in seconds")
 
         options = parser.parse_args()[0]
         self.parser_args = parser.parse_args()[1]
@@ -153,6 +158,7 @@ class CLParser(object):
         self.priority_file_name = str(options.priority_file_name)
         self.freq_correction = int(options.freq_correction)
         self.audio_bps = int(options.audio_bps)
+        self.min_recording = float(options.min_recording)
 
 
 def main():
@@ -180,6 +186,7 @@ def main():
     print("priority_file_name:  " + str(parser.priority_file_name))
     print("freq_correction:     " + str(parser.freq_correction))
     print("audio_bps:           " + str(parser.audio_bps))
+    print("min_recording:       " + str(parser.min_recording))
 
 
 if __name__ == '__main__':

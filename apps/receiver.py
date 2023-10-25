@@ -14,7 +14,8 @@ from gnuradio import fft
 from gnuradio.fft import window
 from gnuradio import analog
 from gnuradio import audio
-import os
+import os, glob
+import errno
 import time
 import numpy as np
 from gnuradio.filter import pfb
@@ -40,8 +41,8 @@ class BaseTuner(gr.hier_block2):
         # Since the frequency (hence file name) changed, then close it
         self.blocks_wavfile_sink.close()
 
-        # If we never wrote any data to the wavfile sink, delete the file
-        self._delete_wavfile_if_empty()
+        # Move file from tmp directory if it is long enough
+        self._persist_wavfile()
 
         # Set the frequency
         self.freq_xlating_fir_filter_ccc.set_center_freq(center_freq)
@@ -56,28 +57,24 @@ class BaseTuner(gr.hier_block2):
             tstamp = "_" + str(int(time.time()))
             file_freq = (rf_center_freq + self.center_freq)/1E6
             file_freq = np.round(file_freq, 3)
-            file_name = 'wav/' + '{:.3f}'.format(file_freq) + tstamp + ".wav"
-
-            # Make sure the 'wav' directory exists
-            try:
-                os.mkdir('wav')
-            except OSError:  # will need to add something here for Win support
-                pass  # directory already exists
+            file_name = 'wav/tmp/' + '{:.3f}'.format(file_freq) + tstamp + ".wav"
 
         self.file_name = file_name
         self.blocks_wavfile_sink.open(self.file_name)
 
-    def _delete_wavfile_if_empty(self):
-        """Delete the current wavfile if it's empty."""
+    def _persist_wavfile(self):
+        """Save the current wavfile if duration long enough"""
         if (not self.record or not self.file_name or
                 self.file_name == '/dev/null'):
-            return
-
-        # If we never wrote any data to the wavfile sink, delete
-        # the (empty) wavfile
-        if os.stat(self.file_name).st_size in (44, 0):   # ugly hack
-            os.unlink(self.file_name)  # delete the file
-
+            return 
+ 
+        # Delete short wavfiles otherwise move ones that are long enough
+        min_size = 44 + self.audio_bps*1000 * self.min_recording
+        if os.stat(self.file_name).st_size <= min_size:
+            os.unlink(self.file_name)
+        else:
+            os.rename(self.file_name, self.file_name.replace('tmp/', ''))
+      
     def set_squelch(self, squelch_db):
         """Sets the threshold for both squelches
 
@@ -86,11 +83,25 @@ class BaseTuner(gr.hier_block2):
         """
         self.analog_pwr_squelch_cc.set_threshold(squelch_db)
 
+    def __init__(self):
+        # Make sure the 'wav' directory exists
+        try:
+            os.makedirs('wav/tmp')
+        except OSError as error:  # will need to add something here for Win support
+            if error.errno == errno.EEXIST:
+                # remove any existing wav files
+                for f in glob.glob('wav/tmp/*.wav'):
+                    os.unlink(f)
+            else:
+                raise
+
     def __del__(self):
         """Called when the object is destroyed."""
         # Make a best effort attempt to clean up our wavfile if it's empty
         try:
-            self._delete_wavfile_if_empty()
+            for f in glob.glob('wav/tmp/*.wav'):
+                os.unlink(f)
+            os.rmdir('wav/tmp') 
         except Exception:
             pass  # oh well, we're dying anyway
 
@@ -125,6 +136,7 @@ class TunerDemodNBFM(BaseTuner):
         audio_rate (float): Output audio sample rate in sps (8 kHz minimum)
         record (bool): Record audio to file if True
         audio_bps (int): Audio bit depth in bps (bits/samples)
+        min_recording (float): Minimum length of a recording in seconds
 
     Attributes:
         center_freq (float): Baseband center frequency in Hz
@@ -133,10 +145,12 @@ class TunerDemodNBFM(BaseTuner):
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, samp_rate=4E6, audio_rate=8000, record=True,
-                 audio_bps=8):
+                 audio_bps=8, min_recording=0):
         gr.hier_block2.__init__(self, "TunerDemodNBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
+        
+        super().__init__()
 
         # Default values
         self.center_freq = 0
@@ -144,6 +158,8 @@ class TunerDemodNBFM(BaseTuner):
         self.quad_demod_gain = 0.050
         self.file_name = "/dev/null"
         self.record = record
+        self.audio_bps = audio_bps
+        self.min_recording = min_recording
 
         # Decimation values for four stages of decimation
         decims = (5, int(samp_rate/1E6))
@@ -265,6 +281,7 @@ class TunerDemodAM(BaseTuner):
         audio_rate (float): Output audio sample rate in sps (8 kHz minimum)
         record (bool): Record audio to file if True
         audio_bps (int): Audio bit depth in bps (bits/samples)
+        min_recording (float): Minimum length of a recording in seconds
 
     Attributes:
         center_freq (float): Baseband center frequency in Hz
@@ -274,10 +291,12 @@ class TunerDemodAM(BaseTuner):
     # pylint: disable=too-many-locals
 
     def __init__(self, samp_rate=4E6, audio_rate=8000, record=True,
-                 audio_bps=blocks.FORMAT_PCM_U8):
+                 audio_bps=blocks.FORMAT_PCM_U8, min_recording=0):
         gr.hier_block2.__init__(self, "TunerDemodAM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
+
+        super().__init__()
 
         # Default values
         self.center_freq = 0
@@ -285,6 +304,7 @@ class TunerDemodAM(BaseTuner):
         self.agc_ref = 0.1
         self.file_name = "/dev/null"
         self.record = record
+        self.min_recording = min_recording
 
         # Decimation values for four stages of decimation
         decims = (5, int(samp_rate/1E6))
@@ -407,7 +427,7 @@ class Receiver(gr.top_block):
 
     def __init__(self, ask_samp_rate=4E6, num_demod=4, type_demod=0,
                  hw_args="uhd", freq_correction=0, record=True, play=True,
-                 audio_bps=8):
+                 audio_bps=8, min_recording=0):
 
         # Call the initialization method from the parent class
         gr.top_block.__init__(self, "Receiver")
@@ -479,11 +499,13 @@ class Receiver(gr.top_block):
             if type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
-                                                      audio_bps))
+                                                      audio_bps,
+                                                      min_recording))
             else:
                 self.demodulators.append(TunerDemodNBFM(self.samp_rate,
                                                         audio_rate, record,
-                                                        audio_bps))
+                                                        audio_bps,
+                                                        min_recording))
 
         if play:
             # Create an adder

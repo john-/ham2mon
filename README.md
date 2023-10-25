@@ -151,6 +151,9 @@ Example of reading from an IQ file:
 `  -b AUDIO_BPS, --bps=AUDIO_BPS`
 `                        Audio bit depth (bps)`
 
+`  --min_recording=SECONDS`
+`                        Minumum length of a recording in seconds`
+
 
 ## Description:
 The high speed signal processing is done in GR and the logic & control in Python. There are no custom GR blocks.  The GUI is written in Curses and is meant to be lightweight.  See the video for a basic overview.  I attempted to make the program very object oriented and “Pythonic”.  Each module runs on it's own for testing purposes.

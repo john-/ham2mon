@@ -56,7 +56,7 @@ class Scanner(object):
     def __init__(self, ask_samp_rate=4E6, num_demod=4, type_demod=0,
                  hw_args="uhd", freq_correction=0, record=True,
                  lockout_file_name="", priority_file_name="", play=True,
-                 audio_bps=8):
+                 audio_bps=8, min_recording=0):
 
         # Default values
         self.squelch_db = -60
@@ -76,7 +76,7 @@ class Scanner(object):
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
-                                       audio_bps)
+                                       audio_bps, min_recording)
 
         # Get the hardware sample rate and center frequency
         self.samp_rate = self.receiver.samp_rate
