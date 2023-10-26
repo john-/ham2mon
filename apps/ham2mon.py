@@ -55,9 +55,11 @@ def main(screen):
     freq_correction = PARSER.freq_correction
     audio_bps = PARSER.audio_bps
     min_recording = PARSER.min_recording
+    max_recording = PARSER.max_recording
     scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                            freq_correction, record, lockout_file_name,
-                           priority_file_name, play, audio_bps, min_recording)
+                           priority_file_name, play, audio_bps,
+                           min_recording, max_recording)
 
     # Set the paramaters
     scanner.set_center_freq(PARSER.center_freq)

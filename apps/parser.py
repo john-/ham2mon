@@ -129,6 +129,10 @@ class CLParser(object):
                           default=0,
                           help="Minumum length of a recording in seconds")
 
+        parser.add_option("--max_recording", type="eng_float", dest="max_recording",
+                          default=0,
+                          help="Maximum length of a recording in seconds")
+
         options = parser.parse_args()[0]
         self.parser_args = parser.parse_args()[1]
 
@@ -159,6 +163,7 @@ class CLParser(object):
         self.freq_correction = int(options.freq_correction)
         self.audio_bps = int(options.audio_bps)
         self.min_recording = float(options.min_recording)
+        self.max_recording = float(options.max_recording)
 
 
 def main():
@@ -187,6 +192,7 @@ def main():
     print("freq_correction:     " + str(parser.freq_correction))
     print("audio_bps:           " + str(parser.audio_bps))
     print("min_recording:       " + str(parser.min_recording))
+    print("max_recording:       " + str(parser.max_recording))
 
 
 if __name__ == '__main__':

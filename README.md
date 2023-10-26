@@ -14,6 +14,12 @@ http://youtu.be/BXptQFSV8E4
 
 ## Contributors:
 
+oneineight:
+- Python 3 support
+
+bkerler:
+- gnuradio 3.10/3.11 support
+
 m0mik:
 - Added HackRF IF/BB gain parameters
 - Added 1dB shift option to threshold and gain settings
@@ -93,67 +99,62 @@ Example of reading from an IQ file:
 `CTRL-C = quit`
 
 ## Help Menu
+```
+Usage: ham2mon.py [options]
 
-`Usage: ham2mon.py [options]`
-
-`Options:`
-
-`  -h, --help            show this help message and exit`
-
-`  -a HW_ARGS, --args=HW_ARGS`
-`                        Hardware args`
-
-`  -n NUM_DEMOD, --demod=NUM_DEMOD`
-`                        Number of demodulators`
-
-`  -d TYPE_DEMOD, --demodulator=TYPE_DEMOD`
-`                        Type of demodulator (0=NBFM, 1=AM)`
-
-`  -f CENTER_FREQ, --freq=CENTER_FREQ`
-`                        Hardware RF center frequency in Hz`
-
-`  -r ASK_SAMP_RATE, --rate=ASK_SAMP_RATE`
-`                        Hardware ask sample rate in sps (1E6 minimum)`
-
-`  -g GAIN_DB, --gain=GAIN_DB`
-`                        Hardware RF gain in dB`
-
-`  -i IF_GAIN_DB, --if_gain=IF_GAIN_DB`
-`                        Hardware IF gain in dB`
-
-`  -o BB_GAIN_DB, --bb_gain=BB_GAIN_DB`
-`                        Hardware BB gain in dB`
-
-`  See "ham2mon.py --help" for all gain options`
-
-`  -s SQUELCH_DB, --squelch=SQUELCH_DB`
-`                        Squelch in dB`
-
-`  -v VOLUME_DB, --volume=VOLUME_DB`
-`                        Volume in dB`
-
-`  -t THRESHOLD_DB, --threshold=THRESHOLD_DB`
-`                        Threshold in dB`
-
-`  -w, --write           Record (write) channels to disk`
-
-`  -l LOCKOUT_FILE_NAME, --lockout=LOCKOUT_FILE_NAME`
-`                        File of EOL delimited lockout channels in Hz`
-
-`  -p PRIORITY_FILE_NAME, --priority=PRIORITY_FILE_NAME`
-`                        File of EOL delimited priority channels in Hz`
-
-`  -c FREQ_CORRECTION, --correction=FREQ_CORRECTION`
-`                        Frequency correction in ppm`
-
-`  -m, --mute-audio      Mute audio from speaker (still allows recording)`
-
-`  -b AUDIO_BPS, --bps=AUDIO_BPS`
-`                        Audio bit depth (bps)`
-
-`  --min_recording=SECONDS`
-`                        Minumum length of a recording in seconds`
-
+Options:
+  -h, --help            show this help message and exit
+  -a HW_ARGS, --args=HW_ARGS
+                        Hardware args
+  -n NUM_DEMOD, --demod=NUM_DEMOD
+                        Number of demodulators
+  -d TYPE_DEMOD, --demodulator=TYPE_DEMOD
+                        Type of demodulator (0=NBFM, 1=AM)
+  -f CENTER_FREQ, --freq=CENTER_FREQ
+                        Hardware RF center frequency in Hz
+  -r ASK_SAMP_RATE, --rate=ASK_SAMP_RATE
+                        Hardware ask sample rate in sps (1E6 minimum)
+  -g RF_GAIN_DB, --gain=RF_GAIN_DB, --rf_gain=RF_GAIN_DB
+                        Hardware RF gain in dB
+  -i IF_GAIN_DB, --if_gain=IF_GAIN_DB
+                        Hardware IF gain in dB
+  -o BB_GAIN_DB, --bb_gain=BB_GAIN_DB
+                        Hardware BB gain in dB
+  --lna_gain=LNA_GAIN_DB
+                        Hardware LNA gain in dB
+  --att_gain=ATT_GAIN_DB
+                        Hardware ATT gain in dB
+  --lna_mix_bb_gain=LNA_MIX_BB_GAIN_DB
+                        Hardware LNA_MIX_BB gain in dB
+  --tia_gain=TIA_GAIN_DB
+                        Hardware TIA gain in dB
+  --pga_gain=PGA_GAIN_DB
+                        Hardware PGA gain in dB
+  --lb_gain=LB_GAIN_DB  Hardware LB gain in dB
+  -x MIX_GAIN_DB, --mix_gain=MIX_GAIN_DB
+                        Hardware MIX gain index
+  -s SQUELCH_DB, --squelch=SQUELCH_DB
+                        Squelch in dB
+  -v VOLUME_DB, --volume=VOLUME_DB
+                        Volume in dB
+  -t THRESHOLD_DB, --threshold=THRESHOLD_DB
+                        Threshold in dB
+  -w, --write           Record (write) channels to disk
+  -l LOCKOUT_FILE_NAME, --lockout=LOCKOUT_FILE_NAME
+                        File of EOL delimited lockout channels in Hz
+  -p PRIORITY_FILE_NAME, --priority=PRIORITY_FILE_NAME
+                        File of EOL delimited priority channels in Hz
+  -c FREQ_CORRECTION, --correction=FREQ_CORRECTION
+                        Frequency correction in ppm
+  -m, --mute-audio      Mute audio from speaker (still allows recording)
+  -b AUDIO_BPS, --bps=AUDIO_BPS
+                        Audio bit depth (bps)
+  --min_recording=MIN_RECORDING
+                        Minumum length of a recording in seconds
+  --max_recording=MAX_RECORDING
+                        Maximum length of a recording in seconds
+```
+Note: The available gains are hardware specific.  The user interface will list the gains availble based on hardware option supplied to ham2mon.
 
 ## Description:
 The high speed signal processing is done in GR and the logic & control in Python. There are no custom GR blocks.  The GUI is written in Curses and is meant to be lightweight.  See the video for a basic overview.  I attempted to make the program very object oriented and “Pythonic”.  Each module runs on it's own for testing purposes.
