@@ -158,7 +158,8 @@ class Scanner(object):
         # Stop any long running modulators
         if self.max_recording > 0:
             for demodulator in self.receiver.demodulators:
-                if (time.time() - demodulator.time_stamp >= self.max_recording):
+                if (demodulator.center_freq != 0) and \
+                    (time.time() - demodulator.time_stamp >= self.max_recording):
                     demodulator.set_center_freq(0, self.center_freq)
 
         # Add new channels to demodulators
