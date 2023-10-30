@@ -172,13 +172,15 @@ class ChannelWindow(object):
         self.screen = screen
 
         # Create a window object in the bottom half of the screen
-        # Make it about 1/3 the screen width
+        # Make it about 1/4 the screen width
         # Place on left side and to the right of the border
         screen_dims = screen.getmaxyx()
-        height = int(screen_dims[0]/2.0)-2
-        width = int(screen_dims[1]/3.0)-1
-        self.win = curses.newwin(height, width, height + 3, 1)
+        spectrum_height = int(screen_dims[0]/2.0)
+        height = screen_dims[0] - spectrum_height - 2
+        width = int(screen_dims[1]/4.0)
+        self.win = curses.newwin(height, width, screen_dims[0] - height - 1, 1)
         self.dims = self.win.getmaxyx()
+
 
     def draw_channels(self, gui_tuned_channels):
         """Draws tuned channels list
@@ -232,9 +234,10 @@ class LockoutWindow(object):
         # Make it about 1/4 the screen width
         # Place on left side and to the right of the border
         screen_dims = screen.getmaxyx()
-        height = int(screen_dims[0]/2.0)-2
-        width = int(screen_dims[1]/4.0)-5
-        self.win = curses.newwin(height, width, height + 3, 26)
+        spectrum_height = int(screen_dims[0]/2.0)
+        height = screen_dims[0] - spectrum_height - 2
+        width = int(screen_dims[1]/4.0)
+        self.win = curses.newwin(height, width, screen_dims[0] - height - 1, width+1)
         self.dims = self.win.getmaxyx()
 
     def draw_channels(self, gui_lockout_channels):
@@ -332,12 +335,14 @@ class RxWindow(object):
         self.priority_file_name = ""
 
         # Create a window object in the bottom half of the screen
-        # Make it about 1/3 the screen width
+        # Make it about 1/2 the screen width
         # Place on right side and to the left of the border
         screen_dims = screen.getmaxyx()
-        height = int(screen_dims[0]/2.0)-2
-        width = int(screen_dims[1]/2.0)-2
-        self.win = curses.newwin(height, width, height + 3,
+        spectrum_height = int(screen_dims[0]/2.0)
+        height = screen_dims[0] - spectrum_height - 2
+        # subtract the channel and lockout widths
+        width = screen_dims[1] - 2 * int(screen_dims[1]/4.0) - 2
+        self.win = curses.newwin(height, width, screen_dims[0] - height - 1,
                                  int(screen_dims[1]-width-1))
         self.dims = self.win.getmaxyx()
 
@@ -365,12 +370,15 @@ class RxWindow(object):
         self.win.addnstr(index+2, 1, text, 15)
         text = "AF Vol  (dB)  : "
         self.win.addnstr(index+3, 1, text, 15)
-        text = "Record        : "
-        self.win.addnstr(index+4, 1, text, 15)
-        text = "Demod Type    : "
-        self.win.addnstr(index+5, 1, text, 15)
-        text = "Files         : "
-        self.win.addnstr(index+6, 1, text, 15)
+
+        text = "Record    : "
+        self.win.addnstr(1, 28, text, 15)
+        text = "Demod Type: "
+        self.win.addnstr(2, 28, text, 15)
+        text = "Lockout   : "
+        self.win.addnstr(3, 28, text, 15)
+        text = "Priority  : "
+        self.win.addnstr(4, 28, text, 15)
 
         # Draw the receiver info suffix fields
         if self.freq_entry != 'None':
@@ -389,12 +397,15 @@ class RxWindow(object):
         self.win.addnstr(index+2, 17, text, 8, curses.color_pair(5))
         text = str(self.volume_db)
         self.win.addnstr(index+3, 17, text, 8, curses.color_pair(5))
+
         text = str(self.record)
-        self.win.addnstr(index+4, 17, text, 8)
+        self.win.addnstr(1, 40, text, 8)
         text = str(self.type_demod)
-        self.win.addnstr(index+5, 17, text, 8)
-        text = str(self.lockout_file_name) + " " + str(self.priority_file_name)
-        self.win.addnstr(index+6, 17, text, 20)
+        self.win.addnstr(2, 40, text, 8)
+        text = str(self.lockout_file_name)
+        self.win.addnstr(3, 40, text, 20)
+        text = str(self.priority_file_name)
+        self.win.addnstr(4, 40, text, 20)
 
         # Hide cursor
         self.win.leaveok(1)
@@ -467,7 +478,7 @@ class RxWindow(object):
             # build up frequency from 1-9 and '.'
             self.freq_entry = self.freq_entry + chr(keyb)
             return False
-        elif keyb == curses.KEY_BACKSPACE:  # BKSP
+        elif keyb == curses.KEY_BACKSPACE:
             self.freq_entry = self.freq_entry[:-1]
             return False
         else:
@@ -557,8 +568,6 @@ class RxWindow(object):
 def setup_screen(screen):
     """Sets up screen
     """
-    # Set screen to getch() is non-blocking
-    screen.nodelay(1)
 
     # Define some colors
     curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
