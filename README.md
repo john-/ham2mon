@@ -183,7 +183,7 @@ Logging events are written to `ham2mon.log`.
 ## Audio Classification
 The classification is not 100% accurate.  There will be both false positives and negatives.  It should be used for entertainment purposes only!
 
-Recorded audio can be classifed using a pre-trained model.  The model must be present and the tensorflow python module must be installed.  On startup, ham2mon will check these dependencies and enable classification if they are met.
+Recorded audio can be classified using a pre-trained model.  The model must be present and the tensorflow python module must be installed.  On startup, ham2mon will check these dependencies and enable classification if they are met.
 
 The command line options (--voice, --data, and --skip) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode ("-w") will be automatically enabled.
 
