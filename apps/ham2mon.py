@@ -10,9 +10,9 @@ import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper
 import cursesgui
 import parser
-import time
 import asyncio
-#import logging
+import logging
+from os.path import realpath, dirname
 
 import _curses
 
@@ -69,6 +69,7 @@ class MyDisplay():
         self.rxwin.type_demod = PARSER.type_demod
         self.rxwin.lockout_file_name = self.scanner.lockout_file_name
         self.rxwin.priority_file_name = self.scanner.priority_file_name
+        self.rxwin.classifier_params = self.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
    
     async def cycle(self):
@@ -102,10 +103,14 @@ class MyDisplay():
         audio_bps = PARSER.audio_bps
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
+        self.classifier_params = { 'V': PARSER.voice,
+                                   'D': PARSER.data,
+                                   'S': PARSER.skip
+                                 }
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                             freq_correction, record, lockout_file_name,
                             priority_file_name, play, audio_bps,
-                            min_recording, max_recording)
+                            min_recording, max_recording, self.classifier_params)
 
         # Set the paramaters
         scanner.set_center_freq(PARSER.center_freq)
@@ -114,7 +119,6 @@ class MyDisplay():
         scanner.set_threshold(PARSER.threshold_db)
 
         return scanner
-
 
     def handle_char(self, keyb: int) -> None:
         # Send keystroke to spectrum window and update scanner if True
@@ -153,8 +157,9 @@ def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
 
 if __name__ == '__main__':
-    #logging.basicConfig(filename=f'{__file__}.log', level=logging.DEBUG)
-    #logging.info('Started')
+    dir = realpath(dirname(__file__))
+    logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
+        level=logging.DEBUG, format='%(asctime)s %(message)s')
 
     try:
         # Do this since curses wrapper won't let parser write to screen

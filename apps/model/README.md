@@ -1,0 +1,1 @@
+This directory to contain the pre-trained model named "model_1.tflite"

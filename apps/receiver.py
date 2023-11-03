@@ -19,12 +19,27 @@ import errno
 import time
 import numpy as np
 from gnuradio.filter import pfb
+import classification
+import logging
 
 class BaseTuner(gr.hier_block2):
     """Some base methods that are the same between the known tuner types.
 
     See TunerDemodNBFM and TunerDemodAM for better documentation.
     """
+
+    def __init__(self, classify=False):
+        self.classify = classify
+        # Make sure the 'wav' directory exists
+        try:
+            os.makedirs('wav/tmp')
+        except OSError as error:  # will need to add something here for Win support
+            if error.errno == errno.EEXIST:
+                # remove any existing wav files
+                for f in glob.glob('wav/tmp/*.wav'):
+                    os.unlink(f)
+            else:
+                raise
 
     def set_center_freq(self, center_freq, rf_center_freq):
         """Sets baseband center frequency and file name
@@ -41,7 +56,7 @@ class BaseTuner(gr.hier_block2):
         # Since the frequency (hence file name) changed, then close it
         self.blocks_wavfile_sink.close()
 
-        # Move file from tmp directory if it is long enough
+        # Remove short recordings, classify and move from tmp directory
         self._persist_wavfile()
 
         # Set the frequency
@@ -51,31 +66,46 @@ class BaseTuner(gr.hier_block2):
         # Set the file name
         if self.center_freq == 0 or not self.record:
             # If tuner at zero Hz, or record false, then file name to /dev/null
-            file_name = "/dev/null"
-            tstamp = 0
+            self.file_name = "/dev/null"
+            self.time_stamp = 0
         else:
             # Otherwise use frequency and time stamp for file name
-            tstamp =time.time()
-            file_freq = (rf_center_freq + self.center_freq)/1E6
-            file_freq = np.round(file_freq, 3)
-            file_name = 'wav/tmp/' + '{:.3f}'.format(file_freq) + "_" + str(int(tstamp)) + ".wav"
+            self.time_stamp =time.time()
+            self.file_freq = (rf_center_freq + self.center_freq)/1E6
+            self.file_freq = np.round(self.file_freq, 3)
+            self.file_name = 'wav/tmp/' + '{:.3f}'.format(self.file_freq) + "_" + str(int(self.time_stamp)) + ".wav"
 
-        self.file_name = file_name
         self.blocks_wavfile_sink.open(self.file_name)
-        self.time_stamp = tstamp
 
     def _persist_wavfile(self):
-        """Save the current wavfile if duration long enough"""
+        """Save the current wavfile if duration long enough and
+           classification matches user's requirement
+        """
         if (not self.record or not self.file_name or
                 self.file_name == '/dev/null'):
             return 
  
-        # Delete short wavfiles otherwise move ones that are long enough
+        # Delete short wavfiles
         min_size = 44 + self.audio_bps*1000 * self.min_recording
         if os.stat(self.file_name).st_size <= min_size:
             os.unlink(self.file_name)
-        else:
+            return
+
+        # If not classifying then move from tmp directory
+        if not self.classify:
             os.rename(self.file_name, self.file_name.replace('tmp/', ''))
+            return
+
+        # If user wants file of this classification
+        # then move from tmp directory and rename
+        is_wanted = self.classify.is_wanted(self.file_name)
+        if  is_wanted:
+            new_name = 'wav/' + '{:.3f}'.format(self.file_freq) + "_" + \
+                is_wanted + "_" + str(int(self.time_stamp)) + ".wav"
+            os.rename(self.file_name, new_name)
+        else:
+            os.unlink(self.file_name)
+            return
       
     def set_squelch(self, squelch_db):
         """Sets the threshold for both squelches
@@ -84,18 +114,6 @@ class BaseTuner(gr.hier_block2):
             squelch_db (float): Squelch in dB
         """
         self.analog_pwr_squelch_cc.set_threshold(squelch_db)
-
-    def __init__(self):
-        # Make sure the 'wav' directory exists
-        try:
-            os.makedirs('wav/tmp')
-        except OSError as error:  # will need to add something here for Win support
-            if error.errno == errno.EEXIST:
-                # remove any existing wav files
-                for f in glob.glob('wav/tmp/*.wav'):
-                    os.unlink(f)
-            else:
-                raise
 
     def __del__(self):
         """Called when the object is destroyed."""
@@ -147,12 +165,12 @@ class TunerDemodNBFM(BaseTuner):
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, samp_rate=4E6, audio_rate=8000, record=True,
-                 audio_bps=8, min_recording=0):
+                 audio_bps=8, min_recording=0, classify=False):
         gr.hier_block2.__init__(self, "TunerDemodNBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
         
-        super().__init__()
+        super().__init__(classify)
 
         # Default values
         self.center_freq = 0
@@ -293,12 +311,13 @@ class TunerDemodAM(BaseTuner):
     # pylint: disable=too-many-locals
 
     def __init__(self, samp_rate=4E6, audio_rate=8000, record=True,
-                 audio_bps=blocks.FORMAT_PCM_U8, min_recording=0):
+                 audio_bps=8, min_recording=0,
+                 classify=False):
         gr.hier_block2.__init__(self, "TunerDemodAM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__()
+        super().__init__(classify)
 
         # Default values
         self.center_freq = 0
@@ -306,6 +325,7 @@ class TunerDemodAM(BaseTuner):
         self.agc_ref = 0.1
         self.file_name = "/dev/null"
         self.record = record
+        self.audio_bps = audio_bps
         self.min_recording = min_recording
 
         # Decimation values for four stages of decimation
@@ -429,7 +449,8 @@ class Receiver(gr.top_block):
 
     def __init__(self, ask_samp_rate=4E6, num_demod=4, type_demod=0,
                  hw_args="uhd", freq_correction=0, record=True, play=True,
-                 audio_bps=8, min_recording=0):
+                 audio_bps=8, min_recording=0,
+                 classifier_params={'V':False,'D':False,'S':False }):
 
         # Call the initialization method from the parent class
         gr.top_block.__init__(self, "Receiver")
@@ -492,6 +513,12 @@ class Receiver(gr.top_block):
                      fft_vcc, complex_to_mag_squared,
                      integrate_ff, self.probe_signal_vf)
 
+        try:
+          classifier = classification.Classifier(classifier_params, audio_rate)
+        except Exception as error:
+            logging.info(f'classification disabled: {error}')
+            classifier = False
+
         # -----------Flow for Demod--------------
 
         # Create N parallel demodulators as a list of objects
@@ -502,12 +529,14 @@ class Receiver(gr.top_block):
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
                                                       audio_bps,
-                                                      min_recording))
+                                                      min_recording,
+                                                      classifier))
             else:
                 self.demodulators.append(TunerDemodNBFM(self.samp_rate,
                                                         audio_rate, record,
                                                         audio_bps,
-                                                        min_recording))
+                                                        min_recording,
+                                                        classifier))
 
         if play:
             # Create an adder
@@ -609,16 +638,19 @@ def main():
     """
 
     # Create receiver object
-    ask_samp_rate = 4E6
+    ask_samp_rate = 3E6
     num_demod = 4
     type_demod = 0
-    hw_args = "uhd"
+    hw_args = "airspy"
     freq_correction = 0
     record = False
-    play = True
+    play = False
     audio_bps = 8
+    min_recording=1.0
+    classifier_params={'V':False,'D':False,'S':False }
     receiver = Receiver(ask_samp_rate, num_demod, type_demod, hw_args,
-                        freq_correction, record, play, audio_bps)
+                        freq_correction, record, play, audio_bps,
+                        min_recording, classifier_params)
 
     # Start the receiver and wait for samples to accumulate
     receiver.start()
@@ -627,11 +659,11 @@ def main():
     # Set frequency, gain, squelch, and volume
     center_freq = 144.5E6
     receiver.set_center_freq(center_freq)
-    receiver.src.set_gain(10.0, "RF")
+    receiver.src.set_gain(10.0, "LNA")
     print("\n")
     print("Started %s at %.3f Msps" % (hw_args, receiver.samp_rate/1E6))
     print("RX at %.3f MHz with %d dB gain" % (receiver.center_freq/1E6,
-                                              receiver.gain_db))
+                                              receiver.src.get_gain("LNA")))
     receiver.set_squelch(-60)
     receiver.set_volume(0)
     print("%d demods of type %d at %d dB squelch and %d dB volume" % \

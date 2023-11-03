@@ -333,6 +333,7 @@ class RxWindow(object):
         self.record = True
         self.lockout_file_name = ""
         self.priority_file_name = ""
+        self.classifier_params = None
 
         # Create a window object in the bottom half of the screen
         # Make it about 1/2 the screen width
@@ -398,7 +399,12 @@ class RxWindow(object):
         text = str(self.volume_db)
         self.win.addnstr(index+3, 17, text, 8, curses.color_pair(5))
 
-        text = str(self.record)
+        text = ''
+        for key in self.classifier_params.keys():
+            if self.classifier_params[key]:
+                text = text + key
+        if text == '':
+            text = str(self.record)
         self.win.addnstr(1, 40, text, 8)
         text = str(self.type_demod)
         self.win.addnstr(2, 40, text, 8)
