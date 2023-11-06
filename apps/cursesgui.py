@@ -53,6 +53,7 @@ class SpectrumWindow(object):
             1.0E+00 draws 10 rows
             1.0E+01 draws 10 rows
         """
+
         # Keep min_db to 10 dB below max_db
         if self.min_db > (self.max_db - 10):
             self.min_db = self.max_db - 10
@@ -86,16 +87,30 @@ class SpectrumWindow(object):
         pos_y = pos_y.astype(int)
 
          # Clear previous contents, draw border, and title
-        self.win.clear()
+        self.win.erase()
         self.win.border(0)
-        self.win.addnstr(0, int(self.dims[1]/2-4), "SPECTRUM", 8,
-                         curses.color_pair(4))
+        self.win.attron(curses.color_pair(6))
+        self.win.addnstr(0, int(self.dims[1]/2-6), "SPECTRUM", 8,
+                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+
+        # Generate threshold line, clip to window, and convert to int
+        pos_yt = (self.threshold_db - self.max_db) * scale
+        pos_yt = np.clip(pos_yt, min_y, max_y-1)
+        pos_yt = pos_yt.astype(int)
 
         # Draw the bars
         for pos_x in range(len(pos_y)):
             # Invert the y fill since we want bars
             # Offset x (column) by 1 so it does not start on the border
-            self.win.vline(pos_y[pos_x], pos_x+1, "*", max_y-pos_y[pos_x])
+            if pos_y[pos_x] > pos_yt:
+                # bar is below threshold, use low value color
+                self.win.vline(pos_y[pos_x], pos_x+1, "-", max_y-pos_y[pos_x],curses.color_pair(3) | curses.A_BOLD)
+            elif pos_y[pos_x] <= min_y:
+                # bar is above max (clipped to min y), use max value color
+                self.win.vline(pos_y[pos_x], pos_x+1, "+", max_y-pos_y[pos_x],curses.color_pair(1) | curses.A_BOLD)
+            else:
+                # bar is between max value and threshold, use threshold color
+                self.win.vline(pos_y[pos_x], pos_x+1, "*", max_y-pos_y[pos_x],curses.color_pair(2) | curses.A_BOLD)
 
         # Draw the max_db and min_db strings
         string = ">" + "%+03d" % self.max_db
@@ -105,21 +120,16 @@ class SpectrumWindow(object):
         self.win.addnstr(max_y, 1 + self.dims[1] - self.chars, string,
                          self.chars, curses.color_pair(3))
 
-        # Generate threshold line, clip to window, and convert to int
-        pos_yt = (self.threshold_db - self.max_db) * scale
-        pos_yt = np.clip(pos_yt, min_y, max_y-1)
-        pos_yt = pos_yt.astype(int)
-
         # Draw the theshold line
         # x=1 start to account for left border
-        self.win.hline(pos_yt, 1, "-", len(pos_y))
+        self.win.hline(pos_yt, 1, "-", len(pos_y), curses.color_pair(2))
 
         # Draw the theshold string
         string = ">" + "%+03d" % self.threshold_db
         self.win.addnstr(pos_yt, (1 + self.dims[1] - self.chars), string,
                          self.chars, curses.color_pair(2))
 
-       # Hide cursor
+        # Hide cursor
         self.win.leaveok(1)
 
         # Update virtual window
@@ -148,13 +158,13 @@ class SpectrumWindow(object):
             self.threshold_db -= 1
             return True
         elif keyb == ord('p'):
-            self.max_db += 10
+            self.max_db += 5
         elif keyb == ord('o'):
-            self.max_db -= 10
+            self.max_db -= 5
         elif keyb == ord('w'):
-            self.min_db += 10
+            self.min_db += 5
         elif keyb == ord('q'):
-            self.min_db -= 10
+            self.min_db -= 5
         else:
             pass
         return False
@@ -182,7 +192,7 @@ class ChannelWindow(object):
         self.dims = self.win.getmaxyx()
 
 
-    def draw_channels(self, gui_tuned_channels):
+    def draw_channels(self, gui_tuned_channels, gui_active_channels):
         """Draws tuned channels list
 
         Args:
@@ -190,10 +200,11 @@ class ChannelWindow(object):
         """
 
         # Clear previous contents, draw border, and title
-        self.win.clear()
+        self.win.erase()
         self.win.border(0)
-        self.win.addnstr(0, int(self.dims[1]/2-4), "CHANNELS", 8,
-                         curses.color_pair(4))
+        self.win.attron(curses.color_pair(6))
+        self.win.addnstr(0, int(self.dims[1]/4), "CHANNELS", 8,
+                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
         # Limit the displayed channels to no more than two rows
         max_length = 2*(self.dims[0]-2)
@@ -202,15 +213,28 @@ class ChannelWindow(object):
         else:
             pass
 
+        active_channels = set(gui_active_channels)
+
         # Draw the tuned channels prefixed by index in list (demodulator index)
+        # Use color if tuned channel is in active channel list during this scan_cycle
         for idx, gui_tuned_channel in enumerate(gui_tuned_channels):
-            text = str(idx) + ": " + gui_tuned_channel
+            text = str(idx)
+            text = text.zfill(2) + ": " + gui_tuned_channel
             if idx < self.dims[0]-2:
                 # Display in first column
-                self.win.addnstr(idx+1, 1, text, 11)
+                # text color based on activity
+                # curses.color_pair(5)
+                if gui_tuned_channel in active_channels:
+                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(2) | curses.A_BOLD)
+                else:
+                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(6))
             else:
                 # Display in second column
                 self.win.addnstr(idx-self.dims[0]+3, 13, text, 11)
+                if gui_tuned_channel in active_channels:
+                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11, curses.color_pair(2))
+                else:
+                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11)
 
         # Hide cursor
         self.win.leaveok(1)
@@ -240,24 +264,31 @@ class LockoutWindow(object):
         self.win = curses.newwin(height, width, screen_dims[0] - height - 1, width+1)
         self.dims = self.win.getmaxyx()
 
-    def draw_channels(self, gui_lockout_channels):
-        """Draws tuned channels list
+    def draw_channels(self, gui_lockout_channels, gui_active_channels):
+        """Draws lockout channels list
 
         Args:
             rf_channels [string]: List of strings in MHz
         """
         # Clear previous contents, draw border, and title
-        self.win.clear()
+        self.win.erase()
         self.win.border(0)
+        self.win.attron(curses.color_pair(6))
         self.win.addnstr(0, int(self.dims[1]/2-3), "LOCKOUT", 7,
-                         curses.color_pair(4))
+                        curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+
+        active_channels = set(gui_active_channels)
 
         # Draw the lockout channels
+        # Use color if lockout channel is in active channel list during this scan_cycle
         for idx, gui_lockout_channel in enumerate(gui_lockout_channels):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
                 text = "   " + gui_lockout_channel
-                self.win.addnstr(idx+1, 1, text, 11)
+                if gui_lockout_channel in active_channels:
+                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(5) | curses.A_BOLD)
+                else:
+                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(6))
             else:
                 pass
 
@@ -314,9 +345,13 @@ class RxWindow(object):
         gains (list): Hardware gains in dB
         squelch_db (int): Squelch in dB
         volume_dB (int): Volume in dB
+        type_demod (int): Type of demodulation (0 = FM, 1 = AM)
         record (bool): Record audio to file if True
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels for priority
+        channel_log_file_name (string): Name of file for channel activity logging
+        channel_log_timeout (int): Timeout delay between logging active state of channel in seconds
+        log_mode (string): Log system mode (file, database type)
     """
     # pylint: disable=too-many-instance-attributes
 
@@ -325,6 +360,10 @@ class RxWindow(object):
 
         # Set default values
         self.center_freq = 146E6
+        self.min_freq = 144E6
+        self.max_freq = 148E6
+        self.freq_low = 144E6
+        self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
         self.squelch_db = -60
@@ -333,6 +372,13 @@ class RxWindow(object):
         self.record = True
         self.lockout_file_name = ""
         self.priority_file_name = ""
+        self.channel_log_file_name = ""
+        self.channel_log_timeout = 15
+        # nothing other than file logging defined
+        if (self.channel_log_file_name != ""):
+            self.log_mode = "file"
+        else:
+            self.log_mode = "none"
 
         # Create a window object in the bottom half of the screen
         # Make it about 1/2 the screen width
@@ -351,61 +397,166 @@ class RxWindow(object):
         """
 
         # Clear previous contents, draw border, and title
-        self.win.clear()
+        self.win.erase()
         self.win.border(0)
+        self.win.attron(curses.color_pair(6))
         self.win.addnstr(0, int(self.dims[1]/2-4), "RECEIVER", 8,
-                         curses.color_pair(4))
+                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
         # Draw the receiver info prefix fields
-        text = "RF Freq (MHz) : "
-        self.win.addnstr(1, 1, text, 15)
+        index = 1
+        text = "RF Freq (MHz)  : "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
-        for index, gain in enumerate(self.gains, 2):
-            text = "{} Gain (dB){}: ".format(gain["name"], (4-len(gain["name"]))*' ')
-            self.win.addnstr(index, 1, text, 15)
+        index = index+1
+        text = "Min Freq (MHz) : "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
-        text = "BB Rate (Msps): "
-        self.win.addnstr(index+1, 1, text, 15)
-        text = "BB Sql  (dB)  : "
-        self.win.addnstr(index+2, 1, text, 15)
-        text = "AF Vol  (dB)  : "
-        self.win.addnstr(index+3, 1, text, 15)
+        index = index+1
+        text = "Max Freq (MHz) : "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
-        text = "Record    : "
-        self.win.addnstr(1, 28, text, 15)
-        text = "Demod Type: "
-        self.win.addnstr(2, 28, text, 15)
-        text = "Lockout   : "
-        self.win.addnstr(3, 28, text, 15)
-        text = "Priority  : "
-        self.win.addnstr(4, 28, text, 15)
+        index = index+1
+        text = "Low Tune (MHz) : "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "High Tune (MHz): "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+
+        for index2, gain in enumerate(self.gains, 2):
+            text = "{} Gain (dB){} : ".format(gain["name"], (4-len(gain["name"]))*' ')
+            self.win.addnstr(index+index2-1, 1, text, 18)
+            index3 = index2
+
+        index = index+index3
+        text = "BB Rate (Msps) : "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "BB Sql  (dB)   : "
+        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+
+        index = 1
+        text = "AF Vol  (dB) : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Record       : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Demod Type   : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Lockout File : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Priority File: "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Log File     : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Log Timeout  : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+
+        index = index+1
+        text = "Log Mode     : "
+        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
 
         # Draw the receiver info suffix fields
+        index = 1
         if self.freq_entry != 'None':
             text = self.freq_entry
         else:
             text = '{:.3f}'.format((self.center_freq)/1E6)
-        self.win.addnstr(1, 17, text, 8, curses.color_pair(5))
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
 
-        for index, gain in enumerate(self.gains, 2):
+        index = index+1
+        text = '{:.3f}'.format((self.min_freq)/1E6)
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+
+        index = index+1
+        text = '{:.3f}'.format((self.max_freq)/1E6)
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+
+        index = index+1
+        text = '{:.3f}'.format((self.freq_low)/1E6)
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+
+        index = index+1
+        text = '{:.3f}'.format((self.freq_high)/1E6)
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+
+        for index2, gain in enumerate(self.gains, 2):
             text = str(gain["value"])
-            self.win.addnstr(index, 17, text, 8, curses.color_pair(5))
+            self.win.addnstr(index+index2-1, 18, text, 8, curses.color_pair(5))
+            index3 = index2
 
+        index = index+index3
         text = str(self.samp_rate/1E6)
-        self.win.addnstr(index+1, 17, text, 8)
-        text = str(self.squelch_db)
-        self.win.addnstr(index+2, 17, text, 8, curses.color_pair(5))
-        text = str(self.volume_db)
-        self.win.addnstr(index+3, 17, text, 8, curses.color_pair(5))
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
 
+        index = index+1
+        text = str(self.squelch_db)
+        self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
+
+        index = 1
+        text = str(self.volume_db)
+        self.win.addnstr(index, 44, text, 8, curses.color_pair(5))
+
+        index = index+1
         text = str(self.record)
-        self.win.addnstr(1, 40, text, 8)
+        self.win.addnstr(index, 44, text, 8, curses.color_pair(6))
+
+        index = index+1
         text = str(self.type_demod)
-        self.win.addnstr(2, 40, text, 8)
+        self.win.addnstr(index, 44, text, 8, curses.color_pair(6))
+
+        index = index+1
         text = str(self.lockout_file_name)
-        self.win.addnstr(3, 40, text, 20)
+        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+
+        index = index+1
         text = str(self.priority_file_name)
-        self.win.addnstr(4, 40, text, 20)
+        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+
+        index = index+1
+        text = str(self.channel_log_file_name)
+        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+
+        index = index+1
+        text = str(self.channel_log_timeout)
+        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+
+        index = index+1
+        text = str(self.log_mode)
+        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+
+        # for index, gain in enumerate(self.gains, 2):
+        #     text = str(gain["value"])
+        #     self.win.addnstr(index, 17, text, 8, curses.color_pair(5))
+
+        # text = str(self.samp_rate/1E6)
+        # self.win.addnstr(index+1, 17, text, 8)
+        # text = str(self.squelch_db)
+        # self.win.addnstr(index+2, 17, text, 8, curses.color_pair(5))
+        # text = str(self.volume_db)
+        # self.win.addnstr(index+3, 17, text, 8, curses.color_pair(5))
+
+        # text = str(self.record)
+        # self.win.addnstr(1, 40, text, 8)
+        # text = str(self.type_demod)
+        # self.win.addnstr(2, 40, text, 8)
+        # text = str(self.lockout_file_name)
+        # self.win.addnstr(3, 40, text, 20)
+        # text = str(self.priority_file_name)
+        # self.win.addnstr(4, 40, text, 20)
 
         # Hide cursor
         self.win.leaveok(1)
@@ -569,12 +720,23 @@ def setup_screen(screen):
     """Sets up screen
     """
 
+    # hide cursor
+    curses.curs_set(0)
+
+    # do not echo keystrokes
+    curses.noecho()
+
+    # break on ctrl-c
+    curses.cbreak()
+
     # Define some colors
     curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)
     curses.init_pair(4, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
     curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(7, curses.COLOR_BLUE, curses.COLOR_BLACK)
 
     # Add border
     screen.border(0)
@@ -631,6 +793,9 @@ def main():
         specwin.proc_keyb(keyb)
         rxwin.proc_keyb_hard(keyb)
         rxwin.proc_keyb_soft(keyb)
+
+        if keyb == ord('Q'):
+            break
 
         # Sleep to get about a 10 Hz refresh
         time.sleep(0.1)

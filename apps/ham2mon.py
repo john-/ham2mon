@@ -7,12 +7,14 @@ Created on Fri Jul  3 13:38:36 2015
 """
 
 import scanner as scnr
-from curses import ERR, KEY_RESIZE, curs_set, wrapper
+from curses import ERR, KEY_RESIZE, curs_set, wrapper, echo, nocbreak, endwin
 import cursesgui
 import parser
 import time
 import asyncio
-#import logging
+import errors as err
+import logging
+from os.path import realpath, dirname
 
 import _curses
 
@@ -32,6 +34,8 @@ class MyDisplay():
         while True:
             char = self.stdscr.getch()
 
+            if char == ord('Q'):
+                break
             if char == ERR:
                 await asyncio.sleep(0.1)
             elif char == KEY_RESIZE:
@@ -40,6 +44,8 @@ class MyDisplay():
                 self.handle_char(char)
 
             await self.cycle()
+
+        self.scanner.clean_up()
 
     def make_display(self) -> None: 
         """Start scanner with GUI interface
@@ -62,6 +68,10 @@ class MyDisplay():
         # Get the initial settings for GUI
         self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
         self.rxwin.center_freq = self.scanner.center_freq
+        self.rxwin.min_freq = self.scanner.min_freq
+        self.rxwin.max_freq = self.scanner.max_freq
+        self.rxwin.freq_low = self.scanner.freq_low
+        self.rxwin.freq_high = self.scanner.freq_high
         self.rxwin.samp_rate = self.scanner.samp_rate
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
@@ -69,6 +79,15 @@ class MyDisplay():
         self.rxwin.type_demod = PARSER.type_demod
         self.rxwin.lockout_file_name = self.scanner.lockout_file_name
         self.rxwin.priority_file_name = self.scanner.priority_file_name
+        self.rxwin.channel_log_file_name = self.scanner.channel_log_file_name
+        self.rxwin.channel_log_timeout = self.scanner.channel_log_timeout
+        if (self.rxwin.channel_log_file_name != ""):
+            self.rxwin.log_mode = "file"
+        else:
+            self.rxwin.log_mode = "none"
+
+        self.specwin.max_db = PARSER.max_db
+        self.specwin.min_db = PARSER.min_db
         self.specwin.threshold_db = self.scanner.threshold_db
    
     async def cycle(self):
@@ -81,8 +100,8 @@ class MyDisplay():
 
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
-        self.chanwin.draw_channels(self.scanner.gui_tuned_channels)
-        self.lockoutwin.draw_channels(self.scanner.gui_lockout_channels)
+        self.chanwin.draw_channels(self.scanner.gui_tuned_channels, self.scanner.gui_active_channels)
+        self.lockoutwin.draw_channels(self.scanner.gui_lockout_channels, self.scanner.gui_active_channels)
         self.rxwin.draw_rx()
 
         # Update physical screen
@@ -98,13 +117,22 @@ class MyDisplay():
         play = PARSER.play
         lockout_file_name = PARSER.lockout_file_name
         priority_file_name = PARSER.priority_file_name
+        channel_log_file_name = PARSER.channel_log_file_name
+        channel_log_timeout = PARSER.channel_log_timeout
         freq_correction = PARSER.freq_correction
         audio_bps = PARSER.audio_bps
+        channel_spacing = PARSER.channel_spacing
+        center_freq = PARSER.center_freq
+        freq_low = PARSER.freq_low
+        freq_high = PARSER.freq_high
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
+
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                             freq_correction, record, lockout_file_name,
-                            priority_file_name, play, audio_bps,
+                            priority_file_name, channel_log_file_name, channel_log_timeout,
+                            play, audio_bps, channel_spacing,
+                            center_freq, freq_low, freq_high,
                             min_recording, max_recording)
 
         # Set the paramaters
@@ -126,6 +154,8 @@ class MyDisplay():
             # Set and update frequency
             self.scanner.set_center_freq(self.rxwin.center_freq)
             self.rxwin.center_freq = self.scanner.center_freq
+            self.rxwin.min_freq = self.scanner.min_freq
+            self.rxwin.max_freq = self.scanner.max_freq
 
         if self.rxwin.proc_keyb_soft(keyb):
             # Set all the gains
@@ -153,8 +183,9 @@ def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
 
 if __name__ == '__main__':
-    #logging.basicConfig(filename=f'{__file__}.log', level=logging.DEBUG)
-    #logging.info('Started')
+    dir = realpath(dirname(__file__))
+    logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
+        level=logging.DEBUG, format='%(asctime)s %(message)s')
 
     try:
         # Do this since curses wrapper won't let parser write to screen
@@ -167,7 +198,26 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         pass
     except RuntimeError as err:
-        print(err)
+        print("")
         print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root.")
         print("")
+        print("RuntimeError: {err=}, {type(err)=}")
+        print("")
+    except err.LogError:
+        print("")
+        print("LogError: database logging not active, to be expanded.")
+        print("")
+    except OSError as err:
+        print("")
+        print("OS error: {0}".format(err))
+        print("")
+    except BaseException as err:
+        print("")
+        print("Unexpected: {err=}, {type(err)=}", err, type(err))
+        print("")
 
+    finally:
+        # --- Cleanup on exit ---
+        echo()
+        nocbreak()
+        endwin()

@@ -6,13 +6,32 @@ http://youtu.be/BXptQFSV8E4
 ![GUI screenshot](https://github.com/madengr/ham2mon/blob/master/ham2mon.png)
 
 ## Tested with:
-- Ettus B200 at 16 Msps (http://www.ettus.com)
-- NooElec RTL2832 + R820T at 2 Msps (http://www.nooelec.com)
-- GNU Radio 3.7.10 (https://github.com/gnuradio/gnuradio)
-- GrOsmoSDR 0.1.4 (http://sdr.osmocom.org/trac/wiki/GrOsmoSDR)
-- Ettus UHD 3.10.0 (https://github.com/EttusResearch/uhd)
+
+Although ham2mon has been tested with a variety of hardware, this fork has only been tested with airspy sdr.
 
 ## Contributors:
+
+lordmorgul:
+- Min and max spectrum switches
+- Python3 builtin functions correction for priority and lockout parsing
+- Example priority and lockout files
+- Spectrum bar coloration (min/threshold/max)
+- Active channel tracking and coloration
+- GUI adjustments in channel and receiver windows, borders and labels
+- priority, lockout, and text log file name displays
+- pulled logger framework from kibihrchak and revised to python3
+- log file framework with enable flags (to prepare for multiple loggers implemented, text and database)
+- log file timeout so active channels are indicated only every TIMEOUT seconds
+- pulled long run demodulator fix to python3 version from john
+- pulled gain corrections to python3 version from john
+- channel width configurable from command line option
+- incorporate miweber67 freq range limits
+
+miweber67
+- frequency range to limit selected channels to within specific limit
+
+kibihrchak:
+- Logger branch text file log entries
 
 oneineight:
 - Python 3 support
@@ -31,6 +50,8 @@ john:
 - Frequency correction option switch
 - Read from I/Q file documentation
 - Bits per audio sample (bps) option switch
+- min/max recording
+- dynamic gui sizing
 
 lachesis:
 - Mute switch
@@ -43,7 +64,6 @@ madengr:
 - Priority channels
 
 ## Console Operation:
-
 The following is an example of the option switches for UHD with NBFM demodulation, although omission of any will use default values (shown below) that are optimal for the B200:
 
 ./ham2mon.py -a "uhd" -n 8 -d 0 -f 146E6 -r 4E6 -g 30 -s -60 -v 0 -t 10 -w
@@ -64,13 +84,19 @@ Example of reading from an IQ file:
 
 ./ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,freq=466E6" -r 8E6 -w
 
-## GUI Controls:
+## Channel Detection Log File
+For console operation, it is possible to specify the log file name, in which channel detection, and removal will be logged. The option is `--log_file=<file-name>`.
 
+Whenever a channel appears/dissapears, new line will be written in the log file. For the line format, check `__print_channel_log__()` in `scanner.Scanner`.
+
+Active channels are flagged as active periodically based on the active channel logging timeout.
+
+## GUI Controls:
 `t/r = Detection threshold +/- 5 dB. (T/R for +/- 1dB)`
 
-`p/o = Spectrum upper scale +/- 10 dB`
+`p/o = Spectrum upper scale +/- 5 dB`
 
-`w/q = Spectrum lower scale +/- 10 dB`
+`w/q = Spectrum lower scale +/- 5 dB`
 
 `g/f = 1st gain element +/- 10 dB (G/F for +/- 1dB)`
 
@@ -96,10 +122,13 @@ Example of reading from an IQ file:
 
 `/ = Frequency entry mode (Esc to exit)`
 
-`CTRL-C = quit`
+`CTRL-C or SHIFT-Q = quit`
 
 ## Help Menu
 ```
+Usage: ham2mon.py [options]
+
+Options:
 Usage: ham2mon.py [options]
 
 Options:
@@ -110,6 +139,8 @@ Options:
                         Number of demodulators
   -d TYPE_DEMOD, --demodulator=TYPE_DEMOD
                         Type of demodulator (0=NBFM, 1=AM)
+  -e FREQ_RANGE, --range=FREQ_RANGE
+                        Limit reception to specified frequency range
   -f CENTER_FREQ, --freq=CENTER_FREQ
                         Hardware RF center frequency in Hz
   -r ASK_SAMP_RATE, --rate=ASK_SAMP_RATE
@@ -144,11 +175,22 @@ Options:
                         File of EOL delimited lockout channels in Hz
   -p PRIORITY_FILE_NAME, --priority=PRIORITY_FILE_NAME
                         File of EOL delimited priority channels in Hz
+  -L CHANNEL_LOG_FILE_NAME, --log_file=CHANNEL_LOG_FILE_NAME
+                        Log file for channel detection
+  -A CHANNEL_LOG_TIMEOUT, --log_active_timeout=CHANNEL_LOG_TIMEOUT
+                        Timeout delay for active channel log entries
   -c FREQ_CORRECTION, --correction=FREQ_CORRECTION
                         Frequency correction in ppm
   -m, --mute-audio      Mute audio from speaker (still allows recording)
   -b AUDIO_BPS, --bps=AUDIO_BPS
                         Audio bit depth (bps)
+  -M MAX_DB, --max_db=MAX_DB
+                        Spectrum window max dB for display
+  -N MIN_DB, --min_db=MIN_DB
+                        Spectrum window min dB for display (no greater than
+                        -10dB from max
+  -B CHANNEL_SPACING, --channel-spacing=CHANNEL_SPACING
+                        Channel spacing (spectrum bin size)
   --min_recording=MIN_RECORDING
                         Minumum length of a recording in seconds
   --max_recording=MAX_RECORDING

@@ -17,7 +17,7 @@ class CLParser(object):
         num_demod (int): Number of parallel demodulators
         center_freq (float): Hardware RF center frequency in Hz
         ask_samp_rate (float): Asking sample rate of hardware in sps (1E6 min)
-        gain_db (int): Hardware RF gain in dB
+        gains : Enumerated gain types and values
         squelch_db (int): Squelch in dB
         volume_dB (int): Volume in dB
         threshold_dB (int): Threshold for channel detection in dB
@@ -25,8 +25,15 @@ class CLParser(object):
         play (bool): Play audio through speaker if True
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels to for priority
+        channel_log_file_name (string): Name of file for channel logging
+        channel_log_timeout (int): Timeout delay between active channel log entries
         freq_correction (int): Frequency correction in ppm
         audio_bps (int): Audio bit depth in bps
+        max_db (float): Spectrum max dB for display
+        min_db (float): Spectrum min dB for display
+        channel_spacing (int): Channel spacing (spectrum bin size) for identification of channels
+        freq_low (int): Low frequency for channels
+        freq_high (int): High frequency for channels
         min_duration (float): Minumum length of a recording in seconds
     """
     # pylint: disable=too-few-public-methods
@@ -48,6 +55,10 @@ class CLParser(object):
         parser.add_option("-d", "--demodulator", type="int", dest="type_demod",
                           default=0,
                           help="Type of demodulator (0=NBFM, 1=AM)")
+
+        parser.add_option("-e", "--range", type="string",
+                          dest="freq_range", default="0-2000000000",
+                          help="Limit reception to specified frequency range")
 
         parser.add_option("-f", "--freq", type="string", dest="center_freq",
                           default=146E6,
@@ -113,6 +124,16 @@ class CLParser(object):
                           default="",
                           help="File of EOL delimited priority channels in Hz")
 
+        parser.add_option("-L", "--log_file", type="string",
+                          dest="channel_log_file_name",
+                          default="channel-log",
+                          help="Log file for channel detection")
+
+        parser.add_option("-A", "--log_active_timeout", type="int",
+                          dest="channel_log_timeout",
+                          default=15,
+                          help="Timeout delay for active channel log entries")
+
         parser.add_option("-c", "--correction", type="int", dest="freq_correction",
                           default=0,
                           help="Frequency correction in ppm")
@@ -122,9 +143,21 @@ class CLParser(object):
                           help="Mute audio from speaker (still allows recording)")
 
         parser.add_option("-b", "--bps", type="int", dest="audio_bps",
-                          default=8,
+                          default=16,
                           help="Audio bit depth (bps)")
         
+        parser.add_option("-M", "--max_db", type="float", dest="max_db",
+                          default=50,
+                          help="Spectrum window max dB for display")
+
+        parser.add_option("-N", "--min_db", type="float", dest="min_db",
+                          default=-10,
+                          help="Spectrum window min dB for display (no greater than -10dB from max")
+
+        parser.add_option("-B", "--channel-spacing", type="int", dest="channel_spacing",
+                          default=5000,
+                          help="Channel spacing (spectrum bin size)")
+
         parser.add_option("--min_recording", type="eng_float", dest="min_recording",
                           default=0,
                           help="Minumum length of a recording in seconds")
@@ -160,8 +193,22 @@ class CLParser(object):
         self.play = bool(options.play)
         self.lockout_file_name = str(options.lockout_file_name)
         self.priority_file_name = str(options.priority_file_name)
+        self.channel_log_file_name = str(options.channel_log_file_name)
+        self.channel_log_timeout = int(options.channel_log_timeout)
         self.freq_correction = int(options.freq_correction)
         self.audio_bps = int(options.audio_bps)
+        self.max_db = float(options.max_db)
+        self.min_db = float(options.min_db)
+        self.channel_spacing = int(options.channel_spacing)
+        try:
+            self.freq_low = int(options.freq_range.split('-')[0])
+        except:
+            self.freq_low = 0
+
+        try:
+            self.freq_high = int(options.freq_range.split('-')[1])
+        except:
+            self.freq_high = 0
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
@@ -187,10 +234,18 @@ def main():
     print("volume_db:           " + str(parser.volume_db))
     print("threshold_db:        " + str(parser.threshold_db))
     print("record:              " + str(parser.record))
+    print("play:                " + str(parser.play))
     print("lockout_file_name:   " + str(parser.lockout_file_name))
     print("priority_file_name:  " + str(parser.priority_file_name))
+    print("channel_log_file_name:  " + str(parser.channel_log_file_name))
+    print("channel_log_timeout:  " + str(parser.channel_log_timeout))
     print("freq_correction:     " + str(parser.freq_correction))
     print("audio_bps:           " + str(parser.audio_bps))
+    print("max_db:              " + str(parser.max_db))
+    print("min_db:              " + str(parser.min_db))
+    print("channel_spacing:     " + str(parser.channel_spacing))
+    print("freq_low:            " + str(parser.freq_low))
+    print("freq_high:           " + str(parser.freq_high))
     print("min_recording:       " + str(parser.min_recording))
     print("max_recording:       " + str(parser.max_recording))
 
