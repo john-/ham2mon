@@ -89,13 +89,9 @@ class BaseTuner(gr.hier_block2):
         # Delete short wavfiles otherwise move ones that are long enough
         min_size = 44 + self.audio_bps*1000 * self.min_recording
         if os.stat(self.file_name).st_size <= min_size:
-            logging.debug(f'about to delete short file: {self.file_name}')
             os.unlink(self.file_name)
-            logging.debug(f'deleted  short file: {self.file_name}')
         else:
-            logging.debug(f'about to move form tmp: {self.file_name}')
             os.rename(self.file_name, self.file_name.replace('tmp/', ''))
-            logging.debug(f'moved form tmp: {self.file_name}')
 
         self.active = False
       
