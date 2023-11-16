@@ -379,6 +379,7 @@ class RxWindow(object):
             self.log_mode = "file"
         else:
             self.log_mode = "none"
+        self.classifier_params = None
 
         # Create a window object in the bottom half of the screen
         # Make it about 1/2 the screen width
@@ -511,8 +512,13 @@ class RxWindow(object):
         self.win.addnstr(index, 44, text, 8, curses.color_pair(5))
 
         index = index+1
-        text = str(self.record)
-        self.win.addnstr(index, 44, text, 8, curses.color_pair(6))
+        text = ''
+        for key in self.classifier_params.keys():
+            if self.classifier_params[key]:
+                text = text + key
+        if text == '':
+            text = str(self.record)
+        self.win.addnstr(index, 44, text, 8)
 
         index = index+1
         text = str(self.type_demod)

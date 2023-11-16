@@ -102,7 +102,8 @@ class Scanner(object):
                  play=True,
                  audio_bps=8, channel_spacing=5000,
                  center_freq=0, freq_low=0, freq_high=2000000000,
-                 min_recording=0, max_recording=0):
+                 min_recording=0, max_recording=0,
+                 classifier_params={'V':False,'D':False,'S':False }):
 
         # Default values
         self.squelch_db = -60
@@ -138,7 +139,7 @@ class Scanner(object):
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
-                                       audio_bps, min_recording)
+                                       audio_bps, min_recording, classifier_params)
 
         # Set the initial center frequency here to allow setting min/max and low/high bounds
         self.receiver.set_center_freq(center_freq)

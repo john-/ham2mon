@@ -88,6 +88,7 @@ class MyDisplay():
 
         self.specwin.max_db = PARSER.max_db
         self.specwin.min_db = PARSER.min_db
+        self.rxwin.classifier_params = self.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
    
     async def cycle(self):
@@ -127,13 +128,17 @@ class MyDisplay():
         freq_high = PARSER.freq_high
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
+        self.classifier_params = { 'V': PARSER.voice,
+                                   'D': PARSER.data,
+                                   'S': PARSER.skip
+                                 }
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                             freq_correction, record, lockout_file_name,
                             priority_file_name, channel_log_file_name, channel_log_timeout,
                             play, audio_bps, channel_spacing,
                             center_freq, freq_low, freq_high,
-                            min_recording, max_recording)
+                            min_recording, max_recording, self.classifier_params)
 
         # Set the paramaters
         scanner.set_center_freq(PARSER.center_freq)

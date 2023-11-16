@@ -166,6 +166,15 @@ class CLParser(object):
                           default=0,
                           help="Maximum length of a recording in seconds")
 
+        parser.add_option("--voice", dest="voice", action="store_true",
+                          help="Record voice")
+        
+        parser.add_option("--data", dest="data", action="store_true",
+                          help="Record voice")
+
+        parser.add_option("--skip", dest="skip", action="store_true",
+                          help="Record voice")                
+
         options = parser.parse_args()[0]
         self.parser_args = parser.parse_args()[1]
 
@@ -212,6 +221,11 @@ class CLParser(object):
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
+        self.voice = bool(options.voice)        
+        self.data = bool(options.data)
+        self.skip = bool(options.skip)
+        if self.voice or self.data or self.skip:
+            self.record = True
 
 def main():
     """Test the parser"""
@@ -248,7 +262,9 @@ def main():
     print("freq_high:           " + str(parser.freq_high))
     print("min_recording:       " + str(parser.min_recording))
     print("max_recording:       " + str(parser.max_recording))
-
+    print("voice:               " + str(parser.voice))
+    print("data:                " + str(parser.data))
+    print("skip:                " + str(parser.skip))
 
 if __name__ == '__main__':
     try:

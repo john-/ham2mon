@@ -9,6 +9,8 @@ http://youtu.be/BXptQFSV8E4
 
 Although ham2mon has been tested with a variety of hardware, this fork has only been tested with airspy sdr.
 
+This fork has only been tested with recent versions of python 3.  It will not work with python 2.7.
+
 ## Contributors:
 
 lordmorgul:
@@ -52,6 +54,7 @@ john:
 - Bits per audio sample (bps) option switch
 - min/max recording
 - dynamic gui sizing
+- recording classification
 
 lachesis:
 - Mute switch
@@ -195,6 +198,8 @@ Options:
                         Minumum length of a recording in seconds
   --max_recording=MAX_RECORDING
                         Maximum length of a recording in seconds
+  --voice, --data, --skip
+                        Record audio if classified as this type
 ```
 Note: The available gains are hardware specific.  The user interface will list the gains availble based on hardware option supplied to ham2mon.
 
@@ -216,3 +221,17 @@ The ham2mon.py interfaces the scanner.py with the curses.py GUI.  The GUI provid
 The default settings are optimized for an Ettus B200.  The RTL dongle will require raising the squelch and adjustment of the spectrum scale and threshold.
 
 The next iteration of this program will probably use gr-dsd to decode P25 public safety in the 800 MHz band.
+
+## Logging
+Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.
+
+## Audio Classification
+*Note: The classification is not 100% accurate.  There will be both false positives and negatives.*
+
+Recorded audio can be classified using a pre-trained model.  The model must be present and the tensorflow python module must be installed.  On startup, ham2mon will check these dependencies and enable classification if they are met.
+
+The command line options (--voice, --data, and --skip) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode ("-w") will be automatically enabled.
+
+The classification designator will be added after the frequency (e.g. 460.125_V_1698933610.wav for voice).  Only 16bps audio is currently supported so enable it with "-b 16".
+
+No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the provided model.
