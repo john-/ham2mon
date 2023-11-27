@@ -14,6 +14,7 @@ import time
 import asyncio
 import errors as err
 import logging
+import traceback
 from os.path import realpath, dirname
 
 import _curses
@@ -220,9 +221,12 @@ if __name__ == '__main__':
         print("")
         print("Unexpected: {err=}, {type(err)=}", err, type(err))
         print("")
+        traceback.print_exc()
+        print("")
 
     finally:
         # --- Cleanup on exit ---
+        _curses.initscr()
         echo()
         nocbreak()
         endwin()
