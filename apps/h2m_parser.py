@@ -43,7 +43,6 @@ class CLParser(object):
     def __init__(self):
 
         # Setup the parser for command line arguments
-        # parser = OptionParser(option_class=eng_option)
         parser = ArgumentParser()
 
         parser.add_argument("-a", "--args", type=str, dest="hw_args",

@@ -9,7 +9,7 @@ Created on Fri Jul  3 13:38:36 2015
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper, echo, nocbreak, endwin
 import cursesgui
-import parser
+import h2m_parser as h2m_parser
 import time
 import asyncio
 import errors as err
@@ -195,7 +195,7 @@ if __name__ == '__main__':
 
     try:
         # Do this since curses wrapper won't let parser write to screen
-        PARSER = parser.CLParser()
+        PARSER = h2m_parser.CLParser()
         wrapper(main)
     except KeyboardInterrupt:
         pass
