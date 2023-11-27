@@ -47,7 +47,7 @@ class CLParser(object):
         parser = ArgumentParser()
 
         parser.add_argument("-a", "--args", type=str, dest="hw_args",
-                          default='uhd', required=True,
+                          default='uhd',
                           help="Hardware args")
 
         parser.add_argument("-n", "--demod", type=int, dest="num_demod",
