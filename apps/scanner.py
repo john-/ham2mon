@@ -557,7 +557,7 @@ class Scanner(object):
     def clean_up(self):
         # cleanup terminating all demodulators
         for demod in self.receiver.demodulators:
-            demod.set_center_freq(0, 0);
+            demod.set_center_freq(0, 0)
 
 
 def main():

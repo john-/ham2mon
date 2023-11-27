@@ -196,11 +196,7 @@ if __name__ == '__main__':
     try:
         # Do this since curses wrapper won't let parser write to screen
         PARSER = parser.CLParser()
-        if len(PARSER.parser_args) != 0:
-            PARSER.print_help() #pylint: disable=maybe-no-member
-            raise(SystemExit, 1)
-        else:
-            wrapper(main)
+        wrapper(main)
     except KeyboardInterrupt:
         pass
     except RuntimeError as err:
@@ -208,6 +204,8 @@ if __name__ == '__main__':
         print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root.")
         print("")
         print("RuntimeError: {err=}, {type(err)=}")
+        print("")
+        traceback.print_exc()
         print("")
     except err.LogError:
         print("")

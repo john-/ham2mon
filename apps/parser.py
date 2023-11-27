@@ -235,10 +235,6 @@ def main():
 
     parser = CLParser()
 
-    # if len(vars(parser.parser_args())) != 0:
-    #     parser.print_help() #pylint: disable=maybe-no-member
-    #     raise(SystemExit, 1)
-
     print("hw_args:             " + parser.hw_args)
     print("num_demod:           " + str(parser.num_demod))
     print("type_demod:          " + str(parser.type_demod))
