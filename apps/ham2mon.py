@@ -189,13 +189,16 @@ def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
 
 if __name__ == '__main__':
-    dir = realpath(dirname(__file__))
-    logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
-        level=logging.DEBUG, format='%(asctime)s %(message)s')
 
     try:
         # Do this since curses wrapper won't let parser write to screen
         PARSER = h2m_parser.CLParser()
+
+        if PARSER.debug:
+            dir = realpath(dirname(__file__))
+            logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
+            level=logging.DEBUG, format='%(asctime)s %(message)s')
+
         wrapper(main)
     except KeyboardInterrupt:
         pass
@@ -204,8 +207,7 @@ if __name__ == '__main__':
         print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root.")
         print("")
         print("RuntimeError: {err=}, {type(err)=}")
-        print("")
-        traceback.print_exc()
+        logging.debug(traceback.format_exc())
         print("")
     except err.LogError:
         print("")
@@ -218,8 +220,7 @@ if __name__ == '__main__':
     except BaseException as err:
         print("")
         print("Unexpected: {err=}, {type(err)=}", err, type(err))
-        print("")
-        traceback.print_exc()
+        logging.debug(traceback.format_exc())
         print("")
 
     finally:

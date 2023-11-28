@@ -174,7 +174,10 @@ class CLParser(object):
                           help="Record voice")
 
         parser.add_argument("--skip", dest="skip", action="store_true",
-                          help="Record voice")                
+                          help="Record voice")  
+
+        parser.add_argument("--debug", dest="debug", action="store_true",
+                          help="Enable debug file (ham2mon.log)")              
 
         options = parser.parse_args()
         self.print_help = parser.print_help
@@ -229,6 +232,8 @@ class CLParser(object):
         if self.voice or self.data or self.skip:
             self.record = True
 
+        self.debug = bool(options.debug)
+
 def main():
     """Test the parser"""
 
@@ -263,6 +268,7 @@ def main():
     print("voice:               " + str(parser.voice))
     print("data:                " + str(parser.data))
     print("skip:                " + str(parser.skip))
+    print("debug:               " + str(parser.debug))
 
 if __name__ == '__main__':
     try:
