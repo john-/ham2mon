@@ -224,7 +224,7 @@ if __name__ == '__main__':
 
     finally:
         # --- Cleanup on exit ---
-        _curses.initscr()
+        #_curses.initscr()
         echo()
         nocbreak()
         endwin()
