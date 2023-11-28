@@ -177,7 +177,7 @@ class CLParser(object):
                           help="Record voice")  
 
         parser.add_argument("--debug", dest="debug", action="store_true",
-                          help="Enable debug file (ham2mon.log)")              
+                          help="Enable debug file with additional information (ham2mon.log)")              
 
         options = parser.parse_args()
         self.print_help = parser.print_help
