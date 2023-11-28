@@ -30,6 +30,9 @@ class BaseTuner(gr.hier_block2):
         self.last_heard = 0
         self.file_name = None
 
+    def get_last_heard():
+        return self.last_heard
+
     def set_last_heard(self, a_time):
         self.last_heard = a_time
 
