@@ -58,7 +58,7 @@ class CLParser(object):
                           help="Type of demodulator (0=NBFM, 1=AM)")
 
         parser.add_argument("-e", "--range", type=str,
-                          dest="freq_range", default="0-2000000000",
+                          dest="freq_range",
                           help="Limit reception to specified frequency range")
 
         parser.add_argument("-f", "--freq", type=str, dest="center_freq",
@@ -217,12 +217,12 @@ class CLParser(object):
         try:
             self.freq_low = int(options.freq_range.split('-')[0])
         except:
-            self.freq_low = 0
+            self.freq_low = None
 
         try:
             self.freq_high = int(options.freq_range.split('-')[1])
         except:
-            self.freq_high = 0
+            self.freq_high = None
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 

@@ -134,11 +134,11 @@ class MyDisplay():
                                    'S': PARSER.skip
                                  }
 
-        scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
+        scanner = scnr.Scanner(freq_low, freq_high, ask_samp_rate, num_demod, type_demod, hw_args,
                             freq_correction, record, lockout_file_name,
                             priority_file_name, channel_log_file_name, channel_log_timeout,
                             play, audio_bps, channel_spacing,
-                            center_freq, freq_low, freq_high,
+                            center_freq, 
                             min_recording, max_recording, self.classifier_params)
 
         # Set the paramaters

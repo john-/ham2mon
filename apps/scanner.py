@@ -95,13 +95,13 @@ class Scanner(object):
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
 
-    def __init__(self, ask_samp_rate=4E6, num_demod=4, type_demod=0,
+    def __init__(self, freq_low, freq_high, ask_samp_rate=4E6, num_demod=4, type_demod=0,
                  hw_args="uhd", freq_correction=0, record=True,
                  lockout_file_name="", priority_file_name="",
                  channel_log_file_name="", channel_log_timeout=15,
                  play=True,
                  audio_bps=8, channel_spacing=5000,
-                 center_freq=0, freq_low=0, freq_high=2000000000,
+                 center_freq=0, 
                  min_recording=0, max_recording=0,
                  classifier_params={'V':False,'D':False,'S':False }):
 
@@ -112,8 +112,8 @@ class Scanner(object):
         self.record = record
         self.play = play
         self.audio_bps = audio_bps
-        self.freq_low = freq_low
-        self.freq_high = freq_high
+        self.freq_low = freq_low   # low end of demod window
+        self.freq_high = freq_high # high end of demod window
         self.center_freq = center_freq
         self.spectrum = []
         self.lockout_channels = []
@@ -131,8 +131,8 @@ class Scanner(object):
         self.log_recent_channels = []
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
-        self.low_bound = freq_low
-        self.high_bound = freq_high
+        self.low_bound = freq_low     # gui thing?
+        self.high_bound = freq_high   # gui thing?
         self.hang_time = 1.0
         self.max_recording = max_recording
 
