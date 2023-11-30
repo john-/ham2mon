@@ -112,8 +112,8 @@ class Scanner(object):
         self.record = record
         self.play = play
         self.audio_bps = audio_bps
-        self.freq_low = freq_low   # low end of demod window
-        self.freq_high = freq_high # high end of demod window
+        self.freq_low = freq_low   # low end of demod window.  GUI Low Tune.
+        self.freq_high = freq_high # high end of demod window.  GUI High Tune.
         self.center_freq = center_freq
         self.spectrum = []
         self.lockout_channels = []
@@ -131,8 +131,8 @@ class Scanner(object):
         self.log_recent_channels = []
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
-        self.low_bound = freq_low     # gui thing?
-        self.high_bound = freq_high   # gui thing?
+        # self.low_bound = freq_low  # demods only within bounds are kept (relative to center_freq)
+        # self.high_bound = freq_high  # demods only within bounds are kept (relative to center_freq)
         self.hang_time = 1.0
         self.max_recording = max_recording
 
@@ -160,16 +160,19 @@ class Scanner(object):
         # Get the hardware sample rate and center frequency in Hz
         self.samp_rate = self.receiver.samp_rate
         self.center_freq = self.receiver.center_freq
+        # gui values clarifying range within sample rate (Min Freq / Max Freq)
         self.min_freq = (self.center_freq - self.samp_rate/2)
         self.max_freq = (self.center_freq + self.samp_rate/2)
-        # cannot set channel freq lower than min sampled freq
-        if (self.freq_low < self.min_freq):
-            self.freq_low = self.min_freq
-        # cannot set channel freq higher than max sampled freq
-        if (self.freq_high > self.max_freq):
-            self.freq_high = self.max_freq
-        self.low_bound = self.freq_low - self.center_freq
-        self.high_bound = self.freq_high - self.center_freq
+        # cannot set channel freq lower than min sampled freq (Low Tune)
+        # if (self.freq_low < self.min_freq):
+        #     self.freq_low = self.min_freq
+        # # cannot set channel freq higher than max sampled freq (High Tune)
+        # if (self.freq_high > self.max_freq):
+        #     self.freq_high = self.max_freq
+
+        # values of Low Tune and High Tune relative to center_freq
+        # self.low_bound = self.freq_low - self.center_freq
+        # self.high_bound = self.freq_high - self.center_freq
 
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
@@ -295,7 +298,9 @@ class Scanner(object):
         # Remove channels that are outside the requested freq range
         temp = []
         for channel in channels:
-            if channel > self.low_bound and channel < self.high_bound:
+            #if channel > self.low_bound and channel < self.high_bound:
+            if self._in_range(channel):
+            #if not self.freq_low:
                 temp = np.append(temp, channel)
             else:
                 pass
@@ -388,6 +393,28 @@ class Scanner(object):
                 self.__print_channel_log_active__(float(channel)*1E6, True)
             # clear recent channels
             self.log_recent_channels = []
+
+    def _in_range(self, channel):
+        # Neither Low tune or High Tune specified
+        if not self.freq_low and not self.freq_high:
+            return
+        # logging.debug(f'channel: {channel} delta: {self.freq_high - self.center_freq} freq_high: {self.freq_high} center_freq: {self.center_freq}')
+        logging.debug(f'channel: {channel} delta: {self.freq_low - self.center_freq} freq_low: {self.freq_low} center_freq: {self.center_freq}')
+        # High Tune only
+        if not self.freq_low and channel < self.freq_high - self.center_freq:
+            logging.debug('channel in range (small enough)')
+            return True
+        # Low Tune only
+        if not self.freq_high and channel > self.freq_low - self.center_freq:
+            logging.debug('channel in range (big enough)')
+            return True
+        # Both Low and High Tune
+        if channel > self.freq_low - self.center_freq and channel < self.freq_high - self.center_freq:
+            logging.debug('in range (in betwwen)')
+            return True
+        
+        logging.debug(f'not in range')
+        return False
 
     def add_lockout(self, idx):
         """Adds baseband frequency to lockout channels and updates GUI list
@@ -485,18 +512,18 @@ class Scanner(object):
         self.receiver.set_center_freq(center_freq)
         self.center_freq = self.receiver.center_freq
 
-        # reset min/max based on sample rate
+        # gui values clarifying range within sample rate (Min Freq / Max Freq)
         self.min_freq = (self.center_freq - self.samp_rate/2)
         self.max_freq = (self.center_freq + self.samp_rate/2)
-        # reset low/high freq for demod based on new center and bounds from original provided
-        self.freq_low = self.low_bound + self.center_freq
-        self.freq_high = self.high_bound + self.center_freq
-        # cannot set channel freq lower than min sampled freq
-        if (self.freq_low < self.min_freq):
-            self.freq_low = self.min_freq
-        # cannot set channel freq higher than max sampled freq
-        if (self.freq_high > self.max_freq):
-            self.freq_high = self.max_freq
+        # # reset low/high freq for demod based on new center and bounds from original provided
+        # self.freq_low = self.low_bound + self.center_freq
+        # self.freq_high = self.high_bound + self.center_freq
+        # # cannot set channel freq lower than min sampled freq
+        # if (self.freq_low < self.min_freq):
+        #     self.freq_low = self.min_freq
+        # # cannot set channel freq higher than max sampled freq
+        # if (self.freq_high > self.max_freq):
+        #     self.freq_high = self.max_freq
 
         # Update the priority since frequency is changing
         self.update_priority()
