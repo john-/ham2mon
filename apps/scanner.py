@@ -457,6 +457,7 @@ class Scanner(object):
                     lines = __builtin__.filter(None, lines)
             # Convert to baseband frequencies, round, and append
             for freq in lines:
+                logging.debug(f'freq: {freq}  center_freq: {self.center_freq}')
                 bb_freq = float(freq) - self.center_freq
                 bb_freq = round(bb_freq/self.channel_spacing)*\
                                         self.channel_spacing
