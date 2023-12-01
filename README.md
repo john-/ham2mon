@@ -226,7 +226,7 @@ The next iteration of this program will probably use gr-dsd to decode P25 public
 
 ## Lockout File
 
-The Lockout file is a YAML file that can contain individual frequencies to be locked out as well as ranges of frequencies.  All values are in Mhz.  See the example for details.
+The Lockout file is a YAML file that can contain individual frequencies to be locked out as well as ranges of frequencies.  All values are in Mhz (see the example for details).  For this file to be utlized the -l/--lockout option must specify it.  
 
 ## Logging
 Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.
