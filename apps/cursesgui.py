@@ -368,7 +368,6 @@ class RxWindow(object):
         self.center_freq = 146E6
         self.min_freq = 144E6
         self.max_freq = 148E6
-        #self.freq_low = 144E6
         self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
