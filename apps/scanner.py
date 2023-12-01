@@ -15,6 +15,7 @@ import types
 import datetime
 import errors as err
 import logging
+import yaml
 
 PY3 = sys.version_info[0] == 3
 PY2 = sys.version_info[0] == 2
@@ -397,7 +398,7 @@ class Scanner(object):
     def _in_range(self, channel):
         # Neither Low tune or High Tune specified
         if not self.freq_low and not self.freq_high:
-            return
+            return True
         # logging.debug(f'channel: {channel} delta: {self.freq_high - self.center_freq} freq_high: {self.freq_high} center_freq: {self.center_freq}')
         logging.debug(f'channel: {channel} delta: {self.freq_low - self.center_freq} freq_low: {self.freq_low} center_freq: {self.center_freq}')
         # High Tune only
@@ -448,22 +449,27 @@ class Scanner(object):
         # Process lockout file if it was provided
         if self.lockout_file_name != "":
             # Open file, split to list, remove empty strings
-            with open(self.lockout_file_name) as lockout_file:
-                lines = lockout_file.read().splitlines()
-                lockout_file.close()
-                if PY3:
-                    lines = builtins.filter(None, lines)
-                else:
-                    lines = __builtin__.filter(None, lines)
-            # Convert to baseband frequencies, round, and append
-            for freq in lines:
-                logging.debug(f'freq: {freq}  center_freq: {self.center_freq}')
-                bb_freq = float(freq) - self.center_freq
-                bb_freq = round(bb_freq/self.channel_spacing)*\
-                                        self.channel_spacing
-                self.lockout_channels.append(bb_freq)
-        else:
-            pass
+            with open(self.lockout_file_name, 'r') as file:
+                lockout_config = yaml.safe_load(file)
+            logging.debug(lockout_config)
+            logging.debug(f"freqs: {lockout_config['frequencies']}")
+        #     with open(self.lockout_file_name) as lockout_file:
+        #         lines = lockout_file.read().splitlines()
+        #         lockout_file.close()
+        #         if PY3:
+        #             lines = builtins.filter(None, lines)
+        #         else:
+        #             lines = __builtin__.filter(None, lines)
+        #     # Convert to baseband frequencies, round, and append
+        #     for freq in lines:
+        #         logging.debug(f'freq: {freq}  center_freq: {self.center_freq}')
+        #         bb_freq = float(freq) - self.center_freq
+        #         bb_freq = round(bb_freq/self.channel_spacing)*\
+        #                                 self.channel_spacing
+        #         self.lockout_channels.append(bb_freq)
+        #         logging.debug(f'bb_freq: {bb_freq}')
+        # else:
+        #     pass
 
         # Create a lockout channel list of strings for the GUI in Mhz
         self.gui_lockout_channels = []
