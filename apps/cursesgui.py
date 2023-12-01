@@ -284,17 +284,17 @@ class LockoutWindow(object):
         for idx, lockout_channel in enumerate(gui_lockout_channels):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
-                base = curses.color_pair(5)
+                attr = curses.color_pair(6)
                 if isinstance(lockout_channel, dict):
                     text = f"{lockout_channel['min']}-{lockout_channel['max']}"
                     for channel in active_channels:
                         if float(channel) >= lockout_channel['min'] and float(channel) <= lockout_channel['max']:
-                            base = base | curses.A_BOLD
+                            attr = curses.color_pair(5) | curses.A_BOLD
                 else:
                     text = f"{lockout_channel}"
                     if lockout_channel in active_channels:
-                            base = base | curses.A_BOLD
-                self.win.addnstr(idx+1, 1, text, 20, base)
+                            attr = curses.color_pair(5) | curses.A_BOLD
+                self.win.addnstr(idx+1, 1, text, 20, attr)
             else:
                 pass
 

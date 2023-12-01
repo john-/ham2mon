@@ -417,6 +417,20 @@ class Scanner(object):
         logging.debug(f'not in range')
         return False
 
+    def _generate_gui_lockout_channels(self):
+        # Create a lockout channel list of strings for the GUI in Mhz
+        self.gui_lockout_channels = []
+        for lockout_channel in self.lockout_channels:
+            # lockout channel in MHz
+            if isinstance(lockout_channel, dict):
+                gui_lockout_channel = {'min': self._baseband_to_frequency(lockout_channel['min']), 'max': self._baseband_to_frequency(lockout_channel['max'])}
+            else:
+                gui_lockout_channel = self._baseband_to_frequency(lockout_channel)
+                
+            self.gui_lockout_channels.append(gui_lockout_channel)
+
+        logging.debug(self.gui_lockout_channels)
+    
     def add_lockout(self, idx):
         """Adds baseband frequency to lockout channels and updates GUI list
 
@@ -431,14 +445,7 @@ class Scanner(object):
                 self.lockout_channels = np.append(self.lockout_channels,
                                                   demod_freq)
 
-        # Create a lockout channel list of strings for the GUI in Mhz
-        self.gui_lockout_channels = []
-        for lockout_channel in self.lockout_channels:
-            # lockout channel in MHz
-            gui_lockout_channel = (lockout_channel + \
-                                    self.receiver.center_freq)/1E6
-            text = '{:.3f}'.format(gui_lockout_channel)
-            self.gui_lockout_channels.append(text)
+        self._generate_gui_lockout_channels()
 
     def _frequency_to_baseband(self, freq):
         bb_freq = float(freq) * 1E6 - self.center_freq
@@ -472,23 +479,7 @@ class Scanner(object):
                     'max': self._frequency_to_baseband(range['max'])
                 })
 
-        # Create a lockout channel list of strings for the GUI in Mhz
-        self.gui_lockout_channels = []
-        for lockout_channel in self.lockout_channels:
-            # lockout channel in MHz
-            logging.debug(lockout_channel)
-            if isinstance(lockout_channel, dict):
-                # gui_lockout_channel = f"{self._baseband_to_frequency(lockout_channel['min'])}-{self._baseband_to_frequency(lockout_channel['max'])}"
-                gui_lockout_channel = {'min': self._baseband_to_frequency(lockout_channel['min']), 'max': self._baseband_to_frequency(lockout_channel['max'])}
-                self.gui_lockout_channels.append(gui_lockout_channel)
-            else:
-                # gui_lockout_channel = f"{self._baseband_to_frequency(lockout_channel)}"
-                gui_lockout_channel = self._baseband_to_frequency(lockout_channel)
-                self.gui_lockout_channels.append(gui_lockout_channel)
-
-        logging.debug(self.gui_lockout_channels)
-            #text = '{:.3f}'.format(gui_lockout_channel)
-            #self.gui_lockout_channels.append(text)
+        self._generate_gui_lockout_channels()
 
     def update_priority(self):
         """Updates priority channels
