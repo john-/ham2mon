@@ -293,29 +293,8 @@ class Scanner(object):
             if not self.locked_out(channel):
                 temp = np.append(temp, channel)
             else:
-                logging.debug(f'locked out: {channel}')
                 pass
         channels = temp     
-
-        # # Remove channels that are locked out
-        # temp = []
-        # for channel in channels:
-        #     if channel not in self.lockout_channels:
-        #         temp = np.append(temp, channel)
-        #     else:
-        #         pass
-        # channels = temp
-
-        # # Remove channels that are outside the requested freq range
-        # temp = []
-        # for channel in channels:
-        #     #if channel > self.low_bound and channel < self.high_bound:
-        #     if self._in_range(channel):
-        #     #if not self.freq_low:
-        #         temp = np.append(temp, channel)
-        #     else:
-        #         pass
-        # channels = temp
 
         # Update demodulator last heards and expire old ones
         the_now = time.time()
@@ -367,14 +346,11 @@ class Scanner(object):
         # If channel is a zero then use an empty string
         self.gui_tuned_channels = []
         for demod_freq in self.receiver.get_demod_freqs():
-            if demod_freq == 0:
-                text = ""
-            else:
+            if demod_freq != 0:
                 # Calculate actual RF frequency in Mhz
                 gui_tuned_channel = (demod_freq + \
                                     self.center_freq)/1E6
-                text = '{:.3f}'.format(gui_tuned_channel)
-            self.gui_tuned_channels.append(text)
+                self.gui_tuned_channels.append(gui_tuned_channel)
 
         # Create an active channel list of strings for the GUI in Mhz
         # This is any channel above threshold
@@ -384,8 +360,7 @@ class Scanner(object):
         for channel in active_channels:
             # calculate active channel freq in MHz
             gui_active_channel = (channel + self.center_freq)/1E6
-            text = '{:.3f}'.format(gui_active_channel)
-            self.gui_active_channels.append(text)
+            self.gui_active_channels.append(gui_active_channel)
             # Add active channel to recent list for logging if not already there
             if gui_active_channel not in self.log_recent_channels:
                 self.log_recent_channels.append(gui_active_channel)
@@ -408,39 +383,13 @@ class Scanner(object):
     def locked_out(self, channel):
         locked = False
         for lockout_channel in self.lockout_channels:
-            logging.debug(f'channel: {int(channel)} lockout_channel: {lockout_channel}')
             if isinstance(lockout_channel, dict):
                 if channel >= lockout_channel['min'] and channel <= lockout_channel['max']:
                     locked = True
             else:
-                logging.debug(f'checking: {int(channel)}')
-                if int(channel) == lockout_channel:
+                if channel == lockout_channel:
                     locked = True
-                    logging.debug(f'equal - channel: {int(channel)}  lockout_channel: {lockout_channel}')
         return locked
-
-
-    # def _in_range(self, channel):
-    #     # Neither Low tune or High Tune specified
-    #     if not self.freq_low and not self.freq_high:
-    #         return True
-    #     # logging.debug(f'channel: {channel} delta: {self.freq_high - self.center_freq} freq_high: {self.freq_high} center_freq: {self.center_freq}')
-    #     logging.debug(f'channel: {channel} delta: {self.freq_low - self.center_freq} freq_low: {self.freq_low} center_freq: {self.center_freq}')
-    #     # High Tune only
-    #     if not self.freq_low and channel < self.freq_high - self.center_freq:
-    #         logging.debug('channel in range (small enough)')
-    #         return True
-    #     # Low Tune only
-    #     if not self.freq_high and channel > self.freq_low - self.center_freq:
-    #         logging.debug('channel in range (big enough)')
-    #         return True
-    #     # Both Low and High Tune
-    #     if channel > self.freq_low - self.center_freq and channel < self.freq_high - self.center_freq:
-    #         logging.debug('in range (in betwwen)')
-    #         return True
-        
-    #     logging.debug(f'not in range')
-    #     return False
 
     def _generate_gui_lockout_channels(self):
         # Create a lockout channel list of strings for the GUI in Mhz
@@ -454,8 +403,6 @@ class Scanner(object):
                 
             self.gui_lockout_channels.append(gui_lockout_channel)
 
-        logging.debug(self.gui_lockout_channels)
-    
     def add_lockout(self, idx):
         """Adds baseband frequency to lockout channels and updates GUI list
 
@@ -474,9 +421,7 @@ class Scanner(object):
 
     def _frequency_to_baseband(self, freq):
         bb_freq = float(freq) * 1E6 - self.center_freq
-        logging.debug(f'bb_freq: {bb_freq}')
         bb_freq = round(bb_freq/self.channel_spacing) * self.channel_spacing
-        logging.debug(f'bb_freq v2: {bb_freq}')
         return bb_freq
     
     def _baseband_to_frequency(self, bb_freq):
@@ -490,13 +435,14 @@ class Scanner(object):
 
         # Process lockout file if it was provided
         if self.lockout_file_name != "":
-            # Open file, split to list, remove empty strings
             with open(self.lockout_file_name, 'r') as file:
                 lockout_config = yaml.safe_load(file)
 
+            # Iindividual frequenices
             for freq in lockout_config['frequencies']:
                 self.lockout_channels.append(self._frequency_to_baseband(freq))
 
+            # Ranges of frequencies
             for range in lockout_config['ranges']:
                 self.lockout_channels.append({
                     'min': self._frequency_to_baseband(range['min']),

@@ -56,6 +56,7 @@ john:
 - dynamic gui sizing
 - recording classification
 - debug file option
+- revamped lockout handling
 
 lachesis:
 - Mute switch
@@ -143,8 +144,6 @@ Options:
                         Number of demodulators
   -d TYPE_DEMOD, --demodulator=TYPE_DEMOD
                         Type of demodulator (0=NBFM, 1=AM)
-  -e FREQ_RANGE, --range=FREQ_RANGE
-                        Limit reception to specified frequency range
   -f CENTER_FREQ, --freq=CENTER_FREQ
                         Hardware RF center frequency in Hz
   -r ASK_SAMP_RATE, --rate=ASK_SAMP_RATE
@@ -176,7 +175,7 @@ Options:
                         Threshold in dB
   -w, --write           Record (write) channels to disk
   -l LOCKOUT_FILE_NAME, --lockout=LOCKOUT_FILE_NAME
-                        File of EOL delimited lockout channels in Hz
+                        YAML file of lockout channels/ranges in Mhz
   -p PRIORITY_FILE_NAME, --priority=PRIORITY_FILE_NAME
                         File of EOL delimited priority channels in Hz
   -L CHANNEL_LOG_FILE_NAME, --log_file=CHANNEL_LOG_FILE_NAME
@@ -224,6 +223,10 @@ The ham2mon.py interfaces the scanner.py with the curses.py GUI.  The GUI provid
 The default settings are optimized for an Ettus B200.  The RTL dongle will require raising the squelch and adjustment of the spectrum scale and threshold.
 
 The next iteration of this program will probably use gr-dsd to decode P25 public safety in the 800 MHz band.
+
+## Lockout File
+
+The Lockout file is a YAML file that can contain individual frequencies to be locked out as well as ranges of frequencies.  All values are in Mhz.  See the example for details.
 
 ## Logging
 Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.

@@ -219,7 +219,7 @@ class ChannelWindow(object):
         # Use color if tuned channel is in active channel list during this scan_cycle
         for idx, gui_tuned_channel in enumerate(gui_tuned_channels):
             text = str(idx)
-            text = text.zfill(2) + ": " + gui_tuned_channel
+            text = text.zfill(2) + ": " + f'{gui_tuned_channel:.3f}'
             if idx < self.dims[0]-2:
                 # Display in first column
                 # text color based on activity
@@ -286,12 +286,12 @@ class LockoutWindow(object):
             if idx <= self.dims[0]-3:
                 attr = curses.color_pair(6)
                 if isinstance(lockout_channel, dict):
-                    text = f"{lockout_channel['min']}-{lockout_channel['max']}"
+                    text = f"{lockout_channel['min']:.3f}-{lockout_channel['max']:.3f}"
                     for channel in active_channels:
                         if float(channel) >= lockout_channel['min'] and float(channel) <= lockout_channel['max']:
                             attr = curses.color_pair(5) | curses.A_BOLD
                 else:
-                    text = f"{lockout_channel}"
+                    text = f"{lockout_channel:.3f}"
                     if lockout_channel in active_channels:
                             attr = curses.color_pair(5) | curses.A_BOLD
                 self.win.addnstr(idx+1, 1, text, 20, attr)
