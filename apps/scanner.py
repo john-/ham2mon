@@ -96,7 +96,7 @@ class Scanner(object):
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
 
-    def __init__(self, freq_low, freq_high, ask_samp_rate=4E6, num_demod=4, type_demod=0,
+    def __init__(self, ask_samp_rate=4E6, num_demod=4, type_demod=0,
                  hw_args="uhd", freq_correction=0, record=True,
                  lockout_file_name="", priority_file_name="",
                  channel_log_file_name="", channel_log_timeout=15,
@@ -113,8 +113,8 @@ class Scanner(object):
         self.record = record
         self.play = play
         self.audio_bps = audio_bps
-        self.freq_low = freq_low   # low end of demod window.  GUI Low Tune.
-        self.freq_high = freq_high # high end of demod window.  GUI High Tune.
+        # self.freq_low = freq_low   # low end of demod window.  GUI Low Tune.
+        # self.freq_high = freq_high # high end of demod window.  GUI High Tune.
         self.center_freq = center_freq
         self.spectrum = []
         self.lockout_channels = []
@@ -287,25 +287,35 @@ class Scanner(object):
         # Put the priority channels in front
         channels = np.append(self.priority_channels, channels)
 
-        # Remove channels that are locked out
+        # remove channels and ranges that are locked out
         temp = []
         for channel in channels:
-            if channel not in self.lockout_channels:
+            if not self.locked_out(channel):
                 temp = np.append(temp, channel)
             else:
+                logging.debug(f'locked out: {channel}')
                 pass
-        channels = temp
+        channels = temp     
 
-        # Remove channels that are outside the requested freq range
-        temp = []
-        for channel in channels:
-            #if channel > self.low_bound and channel < self.high_bound:
-            if self._in_range(channel):
-            #if not self.freq_low:
-                temp = np.append(temp, channel)
-            else:
-                pass
-        channels = temp
+        # # Remove channels that are locked out
+        # temp = []
+        # for channel in channels:
+        #     if channel not in self.lockout_channels:
+        #         temp = np.append(temp, channel)
+        #     else:
+        #         pass
+        # channels = temp
+
+        # # Remove channels that are outside the requested freq range
+        # temp = []
+        # for channel in channels:
+        #     #if channel > self.low_bound and channel < self.high_bound:
+        #     if self._in_range(channel):
+        #     #if not self.freq_low:
+        #         temp = np.append(temp, channel)
+        #     else:
+        #         pass
+        # channels = temp
 
         # Update demodulator last heards and expire old ones
         the_now = time.time()
@@ -395,27 +405,42 @@ class Scanner(object):
             # clear recent channels
             self.log_recent_channels = []
 
-    def _in_range(self, channel):
-        # Neither Low tune or High Tune specified
-        if not self.freq_low and not self.freq_high:
-            return True
-        # logging.debug(f'channel: {channel} delta: {self.freq_high - self.center_freq} freq_high: {self.freq_high} center_freq: {self.center_freq}')
-        logging.debug(f'channel: {channel} delta: {self.freq_low - self.center_freq} freq_low: {self.freq_low} center_freq: {self.center_freq}')
-        # High Tune only
-        if not self.freq_low and channel < self.freq_high - self.center_freq:
-            logging.debug('channel in range (small enough)')
-            return True
-        # Low Tune only
-        if not self.freq_high and channel > self.freq_low - self.center_freq:
-            logging.debug('channel in range (big enough)')
-            return True
-        # Both Low and High Tune
-        if channel > self.freq_low - self.center_freq and channel < self.freq_high - self.center_freq:
-            logging.debug('in range (in betwwen)')
-            return True
+    def locked_out(self, channel):
+        locked = False
+        for lockout_channel in self.lockout_channels:
+            logging.debug(f'channel: {int(channel)} lockout_channel: {lockout_channel}')
+            if isinstance(lockout_channel, dict):
+                if channel >= lockout_channel['min'] and channel <= lockout_channel['max']:
+                    locked = True
+            else:
+                logging.debug(f'checking: {int(channel)}')
+                if int(channel) == lockout_channel:
+                    locked = True
+                    logging.debug(f'equal - channel: {int(channel)}  lockout_channel: {lockout_channel}')
+        return locked
+
+
+    # def _in_range(self, channel):
+    #     # Neither Low tune or High Tune specified
+    #     if not self.freq_low and not self.freq_high:
+    #         return True
+    #     # logging.debug(f'channel: {channel} delta: {self.freq_high - self.center_freq} freq_high: {self.freq_high} center_freq: {self.center_freq}')
+    #     logging.debug(f'channel: {channel} delta: {self.freq_low - self.center_freq} freq_low: {self.freq_low} center_freq: {self.center_freq}')
+    #     # High Tune only
+    #     if not self.freq_low and channel < self.freq_high - self.center_freq:
+    #         logging.debug('channel in range (small enough)')
+    #         return True
+    #     # Low Tune only
+    #     if not self.freq_high and channel > self.freq_low - self.center_freq:
+    #         logging.debug('channel in range (big enough)')
+    #         return True
+    #     # Both Low and High Tune
+    #     if channel > self.freq_low - self.center_freq and channel < self.freq_high - self.center_freq:
+    #         logging.debug('in range (in betwwen)')
+    #         return True
         
-        logging.debug(f'not in range')
-        return False
+    #     logging.debug(f'not in range')
+    #     return False
 
     def _generate_gui_lockout_channels(self):
         # Create a lockout channel list of strings for the GUI in Mhz
@@ -450,8 +475,7 @@ class Scanner(object):
     def _frequency_to_baseband(self, freq):
         bb_freq = float(freq) * 1E6 - self.center_freq
         logging.debug(f'bb_freq: {bb_freq}')
-        bb_freq = round(bb_freq/self.channel_spacing)*\
-                                self.channel_spacing
+        bb_freq = round(bb_freq/self.channel_spacing) * self.channel_spacing
         logging.debug(f'bb_freq v2: {bb_freq}')
         return bb_freq
     
@@ -626,15 +650,15 @@ def main():
     audio_bps = parser.audio_bps
     channel_spacing = parser.channel_spacing
     center_freq = parser.center_freq
-    freq_low = parser.freq_low
-    freq_high = parser.freq_high
+    # freq_low = parser.freq_low
+    # freq_high = parser.freq_high
     min_recording = 0
     max_recording = 0
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, lockout_file_name,
                         priority_file_name, channel_log_file_name, play,
                         audio_bps, channel_spacing,
-                        center_freq, freq_low, freq_high,
+                        center_freq,
                         min_recording, max_recording)
 
 

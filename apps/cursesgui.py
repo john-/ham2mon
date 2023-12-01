@@ -368,7 +368,7 @@ class RxWindow(object):
         self.center_freq = 146E6
         self.min_freq = 144E6
         self.max_freq = 148E6
-        self.freq_low = 144E6
+        #self.freq_low = 144E6
         self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
@@ -423,15 +423,15 @@ class RxWindow(object):
         text = "Max Freq (MHz) : "
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
-        if self.freq_low:
-            index = index+1
-            text = "Low Tune (MHz) : "
-            self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        # if self.freq_low:
+        #     index = index+1
+        #     text = "Low Tune (MHz) : "
+        #     self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
-        if self.freq_high:
-            index = index+1
-            text = "High Tune (MHz): "
-            self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        # if self.freq_high:
+        #     index = index+1
+        #     text = "High Tune (MHz): "
+        #     self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
         for index2, gain in enumerate(self.gains, 2):
             text = "{} Gain (dB){} : ".format(gain["name"], (4-len(gain["name"]))*' ')
@@ -494,15 +494,15 @@ class RxWindow(object):
         text = '{:.3f}'.format((self.max_freq)/1E6)
         self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
-        if self.freq_low:
-            index = index+1
-            text = '{:.3f}'.format((self.freq_low)/1E6)
-            self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+        # if self.freq_low:
+        #     index = index+1
+        #     text = '{:.3f}'.format((self.freq_low)/1E6)
+        #     self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
-        if self.freq_high:
-            index = index+1
-            text = '{:.3f}'.format((self.freq_high)/1E6)
-            self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+        # if self.freq_high:
+        #     index = index+1
+        #     text = '{:.3f}'.format((self.freq_high)/1E6)
+        #     self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
         for index2, gain in enumerate(self.gains, 2):
             text = str(gain["value"])

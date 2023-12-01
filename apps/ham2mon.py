@@ -48,7 +48,7 @@ class MyDisplay():
 
         self.scanner.clean_up()
 
-    def make_display(self) -> None: 
+    def make_display(self) -> None:
         """Start scanner with GUI interface
 
         Initialize and set up screen
@@ -71,8 +71,8 @@ class MyDisplay():
         self.rxwin.center_freq = self.scanner.center_freq
         self.rxwin.min_freq = self.scanner.min_freq
         self.rxwin.max_freq = self.scanner.max_freq
-        self.rxwin.freq_low = self.scanner.freq_low
-        self.rxwin.freq_high = self.scanner.freq_high
+        # self.rxwin.freq_low = self.scanner.freq_low
+        # self.rxwin.freq_high = self.scanner.freq_high
         self.rxwin.samp_rate = self.scanner.samp_rate
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
@@ -91,7 +91,7 @@ class MyDisplay():
         self.specwin.min_db = PARSER.min_db
         self.rxwin.classifier_params = self.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
-   
+
     async def cycle(self):
         # Initiate a scan cycle
 
@@ -125,8 +125,8 @@ class MyDisplay():
         audio_bps = PARSER.audio_bps
         channel_spacing = PARSER.channel_spacing
         center_freq = PARSER.center_freq
-        freq_low = PARSER.freq_low
-        freq_high = PARSER.freq_high
+        # freq_low = PARSER.freq_low
+        # freq_high = PARSER.freq_high
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
         self.classifier_params = { 'V': PARSER.voice,
@@ -134,11 +134,11 @@ class MyDisplay():
                                    'S': PARSER.skip
                                  }
 
-        scanner = scnr.Scanner(freq_low, freq_high, ask_samp_rate, num_demod, type_demod, hw_args,
+        scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                             freq_correction, record, lockout_file_name,
                             priority_file_name, channel_log_file_name, channel_log_timeout,
                             play, audio_bps, channel_spacing,
-                            center_freq, 
+                            center_freq,
                             min_recording, max_recording, self.classifier_params)
 
         # Set the paramaters
