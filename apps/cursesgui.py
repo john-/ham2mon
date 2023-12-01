@@ -281,14 +281,20 @@ class LockoutWindow(object):
 
         # Draw the lockout channels
         # Use color if lockout channel is in active channel list during this scan_cycle
-        for idx, gui_lockout_channel in enumerate(gui_lockout_channels):
+        for idx, lockout_channel in enumerate(gui_lockout_channels):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
-                text = "   " + gui_lockout_channel
-                if gui_lockout_channel in active_channels:
-                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(5) | curses.A_BOLD)
+                base = curses.color_pair(5)
+                if isinstance(lockout_channel, dict):
+                    text = f"{lockout_channel['min']}-{lockout_channel['max']}"
+                    for channel in active_channels:
+                        if float(channel) >= lockout_channel['min'] and float(channel) <= lockout_channel['max']:
+                            base = base | curses.A_BOLD
                 else:
-                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(6))
+                    text = f"{lockout_channel}"
+                    if lockout_channel in active_channels:
+                            base = base | curses.A_BOLD
+                self.win.addnstr(idx+1, 1, text, 20, base)
             else:
                 pass
 

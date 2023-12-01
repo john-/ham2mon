@@ -448,6 +448,9 @@ class Scanner(object):
         logging.debug(f'bb_freq v2: {bb_freq}')
         return bb_freq
     
+    def _baseband_to_frequency(self, bb_freq):
+        return (bb_freq + self.receiver.center_freq)/1E6
+    
     def clear_lockout(self):
         """Clears lockout channels and updates GUI list
         """
@@ -459,40 +462,33 @@ class Scanner(object):
             # Open file, split to list, remove empty strings
             with open(self.lockout_file_name, 'r') as file:
                 lockout_config = yaml.safe_load(file)
-            logging.debug(lockout_config)
-            logging.debug(f"freqs: {lockout_config['frequencies']}")
+
             for freq in lockout_config['frequencies']:
                 self.lockout_channels.append(self._frequency_to_baseband(freq))
-            #for range in lockout_config['ranges']:
 
-
-
-        #     with open(self.lockout_file_name) as lockout_file:
-        #         lines = lockout_file.read().splitlines()
-        #         lockout_file.close()
-        #         if PY3:
-        #             lines = builtins.filter(None, lines)
-        #         else:
-        #             lines = __builtin__.filter(None, lines)
-        #     # Convert to baseband frequencies, round, and append
-        #     for freq in lines:
-        #         logging.debug(f'freq: {freq}  center_freq: {self.center_freq}')
-        #         bb_freq = float(freq) - self.center_freq
-        #         bb_freq = round(bb_freq/self.channel_spacing)*\
-        #                                 self.channel_spacing
-        #         self.lockout_channels.append(bb_freq)
-        #         logging.debug(f'bb_freq: {bb_freq}')
-        # else:
-        #     pass
+            for range in lockout_config['ranges']:
+                self.lockout_channels.append({
+                    'min': self._frequency_to_baseband(range['min']),
+                    'max': self._frequency_to_baseband(range['max'])
+                })
 
         # Create a lockout channel list of strings for the GUI in Mhz
         self.gui_lockout_channels = []
         for lockout_channel in self.lockout_channels:
             # lockout channel in MHz
-            gui_lockout_channel = (lockout_channel + \
-                                    self.receiver.center_freq)/1E6
-            text = '{:.3f}'.format(gui_lockout_channel)
-            self.gui_lockout_channels.append(text)
+            logging.debug(lockout_channel)
+            if isinstance(lockout_channel, dict):
+                # gui_lockout_channel = f"{self._baseband_to_frequency(lockout_channel['min'])}-{self._baseband_to_frequency(lockout_channel['max'])}"
+                gui_lockout_channel = {'min': self._baseband_to_frequency(lockout_channel['min']), 'max': self._baseband_to_frequency(lockout_channel['max'])}
+                self.gui_lockout_channels.append(gui_lockout_channel)
+            else:
+                # gui_lockout_channel = f"{self._baseband_to_frequency(lockout_channel)}"
+                gui_lockout_channel = self._baseband_to_frequency(lockout_channel)
+                self.gui_lockout_channels.append(gui_lockout_channel)
+
+        logging.debug(self.gui_lockout_channels)
+            #text = '{:.3f}'.format(gui_lockout_channel)
+            #self.gui_lockout_channels.append(text)
 
     def update_priority(self):
         """Updates priority channels
