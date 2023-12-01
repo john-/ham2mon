@@ -285,12 +285,12 @@ class LockoutWindow(object):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
                 attr = curses.color_pair(6)
-                if isinstance(lockout_channel, dict):
+                if isinstance(lockout_channel, dict):  # handle this range
                     text = f"{lockout_channel['min']:.3f}-{lockout_channel['max']:.3f}"
                     for channel in active_channels:
-                        if float(channel) >= lockout_channel['min'] and float(channel) <= lockout_channel['max']:
+                        if lockout_channel['min'] <= channel <= lockout_channel['max']:
                             attr = curses.color_pair(5) | curses.A_BOLD
-                else:
+                else:  # handle this single frequency
                     text = f"{lockout_channel:.3f}"
                     if lockout_channel in active_channels:
                             attr = curses.color_pair(5) | curses.A_BOLD
