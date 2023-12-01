@@ -440,6 +440,14 @@ class Scanner(object):
             text = '{:.3f}'.format(gui_lockout_channel)
             self.gui_lockout_channels.append(text)
 
+    def _frequency_to_baseband(self, freq):
+        bb_freq = float(freq) * 1E6 - self.center_freq
+        logging.debug(f'bb_freq: {bb_freq}')
+        bb_freq = round(bb_freq/self.channel_spacing)*\
+                                self.channel_spacing
+        logging.debug(f'bb_freq v2: {bb_freq}')
+        return bb_freq
+    
     def clear_lockout(self):
         """Clears lockout channels and updates GUI list
         """
@@ -453,6 +461,12 @@ class Scanner(object):
                 lockout_config = yaml.safe_load(file)
             logging.debug(lockout_config)
             logging.debug(f"freqs: {lockout_config['frequencies']}")
+            for freq in lockout_config['frequencies']:
+                self.lockout_channels.append(self._frequency_to_baseband(freq))
+            #for range in lockout_config['ranges']:
+
+
+
         #     with open(self.lockout_file_name) as lockout_file:
         #         lines = lockout_file.read().splitlines()
         #         lockout_file.close()
