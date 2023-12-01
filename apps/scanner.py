@@ -14,7 +14,6 @@ import sys
 import types
 import datetime
 import errors as err
-import logging
 import yaml
 
 PY3 = sys.version_info[0] == 3
@@ -64,8 +63,6 @@ class Scanner(object):
         channel_log_timeout (int): Timeout delay between active channel entries in log
         audio_bps (int): Audio bit depth in bps (bits/samples)
         center_freq (int): initial center frequency for receiver (Hz)
-        freq_low (int): Freq below which we won't tune a receiver (Hz)
-        freq_high (int): Freq above which we won't tune a receiver (Hz)
         spacing (int): granularity of frequency quantization
         min_recording (float): Minimum length of a recording in seconds
         max_recording (int): Maximum length of a recording in seconds
@@ -113,8 +110,6 @@ class Scanner(object):
         self.record = record
         self.play = play
         self.audio_bps = audio_bps
-        # self.freq_low = freq_low   # low end of demod window.  GUI Low Tune.
-        # self.freq_high = freq_high # high end of demod window.  GUI High Tune.
         self.center_freq = center_freq
         self.spectrum = []
         self.lockout_channels = []
@@ -132,8 +127,6 @@ class Scanner(object):
         self.log_recent_channels = []
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
-        # self.low_bound = freq_low  # demods only within bounds are kept (relative to center_freq)
-        # self.high_bound = freq_high  # demods only within bounds are kept (relative to center_freq)
         self.hang_time = 1.0
         self.max_recording = max_recording
 
@@ -164,16 +157,6 @@ class Scanner(object):
         # gui values clarifying range within sample rate (Min Freq / Max Freq)
         self.min_freq = (self.center_freq - self.samp_rate/2)
         self.max_freq = (self.center_freq + self.samp_rate/2)
-        # cannot set channel freq lower than min sampled freq (Low Tune)
-        # if (self.freq_low < self.min_freq):
-        #     self.freq_low = self.min_freq
-        # # cannot set channel freq higher than max sampled freq (High Tune)
-        # if (self.freq_high > self.max_freq):
-        #     self.freq_high = self.max_freq
-
-        # values of Low Tune and High Tune relative to center_freq
-        # self.low_bound = self.freq_low - self.center_freq
-        # self.high_bound = self.freq_high - self.center_freq
 
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
@@ -493,15 +476,6 @@ class Scanner(object):
         # gui values clarifying range within sample rate (Min Freq / Max Freq)
         self.min_freq = (self.center_freq - self.samp_rate/2)
         self.max_freq = (self.center_freq + self.samp_rate/2)
-        # # reset low/high freq for demod based on new center and bounds from original provided
-        # self.freq_low = self.low_bound + self.center_freq
-        # self.freq_high = self.high_bound + self.center_freq
-        # # cannot set channel freq lower than min sampled freq
-        # if (self.freq_low < self.min_freq):
-        #     self.freq_low = self.min_freq
-        # # cannot set channel freq higher than max sampled freq
-        # if (self.freq_high > self.max_freq):
-        #     self.freq_high = self.max_freq
 
         # Update the priority since frequency is changing
         self.update_priority()
@@ -596,8 +570,6 @@ def main():
     audio_bps = parser.audio_bps
     channel_spacing = parser.channel_spacing
     center_freq = parser.center_freq
-    # freq_low = parser.freq_low
-    # freq_high = parser.freq_high
     min_recording = 0
     max_recording = 0
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
