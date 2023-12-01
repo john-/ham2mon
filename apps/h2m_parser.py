@@ -57,10 +57,6 @@ class CLParser(object):
                           default=0,
                           help="Type of demodulator (0=NBFM, 1=AM)")
 
-        parser.add_argument("-e", "--range", type=str,
-                          dest="freq_range",
-                          help="Limit reception to specified frequency range")
-
         parser.add_argument("-f", "--freq", type=str, dest="center_freq",
                           default=146E6,
                           help="Hardware RF center frequency in Hz")
@@ -214,15 +210,6 @@ class CLParser(object):
         self.max_db = float(options.max_db)
         self.min_db = float(options.min_db)
         self.channel_spacing = int(options.channel_spacing)
-        # try:
-        #     self.freq_low = int(options.freq_range.split('-')[0])
-        # except:
-        #     self.freq_low = None
-
-        # try:
-        #     self.freq_high = int(options.freq_range.split('-')[1])
-        # except:
-        #     self.freq_high = None
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
@@ -261,8 +248,6 @@ def main():
     print("max_db:              " + str(parser.max_db))
     print("min_db:              " + str(parser.min_db))
     print("channel_spacing:     " + str(parser.channel_spacing))
-    # print("freq_low:            " + str(parser.freq_low))
-    # print("freq_high:           " + str(parser.freq_high))
     print("min_recording:       " + str(parser.min_recording))
     print("max_recording:       " + str(parser.max_recording))
     print("voice:               " + str(parser.voice))
