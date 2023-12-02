@@ -367,7 +367,7 @@ class Scanner(object):
         locked = False
         for lockout_channel in self.lockout_channels:
             if isinstance(lockout_channel, dict):
-                if channel >= lockout_channel['min'] and channel <= lockout_channel['max']:
+                if lockout_channel['min'] <= channel <= lockout_channel['max']:
                     locked = True
             else:
                 if channel == lockout_channel:
