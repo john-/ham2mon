@@ -366,10 +366,10 @@ class Scanner(object):
     def locked_out(self, channel):
         locked = False
         for lockout_channel in self.lockout_channels:
-            if isinstance(lockout_channel, dict):
+            if isinstance(lockout_channel, dict):  # is range this range locked out?
                 if lockout_channel['min'] <= channel <= lockout_channel['max']:
                     locked = True
-            else:
+            else:  # is this frequency locked out?
                 if channel == lockout_channel:
                     locked = True
         return locked
@@ -378,10 +378,9 @@ class Scanner(object):
         # Create a lockout channel list of strings for the GUI in Mhz
         self.gui_lockout_channels = []
         for lockout_channel in self.lockout_channels:
-            # lockout channel in MHz
-            if isinstance(lockout_channel, dict):
+            if isinstance(lockout_channel, dict):  # add the range lockout
                 gui_lockout_channel = {'min': self._baseband_to_frequency(lockout_channel['min']), 'max': self._baseband_to_frequency(lockout_channel['max'])}
-            else:
+            else:  # add the frequency lockout
                 gui_lockout_channel = self._baseband_to_frequency(lockout_channel)
                 
             self.gui_lockout_channels.append(gui_lockout_channel)
