@@ -219,7 +219,7 @@ class ChannelWindow(object):
         # Use color if tuned channel is in active channel list during this scan_cycle
         for idx, gui_tuned_channel in enumerate(gui_tuned_channels):
             text = str(idx)
-            text = text.zfill(2) + ": " + gui_tuned_channel
+            text = text.zfill(2) + ": " + f'{gui_tuned_channel:.3f}'
             if idx < self.dims[0]-2:
                 # Display in first column
                 # text color based on activity
@@ -281,14 +281,20 @@ class LockoutWindow(object):
 
         # Draw the lockout channels
         # Use color if lockout channel is in active channel list during this scan_cycle
-        for idx, gui_lockout_channel in enumerate(gui_lockout_channels):
+        for idx, lockout_channel in enumerate(gui_lockout_channels):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
-                text = "   " + gui_lockout_channel
-                if gui_lockout_channel in active_channels:
-                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(5) | curses.A_BOLD)
-                else:
-                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(6))
+                attr = curses.color_pair(6)
+                if isinstance(lockout_channel, dict):  # handle this range
+                    text = f"{lockout_channel['min']:.3f}-{lockout_channel['max']:.3f}"
+                    for channel in active_channels:
+                        if lockout_channel['min'] <= channel <= lockout_channel['max']:
+                            attr = curses.color_pair(5) | curses.A_BOLD
+                else:  # handle this single frequency
+                    text = f"{lockout_channel:.3f}"
+                    if lockout_channel in active_channels:
+                            attr = curses.color_pair(5) | curses.A_BOLD
+                self.win.addnstr(idx+1, 1, text, 20, attr)
             else:
                 pass
 
@@ -362,7 +368,6 @@ class RxWindow(object):
         self.center_freq = 146E6
         self.min_freq = 144E6
         self.max_freq = 148E6
-        self.freq_low = 144E6
         self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
@@ -415,14 +420,6 @@ class RxWindow(object):
 
         index = index+1
         text = "Max Freq (MHz) : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
-
-        index = index+1
-        text = "Low Tune (MHz) : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
-
-        index = index+1
-        text = "High Tune (MHz): "
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
         for index2, gain in enumerate(self.gains, 2):
@@ -486,14 +483,6 @@ class RxWindow(object):
         text = '{:.3f}'.format((self.max_freq)/1E6)
         self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
-        index = index+1
-        text = '{:.3f}'.format((self.freq_low)/1E6)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
-
-        index = index+1
-        text = '{:.3f}'.format((self.freq_high)/1E6)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
-
         for index2, gain in enumerate(self.gains, 2):
             text = str(gain["value"])
             self.win.addnstr(index+index2-1, 18, text, 8, curses.color_pair(5))
@@ -543,26 +532,6 @@ class RxWindow(object):
         index = index+1
         text = str(self.log_mode)
         self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
-
-        # for index, gain in enumerate(self.gains, 2):
-        #     text = str(gain["value"])
-        #     self.win.addnstr(index, 17, text, 8, curses.color_pair(5))
-
-        # text = str(self.samp_rate/1E6)
-        # self.win.addnstr(index+1, 17, text, 8)
-        # text = str(self.squelch_db)
-        # self.win.addnstr(index+2, 17, text, 8, curses.color_pair(5))
-        # text = str(self.volume_db)
-        # self.win.addnstr(index+3, 17, text, 8, curses.color_pair(5))
-
-        # text = str(self.record)
-        # self.win.addnstr(1, 40, text, 8)
-        # text = str(self.type_demod)
-        # self.win.addnstr(2, 40, text, 8)
-        # text = str(self.lockout_file_name)
-        # self.win.addnstr(3, 40, text, 20)
-        # text = str(self.priority_file_name)
-        # self.win.addnstr(4, 40, text, 20)
 
         # Hide cursor
         self.win.leaveok(1)

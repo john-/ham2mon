@@ -6,8 +6,9 @@ Created on Sat Jul 18 15:21:33 2015
 @author: madengr
 """
 
-from optparse import OptionParser
-from gnuradio.eng_option import eng_option
+# from optparse import OptionParser
+from argparse import ArgumentParser
+# from gnuradio.eng_option import eng_option
 
 class CLParser(object):
     """Command line parser
@@ -42,141 +43,141 @@ class CLParser(object):
     def __init__(self):
 
         # Setup the parser for command line arguments
-        parser = OptionParser(option_class=eng_option)
+        parser = ArgumentParser()
 
-        parser.add_option("-a", "--args", type="string", dest="hw_args",
+        parser.add_argument("-a", "--args", type=str, dest="hw_args",
                           default='uhd',
                           help="Hardware args")
 
-        parser.add_option("-n", "--demod", type="int", dest="num_demod",
+        parser.add_argument("-n", "--demod", type=int, dest="num_demod",
                           default=4,
                           help="Number of demodulators")
 
-        parser.add_option("-d", "--demodulator", type="int", dest="type_demod",
+        parser.add_argument("-d", "--demodulator", type=int, dest="type_demod",
                           default=0,
                           help="Type of demodulator (0=NBFM, 1=AM)")
 
-        parser.add_option("-e", "--range", type="string",
-                          dest="freq_range", default="0-2000000000",
-                          help="Limit reception to specified frequency range")
-
-        parser.add_option("-f", "--freq", type="string", dest="center_freq",
+        parser.add_argument("-f", "--freq", type=str, dest="center_freq",
                           default=146E6,
                           help="Hardware RF center frequency in Hz")
 
-        parser.add_option("-r", "--rate", type="string", dest="ask_samp_rate",
+        parser.add_argument("-r", "--rate", type=str, dest="ask_samp_rate",
                           default=4E6,
                           help="Hardware ask sample rate in sps (1E6 minimum)")
 
-        parser.add_option("-g", "--gain", "--rf_gain",  type="eng_float", dest="rf_gain_db",
+        parser.add_argument("-g", "--gain", "--rf_gain",  type=float, dest="rf_gain_db",
                           default=0, help="Hardware RF gain in dB")
 
-        parser.add_option("-i", "--if_gain", type="eng_float", dest="if_gain_db",
+        parser.add_argument("-i", "--if_gain", type=float, dest="if_gain_db",
                           default=16, help="Hardware IF gain in dB")
 
-        parser.add_option("-o", "--bb_gain", type="eng_float", dest="bb_gain_db",
+        parser.add_argument("-o", "--bb_gain", type=float, dest="bb_gain_db",
                           default=16, help="Hardware BB gain in dB")
 
-        parser.add_option("--lna_gain", type="eng_float", dest="lna_gain_db",
+        parser.add_argument("--lna_gain", type=float, dest="lna_gain_db",
                           default=8, help="Hardware LNA gain in dB")
 
-        parser.add_option("--att_gain", type="eng_float", dest="att_gain_db",
+        parser.add_argument("--att_gain", type=float, dest="att_gain_db",
                           default=8, help="Hardware ATT gain in dB")
 
-        parser.add_option("--lna_mix_bb_gain", type="eng_float", dest="lna_mix_bb_gain_db",
+        parser.add_argument("--lna_mix_bb_gain", type=float, dest="lna_mix_bb_gain_db",
                           default=8, help="Hardware LNA_MIX_BB gain in dB")
 
-        parser.add_option("--tia_gain", type="eng_float", dest="tia_gain_db",
+        parser.add_argument("--tia_gain", type=float, dest="tia_gain_db",
                           default=8, help="Hardware TIA gain in dB")
 
-        parser.add_option("--pga_gain", type="eng_float", dest="pga_gain_db",
+        parser.add_argument("--pga_gain", type=float, dest="pga_gain_db",
                           default=8, help="Hardware PGA gain in dB")
 
-        parser.add_option("--lb_gain", type="eng_float", dest="lb_gain_db",
+        parser.add_argument("--lb_gain", type=float, dest="lb_gain_db",
                           default=8, help="Hardware LB gain in dB")
 
-        parser.add_option("-x", "--mix_gain", type="eng_float", dest="mix_gain_db",
+        parser.add_argument("-x", "--mix_gain", type=float, dest="mix_gain_db",
                           default=5, help="Hardware MIX gain index")
 
-        parser.add_option("-s", "--squelch", type="eng_float",
+        parser.add_argument("-s", "--squelch", type=float,
                           dest="squelch_db", default=-60,
                           help="Squelch in dB")
 
-        parser.add_option("-v", "--volume", type="eng_float",
+        parser.add_argument("-v", "--volume", type=float,
                           dest="volume_db", default=0,
                           help="Volume in dB")
 
-        parser.add_option("-t", "--threshold", type="eng_float",
+        parser.add_argument("-t", "--threshold", type=float,
                           dest="threshold_db", default=10,
                           help="Threshold in dB")
 
-        parser.add_option("-w", "--write",
+        parser.add_argument("-w", "--write",
                           dest="record", default=False, action="store_true",
                           help="Record (write) channels to disk")
 
-        parser.add_option("-l", "--lockout", type="string",
+        parser.add_argument("-l", "--lockout", type=str,
                           dest="lockout_file_name",
                           default="",
                           help="File of EOL delimited lockout channels in Hz")
 
-        parser.add_option("-p", "--priority", type="string",
+        parser.add_argument("-p", "--priority", type=str,
                           dest="priority_file_name",
                           default="",
                           help="File of EOL delimited priority channels in Hz")
 
-        parser.add_option("-L", "--log_file", type="string",
+        parser.add_argument("-L", "--log_file", type=str,
                           dest="channel_log_file_name",
                           default="channel-log",
                           help="Log file for channel detection")
 
-        parser.add_option("-A", "--log_active_timeout", type="int",
+        parser.add_argument("-A", "--log_active_timeout", type=int,
                           dest="channel_log_timeout",
                           default=15,
                           help="Timeout delay for active channel log entries")
 
-        parser.add_option("-c", "--correction", type="int", dest="freq_correction",
+        parser.add_argument("-c", "--correction", type=int, dest="freq_correction",
                           default=0,
                           help="Frequency correction in ppm")
 
-        parser.add_option("-m", "--mute-audio", dest="play",
+        parser.add_argument("-m", "--mute-audio", dest="play",
                           action="store_false", default=True,
                           help="Mute audio from speaker (still allows recording)")
 
-        parser.add_option("-b", "--bps", type="int", dest="audio_bps",
+        parser.add_argument("-b", "--bps", type=int, dest="audio_bps",
                           default=16,
                           help="Audio bit depth (bps)")
         
-        parser.add_option("-M", "--max_db", type="float", dest="max_db",
+        parser.add_argument("-M", "--max_db", type=float, dest="max_db",
                           default=50,
                           help="Spectrum window max dB for display")
 
-        parser.add_option("-N", "--min_db", type="float", dest="min_db",
+        parser.add_argument("-N", "--min_db", type=float, dest="min_db",
                           default=-10,
                           help="Spectrum window min dB for display (no greater than -10dB from max")
 
-        parser.add_option("-B", "--channel-spacing", type="int", dest="channel_spacing",
+        parser.add_argument("-B", "--channel-spacing", type=int, dest="channel_spacing",
                           default=5000,
                           help="Channel spacing (spectrum bin size)")
 
-        parser.add_option("--min_recording", type="eng_float", dest="min_recording",
+        parser.add_argument("--min_recording", type=float, dest="min_recording",
                           default=0,
                           help="Minumum length of a recording in seconds")
 
-        parser.add_option("--max_recording", type="eng_float", dest="max_recording",
+        parser.add_argument("--max_recording", type=float, dest="max_recording",
                           default=0,
                           help="Maximum length of a recording in seconds")
 
-        parser.add_option("--voice", dest="voice", action="store_true",
+        parser.add_argument("--voice", dest="voice", action="store_true",
                           help="Record voice")
         
-        parser.add_option("--data", dest="data", action="store_true",
+        parser.add_argument("--data", dest="data", action="store_true",
                           help="Record voice")
 
-        parser.add_option("--skip", dest="skip", action="store_true",
-                          help="Record voice")                
+        parser.add_argument("--skip", dest="skip", action="store_true",
+                          help="Record voice")  
 
-        options = parser.parse_args()[0]
-        self.parser_args = parser.parse_args()[1]
+        parser.add_argument("--debug", dest="debug", action="store_true",
+                          help="Enable debug file with additional information (ham2mon.log)")              
+
+        options = parser.parse_args()
+        self.print_help = parser.print_help
+        self.parser_args = parser.parse_args
 
         self.hw_args = str(options.hw_args)
         self.num_demod = int(options.num_demod)
@@ -209,15 +210,6 @@ class CLParser(object):
         self.max_db = float(options.max_db)
         self.min_db = float(options.min_db)
         self.channel_spacing = int(options.channel_spacing)
-        try:
-            self.freq_low = int(options.freq_range.split('-')[0])
-        except:
-            self.freq_low = 0
-
-        try:
-            self.freq_high = int(options.freq_range.split('-')[1])
-        except:
-            self.freq_high = 0
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
@@ -227,14 +219,12 @@ class CLParser(object):
         if self.voice or self.data or self.skip:
             self.record = True
 
+        self.debug = bool(options.debug)
+
 def main():
     """Test the parser"""
 
     parser = CLParser()
-
-    if len(parser.parser_args) != 0:
-        parser.print_help() #pylint: disable=maybe-no-member
-        raise(SystemExit, 1)
 
     print("hw_args:             " + parser.hw_args)
     print("num_demod:           " + str(parser.num_demod))
@@ -258,13 +248,12 @@ def main():
     print("max_db:              " + str(parser.max_db))
     print("min_db:              " + str(parser.min_db))
     print("channel_spacing:     " + str(parser.channel_spacing))
-    print("freq_low:            " + str(parser.freq_low))
-    print("freq_high:           " + str(parser.freq_high))
     print("min_recording:       " + str(parser.min_recording))
     print("max_recording:       " + str(parser.max_recording))
     print("voice:               " + str(parser.voice))
     print("data:                " + str(parser.data))
     print("skip:                " + str(parser.skip))
+    print("debug:               " + str(parser.debug))
 
 if __name__ == '__main__':
     try:

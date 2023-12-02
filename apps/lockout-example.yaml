@@ -1,0 +1,14 @@
+frequencies:
+  - 450.225   # unknown data
+  - 451.125
+  - 460.4
+  - 460.725
+  - 467.710
+  - 467.715
+ranges:
+  - min: 460.4
+    max: 460.8
+  - min: 124.125
+    max: 134.625 
+  - min: 467.0  # subset of FRS
+    max: 468.0

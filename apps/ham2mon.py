@@ -9,11 +9,12 @@ Created on Fri Jul  3 13:38:36 2015
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper, echo, nocbreak, endwin
 import cursesgui
-import parser
+import h2m_parser as h2m_parser
 import time
 import asyncio
 import errors as err
 import logging
+import traceback
 from os.path import realpath, dirname
 
 import _curses
@@ -47,7 +48,7 @@ class MyDisplay():
 
         self.scanner.clean_up()
 
-    def make_display(self) -> None: 
+    def make_display(self) -> None:
         """Start scanner with GUI interface
 
         Initialize and set up screen
@@ -70,8 +71,8 @@ class MyDisplay():
         self.rxwin.center_freq = self.scanner.center_freq
         self.rxwin.min_freq = self.scanner.min_freq
         self.rxwin.max_freq = self.scanner.max_freq
-        self.rxwin.freq_low = self.scanner.freq_low
-        self.rxwin.freq_high = self.scanner.freq_high
+        # self.rxwin.freq_low = self.scanner.freq_low
+        # self.rxwin.freq_high = self.scanner.freq_high
         self.rxwin.samp_rate = self.scanner.samp_rate
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
@@ -90,7 +91,7 @@ class MyDisplay():
         self.specwin.min_db = PARSER.min_db
         self.rxwin.classifier_params = self.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
-   
+
     async def cycle(self):
         # Initiate a scan cycle
 
@@ -124,8 +125,8 @@ class MyDisplay():
         audio_bps = PARSER.audio_bps
         channel_spacing = PARSER.channel_spacing
         center_freq = PARSER.center_freq
-        freq_low = PARSER.freq_low
-        freq_high = PARSER.freq_high
+        # freq_low = PARSER.freq_low
+        # freq_high = PARSER.freq_high
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
         self.classifier_params = { 'V': PARSER.voice,
@@ -137,7 +138,7 @@ class MyDisplay():
                             freq_correction, record, lockout_file_name,
                             priority_file_name, channel_log_file_name, channel_log_timeout,
                             play, audio_bps, channel_spacing,
-                            center_freq, freq_low, freq_high,
+                            center_freq,
                             min_recording, max_recording, self.classifier_params)
 
         # Set the paramaters
@@ -188,18 +189,17 @@ def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
 
 if __name__ == '__main__':
-    dir = realpath(dirname(__file__))
-    logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
-        level=logging.DEBUG, format='%(asctime)s %(message)s')
 
     try:
         # Do this since curses wrapper won't let parser write to screen
-        PARSER = parser.CLParser()
-        if len(PARSER.parser_args) != 0:
-            PARSER.print_help() #pylint: disable=maybe-no-member
-            raise(SystemExit, 1)
-        else:
-            wrapper(main)
+        PARSER = h2m_parser.CLParser()
+
+        if PARSER.debug:
+            dir = realpath(dirname(__file__))
+            logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
+            level=logging.DEBUG, format='%(asctime)s %(message)s')
+
+        wrapper(main)
     except KeyboardInterrupt:
         pass
     except RuntimeError as err:
@@ -207,6 +207,7 @@ if __name__ == '__main__':
         print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root.")
         print("")
         print("RuntimeError: {err=}, {type(err)=}")
+        logging.debug(traceback.format_exc())
         print("")
     except err.LogError:
         print("")
@@ -219,6 +220,7 @@ if __name__ == '__main__':
     except BaseException as err:
         print("")
         print("Unexpected: {err=}, {type(err)=}", err, type(err))
+        logging.debug(traceback.format_exc())
         print("")
 
     finally:
