@@ -12,6 +12,8 @@ import cursesgui
 import parser
 import time
 import errors as err
+import traceback
+import sys
 
 def main(screen):
     """Start scanner with GUI interface
@@ -176,17 +178,29 @@ if __name__ == '__main__':
         print("")
         print("RuntimeError: {err=}, {type(err)=}")
         print("")
+        print(traceback.format_exc)
+        print(sys.exc_info()[2])
+        print("")
     except err.LogError:
         print("")
         print("LogError: database logging not active, to be expanded.")
+        print("")
+        print(traceback.format_exc)
+        print(sys.exc_info()[2])
         print("")
     except OSError as err:
         print("")
         print("OS error: {0}".format(err))
         print("")
+        print(traceback.format_exc)
+        print(sys.exc_info()[2])
+        print("")
     except BaseException as err:
         print("")
         print("Unexpected: {err=}, {type(err)=}", err, type(err))
+        print("")
+        print(traceback.format_exc)
+        print(sys.exc_info()[2])
         print("")
 
     finally:
