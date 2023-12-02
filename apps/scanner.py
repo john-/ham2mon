@@ -7,7 +7,7 @@ Created on Fri Jul  3 13:38:36 2015
 """
 import receiver as recvr
 import estimate
-import parser as prsr
+import h2m_parser as prsr
 import time
 import numpy as np
 import sys
@@ -557,7 +557,7 @@ class Scanner(object):
     def clean_up(self):
         # cleanup terminating all demodulators
         for demod in self.receiver.demodulators:
-            demod.set_center_freq(0, 0);
+            demod.set_center_freq(0, 0)
 
 
 def main():

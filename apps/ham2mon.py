@@ -9,11 +9,12 @@ Created on Fri Jul  3 13:38:36 2015
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper, echo, nocbreak, endwin
 import cursesgui
-import parser
+import h2m_parser as h2m_parser
 import time
 import asyncio
 import errors as err
 import logging
+import traceback
 from os.path import realpath, dirname
 
 import _curses
@@ -188,18 +189,17 @@ def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
 
 if __name__ == '__main__':
-    dir = realpath(dirname(__file__))
-    logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
-        level=logging.DEBUG, format='%(asctime)s %(message)s')
 
     try:
         # Do this since curses wrapper won't let parser write to screen
-        PARSER = parser.CLParser()
-        if len(PARSER.parser_args) != 0:
-            PARSER.print_help() #pylint: disable=maybe-no-member
-            raise(SystemExit, 1)
-        else:
-            wrapper(main)
+        PARSER = h2m_parser.CLParser()
+
+        if PARSER.debug:
+            dir = realpath(dirname(__file__))
+            logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
+            level=logging.DEBUG, format='%(asctime)s %(message)s')
+
+        wrapper(main)
     except KeyboardInterrupt:
         pass
     except RuntimeError as err:
@@ -207,6 +207,7 @@ if __name__ == '__main__':
         print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root.")
         print("")
         print("RuntimeError: {err=}, {type(err)=}")
+        logging.debug(traceback.format_exc())
         print("")
     except err.LogError:
         print("")
@@ -219,6 +220,7 @@ if __name__ == '__main__':
     except BaseException as err:
         print("")
         print("Unexpected: {err=}, {type(err)=}", err, type(err))
+        logging.debug(traceback.format_exc())
         print("")
 
     finally:

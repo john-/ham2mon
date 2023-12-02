@@ -55,6 +55,7 @@ john:
 - min/max recording
 - dynamic gui sizing
 - recording classification
+- debug file option
 
 lachesis:
 - Mute switch
@@ -200,6 +201,8 @@ Options:
                         Maximum length of a recording in seconds
   --voice, --data, --skip
                         Record audio if classified as this type
+  --debug
+                        Enable debug file with additional information (ham2mon.log)                        
 ```
 Note: The available gains are hardware specific.  The user interface will list the gains availble based on hardware option supplied to ham2mon.
 
