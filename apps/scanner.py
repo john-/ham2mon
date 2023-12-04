@@ -253,10 +253,11 @@ class Scanner(object):
 
         # Convert detected signal peaks from bin indices to baseband frequency in Hz
         signal_freqs = (signal_bins - len(self.spectrum)/2) * self.samp_rate / len(self.spectrum)
+
         # keep signal power with each channel for scanner prioritization (close call priority)
         signal_powers = []
         for bindx in range(len(signal_bins)):
-            signal_powers = self.spectrum[bindx]
+            signal_powers.append(self.spectrum[bindx])
 
         # Round channels to channel spacing
         # Note this affects tuning the demodulators
@@ -266,13 +267,20 @@ class Scanner(object):
         
         # TODO should find channels that are less than half channel-spacing away from a provided priority channel
         # and replace with priority channel center rather than fixed spacings
-        signal_channelized = signal_freqs + self.center_freq
-        signal_channelized = np.round(signal_channelized / self.channel_spacing) * self.channel_spacing
-        signal_channelized = signal_channelized - self.center_freq
+        #signal_channelized = signal_freqs + self.center_freq
+        #signal_channelized = np.round(signal_channels / self.channel_spacing) * self.channel_spacing
+        #signal_channelized = signal_channels - self.center_freq
+        # in baseband
+        signal_channels = []
+        for fidx in range(len(signal_freqs)):
+            signal_channels.append(np.round(signal_freqs[fidx] / self.channel_spacing) * self.channel_spacing)
+        #    signal_channels.append((np.round((signal_freqs[fidx] + self.center_freq) / self.channel_spacing) \
+        #            + self.channel_spacing) - self.center_freq)
 
         # set active channels for gui highlight before filtering down lockout or adding priority
         # TODO revisit how gui highlights active vs priority, use tuple to inform channel, pwr, type(priority/continuing/closecall/regular)
-        self.active_channels = signal_channelized
+        # in baseband
+        self.active_channels = signal_channels
 
         #
         #sys.stderr.write("\n\n ** gothere **\n\n")
@@ -289,10 +297,11 @@ class Scanner(object):
         channel_type_gui = ["+", " ", "^"]
 
         # empty list of tuples
-        # channels_tuple_key = ("index", "signal frequency channelized", "signal power", "spectrum bin")
+        # channels_tuple_key = ("index", "signal frequency channel", "signal power", "spectrum bin")
+        # in baseband
         self.unordered_active_channels = []
-        for idx in range(len(signal_channelized)):
-            self.unordered_active_channels.append((idx,signal_channelized[idx],signal_powers[idx],signal_bins[idx]))
+        for idx in range(len(signal_channels)):
+            self.unordered_active_channels.append((idx,signal_channels[idx],signal_powers[idx],signal_bins[idx]))
 
         self.ordered_active_channels = []
 
@@ -347,56 +356,61 @@ class Scanner(object):
         # Update demodulator last heards and expire old ones
         the_now = time.time()
         for idx, demod in enumerate(self.receiver.demodulators):
-            if demod.center_freq in self.ordered_active_channels_freqs:
+            if (demod.tuner_freq != 0) and (demod.tuner_freq not in self.ordered_active_channels_freqs):
+                if the_now - demod.last_heard > self.hang_time:
+                    demod.set_tuner_freq(0, self.center_freq)
+            else:
                 # maintain active demod
                 demod.set_last_heard(the_now)
-            elif demod.center_freq > 0:
-                if the_now - demod.get_last_heard() > self.hang_time:
-                    # zero stale demod
-                    self.__print_channel_log__(demod.center_freq + self.center_freq, False, idx)
-                    demod.set_center_freq(0,self.center_Freq)
+                # Write in channel log file that the channel is off
+                self.__print_channel_log__(demod.tuner_freq + self.center_freq, False, idx)
 
         # priority relative to this round of assignments only
         demod_priority = [99999] * len(self.receiver.demodulators)
 
         # mark demodulators already servicing active channels with their relative priority
+        # priority is index of ordered channels, lower is better
         active_channel_covered_flags= [False] * len(self.ordered_active_channels)
         for idx, a_chan in enumerate(self.ordered_active_channels):
-            assigned = False
             for jdx, demod in enumerate(self.receiver.demodulators):
-                if demod.center_Freq == a_chan[1]:
+                if demod.tuner_freq == a_chan[1]:
                     demod_priority[jdx] = idx
                     active_channel_covered_flags[idx] = True
-                    break
 
         # assign uncovered channels to demodulators in priority order
         # should stop this when reaching the max num of demodulators, do not keep replacing last lowest priority
-        for jdx in range(len(self.receiver.demodulators)):
-            for idx, a_chan in enumerate(self.ordered_active_channels):
-                if not active_channel_covered_flags[idx]:
-                    # locate lowest prio demod available and replace
-                    lowest_prio_demod_idx = -1
-                    lowest_prio_demod_prio = 99999
-                    for kdx, demod in enumerate(self.receiver.demodulators):
-                        if demod_priority[kdx] < lowest_prio_demod_prio:
-                            lowest_prio_demod_prio = demod_priority[kdx]
-                            lowest_prio_demod_idx = kdx
-                            lowest_prio_demod = demod
+        # the lowest priority channel that can be serviced will be the max number of demodulators
+        num_demod = len(self.receiver.demodulators)
+        for idx, a_chan in enumerate(self.ordered_active_channels):
+            if not active_channel_covered_flags[idx] and idx <= num_demod:
+                # locate lowest prio demod available, with priority lower than current channel priority idx
+                # low priority is a high priority value, because ordered channel indexes are used as priorities (1 is highest priority)
+                lowest_prio_demod_idx = -1
+                lowest_prio_demod_prio = idx
+                for kdx, demod in enumerate(self.receiver.demodulators):
+                    if demod_priority[kdx] > lowest_prio_demod_prio:
+                        lowest_prio_demod_prio = demod_priority[kdx]
+                        lowest_prio_demod_idx = kdx
+                        lowest_prio_demod = demod
 
-                    lowest_prio_demod.set_center_freq(a_chan[1],self.center_freq)
+                # if a lower priority demod was found, replace it with current idx ordered channel, else cannot service this channel
+                if (lowest_prio_demod_prio > idx):
+                    lowest_prio_demod.set_tuner_freq(a_chan[1], self.center_freq)
                     active_channel_covered_flags[idx] = True
                     demod_priority[lowest_prio_demod_idx] = idx
+                else:
+                    break
 
         # this resets demodulators to the same frequency when running length is exceeded, which is a file size control
-        for demodulator in self.receiver.demodulators:
-                if demodulator.time_stamp > 0 and \
-                      time.time() - demodulator.time_stamp > \
+        for demod in self.receiver.demodulators:
+                if demod.time_stamp > 0 and \
+                      time.time() - demod.time_stamp > \
                       self.max_demod_length:
-                    temp_freq = demodulator.center_freq
-                    # clear the demodulator to reset file
-                    demodulator.set_center_freq(0, self.center_freq)
-                    # reset the demodulator to its frequency to restart file
-                    demodulator.set_center_freq(0, temp_freq) 
+                    temp_freq = demod.tuner_freq
+                    # clear the demod to reset file
+                    demod.set_tuner_freq(0, self.center_freq)
+                    # reset the demod to its frequency to restart file
+                    demod.set_tuner_freq(temp_freq, self.center_freq) 
 
         # Create tuned channel list of strings for the GUI in MHz
         # If channel is a zero then use an empty string
@@ -409,6 +423,8 @@ class Scanner(object):
                 gui_tuned_channel = (demod_freq + self.center_freq)/1E6
                 text = '{:.3f}'.format(gui_tuned_channel)
             self.gui_tuned_channels.append(text)
+
+        # Should there be a priority active channel list for GUI? could display other color when priority channel is active versus normal active
 
         # Create active channel list of strings for the GUI in MHz
         # This is any channel above threshold
@@ -450,15 +466,15 @@ class Scanner(object):
         # Check to make sure index is within the number of demodulators
         if idx < len(self.receiver.demodulators):
             # Lockout if not zero and not already locked out
-            demod_freq = self.receiver.demodulators[idx].center_freq
+            demod_freq = self.receiver.demodulators[idx].tuner_freq
             if (demod_freq != 0) and (demod_freq not in self.lockout_channels):
                 self.lockout_channels = np.append(self.lockout_channels,
                                                   demod_freq)
 
         # Retune demodulators that are locked out
-        for demodulator in self.receiver.demodulators:
-            if demodulator.center_freq in self.lockout_channels:
-                demodulator.set_center_freq(0, self.center_freq)
+        for demod in self.receiver.demodulators:
+            if demod.tuner_freq in self.lockout_channels:
+                demod.set_tuner_freq(0, self.center_freq)
             else:
                 pass
 
@@ -647,7 +663,7 @@ def main():
                       min_file_size, center_freq, freq_low, freq_high)
 
     # Set frequency, gain, squelch, and volume
-    scanner.set_center_freq(parser.center_freq)
+    scanner.set_center_freq(center_freq)
     print("\n")
     print("Started %s at %.3f Msps" % (hw_args, scanner.samp_rate/1E6))
     print("RX at %.3f MHz" % (scanner.center_freq/1E6))
