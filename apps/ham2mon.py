@@ -69,10 +69,6 @@ class MyDisplay():
         # Get the initial settings for GUI
         self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
         self.rxwin.center_freq = self.scanner.center_freq
-        self.rxwin.min_freq = self.scanner.min_freq
-        self.rxwin.max_freq = self.scanner.max_freq
-        # self.rxwin.freq_low = self.scanner.freq_low
-        # self.rxwin.freq_high = self.scanner.freq_high
         self.rxwin.samp_rate = self.scanner.samp_rate
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
@@ -125,8 +121,6 @@ class MyDisplay():
         audio_bps = PARSER.audio_bps
         channel_spacing = PARSER.channel_spacing
         center_freq = PARSER.center_freq
-        # freq_low = PARSER.freq_low
-        # freq_high = PARSER.freq_high
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
         self.classifier_params = { 'V': PARSER.voice,
@@ -160,8 +154,6 @@ class MyDisplay():
             # Set and update frequency
             self.scanner.set_center_freq(self.rxwin.center_freq)
             self.rxwin.center_freq = self.scanner.center_freq
-            self.rxwin.min_freq = self.scanner.min_freq
-            self.rxwin.max_freq = self.scanner.max_freq
 
         if self.rxwin.proc_keyb_soft(keyb):
             # Set all the gains

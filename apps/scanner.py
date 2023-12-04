@@ -154,9 +154,6 @@ class Scanner(object):
         # Get the hardware sample rate and center frequency in Hz
         self.samp_rate = self.receiver.samp_rate
         self.center_freq = self.receiver.center_freq
-        # gui values clarifying range within sample rate (Min Freq / Max Freq)
-        self.min_freq = (self.center_freq - self.samp_rate/2)
-        self.max_freq = (self.center_freq + self.samp_rate/2)
 
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
@@ -471,10 +468,6 @@ class Scanner(object):
         # Tune the receiver then update with actual frequency
         self.receiver.set_center_freq(center_freq)
         self.center_freq = self.receiver.center_freq
-
-        # gui values clarifying range within sample rate (Min Freq / Max Freq)
-        self.min_freq = (self.center_freq - self.samp_rate/2)
-        self.max_freq = (self.center_freq + self.samp_rate/2)
 
         # Update the priority since frequency is changing
         self.update_priority()

@@ -366,8 +366,6 @@ class RxWindow(object):
 
         # Set default values
         self.center_freq = 146E6
-        self.min_freq = 144E6
-        self.max_freq = 148E6
         self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
@@ -415,11 +413,11 @@ class RxWindow(object):
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
         index = index+1
-        text = "Min Freq (MHz) : "
+        text = "         From  : "
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
         index = index+1
-        text = "Max Freq (MHz) : "
+        text = "           To  : "
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
         for index2, gain in enumerate(self.gains, 2):
@@ -476,11 +474,11 @@ class RxWindow(object):
         self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
 
         index = index+1
-        text = '{:.3f}'.format((self.min_freq)/1E6)
+        text = '{:.3f}'.format((self.center_freq - self.samp_rate/2)/1E6)
         self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
         index = index+1
-        text = '{:.3f}'.format((self.max_freq)/1E6)
+        text = '{:.3f}'.format((self.center_freq + self.samp_rate/2)/1E6)
         self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
         for index2, gain in enumerate(self.gains, 2):
