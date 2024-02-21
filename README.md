@@ -3,13 +3,30 @@ This is a GNU Radio (GR) based SDR scanner with a Curses interface, primarily me
 
 http://youtu.be/BXptQFSV8E4
 
+Original screenshot
 ![GUI screenshot](ham2mon.png)
 
+Additional screenshots show updated screen color and channel highlighting with 
+![GUI screenshot](ham2mon_priority_channels_inactive_noise.png)
+![GUI screenshot](ham2mon_priority_channels_active.png)
+![GUI screenshot](ham2mon_priority_channels_overmax.png)
+
+
 ## Tested with:
+Recent development and tests on Python3:
+- RTL-SDR v3 RTL2832 + R820T at 2 Msps (http://rtl-sdr.com)
+- NooElec RTL2832 + R820T at 2 Msps (http://www.nooelec.com)
+- GNU Radio 3.8.2.0 (https://github.com/gnuradio/gnuradio)
+- GrOsmoSDR 0.1.4-29 (http://sdr.osmocom.org/trac/wiki/GrOsmoSDR)
+- Airspy Mini (https://airspy.com/airspy-mini/)
+- Python 3.8.6
 
-Although ham2mon has been tested with a variety of hardware, this fork has only been tested with airspy sdr.
-
-This fork has only been tested with recent versions of python 3.  It will not work with python 2.7.
+Previous version tests:
+- Ettus B200 at 16 Msps (http://www.ettus.com)
+- NooElec RTL2832 + R820T at 2 Msps (http://www.nooelec.com)
+- GNU Radio 3.7.10 (https://github.com/gnuradio/gnuradio)
+- GrOsmoSDR 0.1.4 (http://sdr.osmocom.org/trac/wiki/GrOsmoSDR)
+- Ettus UHD 3.10.0 (https://github.com/EttusResearch/uhd)
 
 ## Contributors:
 
@@ -69,6 +86,9 @@ madengr:
 - Priority channels
 
 ## Console Operation:
+
+Options are displayed using ./parser.py -h
+
 The following is an example of the option switches for UHD with NBFM demodulation, although omission of any will use default values (shown below) that are optimal for the B200:
 
 ./ham2mon.py -a "uhd" -n 8 -d 0 -f 146E6 -r 4E6 -g 30 -s -60 -v 0 -t 10 -w

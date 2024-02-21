@@ -36,7 +36,7 @@ class BaseTuner(gr.hier_block2):
     def set_last_heard(self, a_time):
         self.last_heard = a_time
 
-    def set_center_freq(self, center_freq, rf_center_freq):
+    def set_tuner_freq(self, tuner_freq, rf_center_freq):
         """Sets baseband center frequency and file name
 
         Sets baseband center frequency of frequency translating FIR filter
@@ -45,11 +45,11 @@ class BaseTuner(gr.hier_block2):
         Otherwise set file name to tuned RF frequency in MHz
 
         Args:
-            center_freq (float): Baseband center frequency in Hz
+            tuner_freq (float): Baseband tuner frequency in Hz
             rf_center_freq (float): RF center in Hz (for file name)
         """
         # Since the frequency (hence file name) changed, then close it
-        if (self.record and self.file_name and
+        if (self.record and self.file_name and 
                 self.file_name != None):
             self.blocks_wavfile_sink.close()
 
@@ -58,11 +58,12 @@ class BaseTuner(gr.hier_block2):
         self._persist_wavfile()
 
         # Set the frequency of the tuner
-        self.center_freq = center_freq
-        self.freq_xlating_fir_filter_ccc.set_center_freq(self.center_freq)
+        self.tuner_freq = tuner_freq
+        self.rf_center_freq = rf_center_freq
+        self.freq_xlating_fir_filter_ccc.set_center_freq(self.tuner_freq)
 
         # Set the file name if recording
-        if self.center_freq == 0 or not self.record:
+        if self.tuner_freq == 0 or not self.record:
             # If tuner at zero Hz, or record false, then file name to None
             self.file_name = None
         else:
@@ -75,7 +76,7 @@ class BaseTuner(gr.hier_block2):
     def set_file_name(self, rf_center_freq):
         # Use frequency and time stamp for file name
         tstamp = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "{:.3f}".format(self.time_stamp%1)[1:]
-        file_freq = (rf_center_freq + self.center_freq)/1E6
+        file_freq = (rf_center_freq + self.tuner_freq)/1E6
         file_freq = np.round(file_freq, 4)
         # avoid "chatter" of possibly unwanted files by working in tmp dir initially
         self.file_name = 'wav/tmp/' + '{:.4f}'.format(file_freq) + "_" + tstamp + ".wav"
@@ -156,6 +157,7 @@ class TunerDemodNBFM(BaseTuner):
     Attributes:
         center_freq (float): Baseband center frequency in Hz
         record (bool): Record audio to file if True
+        time_stamp (int): Time stamp of demodulator start for timing run length
     """
     # pylint: disable=too-many-instance-attributes
 
@@ -168,13 +170,16 @@ class TunerDemodNBFM(BaseTuner):
         super().__init__(classify)
 
         # Default values
-        self.center_freq = 0
+        self.tuner_freq = 0
+        self.rf_center_freq = 0
+        self.time_stamp = 0
         squelch_db = -60
         self.quad_demod_gain = 0.050
         self.file_name = None
         self.record = record
         self.audio_bps = audio_bps
         self.min_recording = min_recording
+        self.last_heard = 0
 
         # Decimation values for four stages of decimation
         decims = (5, int(samp_rate/1E6))
@@ -188,7 +193,7 @@ class TunerDemodNBFM(BaseTuner):
         self.freq_xlating_fir_filter_ccc = \
             grfilter.freq_xlating_fir_filter_ccc(decims[0],
                                                  low_pass_filter_taps_0,
-                                                 self.center_freq, samp_rate)
+                                                 self.tuner_freq, samp_rate)
 
         # FIR filter decimating by 5
         fir_filter_ccc_0 = grfilter.fir_filter_ccc(decims[0],
@@ -302,8 +307,10 @@ class TunerDemodAM(BaseTuner):
         min_recording (float): Minimum length of a recording in seconds
 
     Attributes:
-        center_freq (float): Baseband center frequency in Hz
+        tuner_freq (float): Baseband center frequency in Hz
+        rf_center_freq (float): RF center frequency in Hz
         record (bool): Record audio to file if True
+        time_stamp (int): Time stamp of demodulator start for timing run length
     """
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-locals
@@ -317,12 +324,15 @@ class TunerDemodAM(BaseTuner):
         super().__init__(classify)
 
         # Default values
-        self.center_freq = 0
+        self.tuner_freq = 0
+        self.rf_center_freq = 0
+        self.time_stamp = 0
         squelch_db = -60
         self.agc_ref = 0.1
         self.file_name = None
         self.record = record
-        self.min_recording = min_recording
+        self.last_heard = 0
+
 
         # Decimation values for four stages of decimation
         decims = (5, int(samp_rate/1E6))
@@ -336,7 +346,7 @@ class TunerDemodAM(BaseTuner):
         self.freq_xlating_fir_filter_ccc = \
             grfilter.freq_xlating_fir_filter_ccc(decims[0],
                                                  low_pass_filter_taps_0,
-                                                 self.center_freq, samp_rate)
+                                                 self.tuner_freq, samp_rate)
 
         # FIR filter decimating by 5
         fir_filter_ccc_0 = grfilter.fir_filter_ccc(decims[0],
@@ -633,10 +643,10 @@ class Receiver(gr.top_block):
         Returns:
             List[float]: List of baseband center frequencies in Hz
         """
-        center_freqs = []
+        tuner_freqs = []
         for demodulator in self.demodulators:
-            center_freqs.append(demodulator.center_freq)
-        return center_freqs
+            tuner_freqs.append(demodulator.tuner_freq)
+        return tuner_freqs
 
     def __del__(self):
         """Called when the object is destroyed."""
@@ -698,7 +708,7 @@ def main():
     # Tune demodulators to baseband channels
     # If recording on, this creates empty wav file since manually tuning.
     for idx, demodulator in enumerate(receiver.demodulators):
-        demodulator.set_center_freq(channels[idx], center_freq)
+        demodulator.set_tuner_freq(channels[idx], center_freq)
 
     # Print demodulator info
     for idx, channel in enumerate(channels):
