@@ -477,9 +477,6 @@ class Scanner(object):
         if idx < len(self.receiver.demodulators):
             # Lockout if not zero and not already locked out
             demod_freq = self.receiver.demodulators[idx].tuner_freq
-            # TODO:  does this need to use locked_out function?
-            #        maybe since this is only accepting a single
-            #        frequency and not a range
             if (demod_freq != 0) and (demod_freq not in self.lockout_channels):
                 self.lockout_channels = np.append(self.lockout_channels,
                                                   demod_freq)
