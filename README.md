@@ -3,7 +3,7 @@ This is a GNU Radio (GR) based SDR scanner with a Curses interface, primarily me
 
 http://youtu.be/BXptQFSV8E4
 
-Original screenshot
+Screenshot
 ![GUI screenshot](ham2mon.png)
 
 Additional screenshots show updated screen color and channel highlighting with 
