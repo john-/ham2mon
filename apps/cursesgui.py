@@ -420,6 +420,7 @@ class RxWindow(object):
         text = "           To  : "
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
+        index3 = 1  # handle case where there are no gains (processing from file)
         for index2, gain in enumerate(self.gains, 2):
             text = "{} Gain (dB){} : ".format(gain["name"], (4-len(gain["name"]))*' ')
             self.win.addnstr(index+index2-1, 1, text, 18)
@@ -481,6 +482,7 @@ class RxWindow(object):
         text = '{:.3f}'.format((self.center_freq + self.samp_rate/2)/1E6)
         self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
 
+        index3 = 1  # handle case where there are no gains (processing from file)
         for index2, gain in enumerate(self.gains, 2):
             text = str(gain["value"])
             self.win.addnstr(index+index2-1, 18, text, 8, curses.color_pair(5))
