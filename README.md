@@ -241,3 +241,15 @@ The command line options (--voice, --data, and --skip) must be specified to indi
 The classification designator will be added after the frequency (e.g. 460.125_V_1698933610.wav for voice).  Only 16bps audio is currently supported so enable it with "-b 16".
 
 No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the provided model.
+
+## Ham2mon Development
+
+To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it im ham2mon.
+
+Example recording with airspy:
+
+`airspy_rx -r case1.dump -t 0 -f 460.4 -a 3000000 -v 8 -m 10 -l 11`
+
+This can then be replayed in ham2mon:
+
+`./ham2mon.py -a "file=case1.dump,rate=3E6,repeat=false,throttle=true,freq=460.4E6" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3`
