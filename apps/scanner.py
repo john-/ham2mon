@@ -15,6 +15,7 @@ import types
 import datetime
 import errors as err
 import yaml
+import logging
 
 PY3 = sys.version_info[0] == 3
 PY2 = sys.version_info[0] == 2
@@ -226,6 +227,8 @@ class Scanner(object):
         # pylint: disable=too-many-branches
 
         # Retune demodulators that are locked out
+        # TODO: this looks to be missing range lockouts and only checks frequency lockouts
+        #       also see below where locked out channels and ranges are removed
         for demodulator in self.receiver.demodulators:
             if demodulator.center_freq in self.lockout_channels:
                 demodulator.set_center_freq(0, self.center_freq)
@@ -253,20 +256,6 @@ class Scanner(object):
         # set active channels for gui highlight before filtering down lockout or adding priority
         active_channels = channels
 
-        # Remove channels that are already in the priority list
-        # future, should find channels that are close too priority and replace with priority
-        # when less than channel_spacing separated from priority
-        temp = []
-        for channel in channels:
-            if channel not in self.priority_channels:
-                temp = np.append(temp, channel)
-            else:
-                pass
-        channels = temp
-
-        # Put the priority channels in front
-        channels = np.append(self.priority_channels, channels)
-
         # remove channels and ranges that are locked out
         temp = []
         for channel in channels:
@@ -290,17 +279,14 @@ class Scanner(object):
                 #pass
                 demodulator.set_last_heard(the_now)
 
-        # Add new channels to demodulators
         for channel in channels:
             # If channel not in demodulators
             if channel not in self.receiver.get_demod_freqs():
                 # Sequence through each demodulator
-                #for demodulator in self.receiver.demodulators:
                 for idx in range(len(self.receiver.demodulators)):
                     demodulator = self.receiver.demodulators[idx]
-                    # If demodulator is empty and channel not already there
-                    if (demodulator.center_freq == 0) and \
-                            (channel not in self.receiver.get_demod_freqs()):
+                    # If channel is higher priority than what is being demodulated
+                    if self.is_higher_priority(channel, demodulator.center_freq):
                         # Write in channel log file that the channel is on
                         self.__print_channel_log__(channel + self.center_freq, True, idx)
                         # Assigning channel to empty demodulator
@@ -359,6 +345,26 @@ class Scanner(object):
                 self.__print_channel_log_active__(float(channel)*1E6, True)
             # clear recent channels
             self.log_recent_channels = []
+
+    def is_higher_priority(self, channel, demod_freq):
+
+        if demod_freq == 0:
+            return True
+
+        try:
+            channel_priority = self.priority_channels.index(channel)
+        except ValueError:
+            return False  # channel not in priority list so low priority
+    
+        try:
+            demod_priority = self.priority_channels.index(demod_freq)
+        except ValueError:
+            return True   # there is a channel priority but no demod priority, therefore channel is higher priority
+
+        if channel_priority < demod_priority:  # channel is higher priority than current demod frequency
+            return True
+        else:
+            return False
 
     def locked_out(self, channel):
         locked = False

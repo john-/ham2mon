@@ -119,7 +119,7 @@ class CLParser(object):
         parser.add_argument("-p", "--priority", type=str,
                           dest="priority_file_name",
                           default="",
-                          help="File of EOL delimited priority channels in Hz")
+                          help="File of EOL delimited priority channels in Hz (descending priority order)")
 
         parser.add_argument("-L", "--log_file", type=str,
                           dest="channel_log_file_name",
