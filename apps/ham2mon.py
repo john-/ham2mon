@@ -98,8 +98,8 @@ class MyDisplay():
 
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
-        self.chanwin.draw_channels(self.scanner.gui_tuned_channels, self.scanner.gui_active_channels)
-        self.lockoutwin.draw_channels(self.scanner.gui_lockout_channels, self.scanner.gui_active_channels)
+        self.chanwin.draw_channels(self.scanner.get_channels())
+        self.lockoutwin.draw_channels(self.scanner.gui_lockout_channels, self.scanner.get_channels())
         self.rxwin.draw_rx()
 
         # Update physical screen

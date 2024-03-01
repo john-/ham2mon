@@ -6,11 +6,13 @@ Created on Sun Jul  5 17:16:22 2015
 @author: madengr
 """
 import locale
-locale.setlocale(locale.LC_ALL, '')
 import curses
 import time
 import numpy as np
+import logging
+from h2h_types import Channel
 
+locale.setlocale(locale.LC_ALL, '')
 class SpectrumWindow(object):
     """Curses spectrum display window
 
@@ -192,7 +194,7 @@ class ChannelWindow(object):
         self.dims = self.win.getmaxyx()
 
 
-    def draw_channels(self, gui_tuned_channels, gui_active_channels):
+    def draw_channels(self, channels: list[Channel]):
         """Draws tuned channels list
 
         Args:
@@ -208,33 +210,32 @@ class ChannelWindow(object):
 
         # Limit the displayed channels to no more than two rows
         max_length = 2*(self.dims[0]-2)
-        if len(gui_tuned_channels) > max_length:
-            gui_tuned_channels = gui_tuned_channels[:max_length]
-        else:
-            pass
-
-        active_channels = set(gui_active_channels)
 
         # Draw the tuned channels prefixed by index in list (demodulator index)
-        # Use color if tuned channel is in active channel list during this scan_cycle
-        for idx, gui_tuned_channel in enumerate(gui_tuned_channels):
-            text = str(idx)
-            text = text.zfill(2) + ": " + f'{gui_tuned_channel:.3f}'
+        # Use color if tuned channel is active during this scan_cycle
+        subset = channels[:max_length]
+        subset = [c for c in subset if c.active or c.hanging]
+        for idx, channel in enumerate(subset):
+            icon = 'P' if channel.priority else ''
+            text = f'{idx:02d}: {channel.frequency:.3f}'
             if idx < self.dims[0]-2:
                 # Display in first column
                 # text color based on activity
-                # curses.color_pair(5)
-                if gui_tuned_channel in active_channels:
-                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(2) | curses.A_BOLD)
+                if channel.active:
+                    self.win.addnstr(idx+1, 1, text, 12, curses.color_pair(2) | curses.A_BOLD)
+                    self.win.addnstr(idx+1, 12, icon, 1, curses.color_pair(2))
                 else:
-                    self.win.addnstr(idx+1, 1, text, 11, curses.color_pair(6))
+                    self.win.addnstr(idx+1, 1, text, 12, curses.color_pair(6))
+                    self.win.addnstr(idx+1, 12, icon, 1, curses.color_pair(6))
             else:
                 # Display in second column
                 self.win.addnstr(idx-self.dims[0]+3, 13, text, 11)
-                if gui_tuned_channel in active_channels:
-                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11, curses.color_pair(2))
+                if channel.active:
+                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11, curses.color_pair(2) | curses.A_BOLD)
+                    self.win.addnstr(idx-self.dims[0]+3, 24, icon, 1, curses.color_pair(2))
                 else:
-                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11)
+                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11, curses.color_pair(6))
+                    self.win.addnstr(idx-self.dims[0]+3, 24, icon, 1, curses.color_pair(6))
 
         # Hide cursor
         self.win.leaveok(1)
@@ -264,7 +265,7 @@ class LockoutWindow(object):
         self.win = curses.newwin(height, width, screen_dims[0] - height - 1, width+1)
         self.dims = self.win.getmaxyx()
 
-    def draw_channels(self, gui_lockout_channels, gui_active_channels):
+    def draw_channels(self, gui_lockout_channels, channels: list[Channel]):
         """Draws lockout channels list
 
         Args:
@@ -277,23 +278,23 @@ class LockoutWindow(object):
         self.win.addnstr(0, int(self.dims[1]/2-3), "LOCKOUT", 7,
                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
-        active_channels = set(gui_active_channels)
-
         # Draw the lockout channels
         # Use color if lockout channel is in active channel list during this scan_cycle
-        for idx, lockout_channel in enumerate(gui_lockout_channels):
+        locked_channels = [c for c in channels if c.locked]
+        for idx, lockout in enumerate(gui_lockout_channels):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
                 attr = curses.color_pair(6)
-                if isinstance(lockout_channel, dict):  # handle this range
-                    text = f"{lockout_channel['min']:.3f}-{lockout_channel['max']:.3f}"
-                    for channel in active_channels:
-                        if lockout_channel['min'] <= channel <= lockout_channel['max']:
+                if isinstance(lockout, dict):  # handle this range
+                    text = f"{lockout['min']:.3f}-{lockout['max']:.3f}"
+                    for channel in locked_channels:
+                        if lockout['min'] <= channel.frequency <= lockout['max']:
                             attr = curses.color_pair(5) | curses.A_BOLD
                 else:  # handle this single frequency
-                    text = f"{lockout_channel:.3f}"
-                    if lockout_channel in active_channels:
-                            attr = curses.color_pair(5) | curses.A_BOLD
+                    text = f"{lockout:.3f}"
+                    for channel in locked_channels:
+                        if lockout == channel.frequency:
+                                attr = curses.color_pair(5) | curses.A_BOLD
                 self.win.addnstr(idx+1, 1, text, 20, attr)
             else:
                 pass
