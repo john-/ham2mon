@@ -17,7 +17,6 @@ import errors as err
 import yaml
 import logging
 from numpy.typing import NDArray
-import builtins
 
 class Scanner(object):
     """Scanner that controls receiver
@@ -25,11 +24,11 @@ class Scanner(object):
     Estimates channels from FFT power spectrum that are above threshold
     Rounds channels to nearest 5 kHz
     Removes channels that are locked out
-    Tunes demodulators to new channels
+    Tunes demodulators to new channels  # gets overwritten by receiver value
     Holds demodulators on channels between scan cycles
 
     Args:
-        ask_samp_rate (float): Asking sample rate of hardware in sps (1E6 min)
+        ask_samp_rate (int): Asking sample rate of hardware in sps (1E6 min)
         num_demod (int): Number of parallel demodulators
         type_demod (int): Type of demodulator (0=NBFM, 1=AM)
         hw_args (string): Argument string to pass to harwdare
@@ -43,21 +42,21 @@ class Scanner(object):
         center_freq (int): initial center frequency for receiver (Hz)
         spacing (int): granularity of frequency quantization
         min_recording (float): Minimum length of a recording in seconds
-        max_recording (int): Maximum length of a recording in seconds
+        max_recording (float): Maximum length of a recording in seconds
 
 
     Attributes:
-        center_freq (float): Hardware RF center frequency in Hz
+        center_freq (int): Hardware RF center frequency in Hz
         low_bound (int): Freq below which we won't tune a receiver (Hz)
         high_bound (int): Freq above which we won't tune a receiver (Hz)
-        samp_rate (float): Hardware sample rate in sps (1E6 min)
+        samp_rate (int): Hardware sample rate in sps (1E6 min)
         gains : Enumerated gain types and values
         squelch_db (int): Squelch in dB
         volume_dB (int): Volume in dB
         threshold_dB (int): Threshold for channel detection in dB
         spectrum (numpy.ndarray): FFT power spectrum data in linear, not dB
         lockout_channels [float]: List of baseband lockout channels in Hz
-        priority_channels [float]: List of baseband priority channels in Hz
+        priority_channels list[int]: List of baseband priority channels in Hz
         channel_spacing (float):  Spacing that channels will be rounded
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels for priority
@@ -68,15 +67,15 @@ class Scanner(object):
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
 
-    def __init__(self, ask_samp_rate=4E6, num_demod=4, type_demod=0,
-                 hw_args="uhd", freq_correction=0, record=True,
-                 lockout_file_name="", priority_file_name="",
-                 channel_log_file_name="", channel_log_timeout=15,
-                 play=True,
-                 audio_bps=8, channel_spacing=5000,
-                 center_freq=0, 
-                 min_recording=0, max_recording=0,
-                 classifier_params={'V':False,'D':False,'S':False }):
+    def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
+                 hw_args: str="uhd", freq_correction: int=0, record: bool=True,
+                 lockout_file_name: str="", priority_file_name: str="",
+                 channel_log_file_name: str="", channel_log_timeout: int=15,
+                 play: bool=True,
+                 audio_bps: int=8, channel_spacing: int=5000,
+                 center_freq: int=0, 
+                 min_recording: float=0, max_recording: float=0,
+                 classifier_params: dict[str, bool]={'V':False,'D':False,'S':False }):
 
         # Default values
         self.squelch_db = -60
@@ -85,12 +84,13 @@ class Scanner(object):
         self.record = record
         self.play = play
         self.audio_bps = audio_bps
-        self.center_freq = center_freq
-        self.spectrum = []
-        self.lockout_channels = []
-        self.priority_channels = []
-        self._enriched_channels = list[Channel]
-        self.gui_lockout_channels = []
+        self.samp_rate: int
+        self.center_freq: int = center_freq  # gets overwritten by receiver value
+        self.spectrum: NDArray = np.empty(0)
+        self.lockout_channels: list[dict[str, int] | int] = []
+        self.priority_channels: list[int] = []
+        self._enriched_channels: list[Channel] = []
+        self.gui_lockout_channels: list[dict[str, float] | float] = []
         self.channel_spacing = channel_spacing
         self.lockout_file_name = lockout_file_name
         self.priority_file_name = priority_file_name
@@ -99,7 +99,7 @@ class Scanner(object):
         self.channel_log_timeout = channel_log_timeout
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
-        self.hang_time = 1.0
+        self.hang_time: float = 1.0
         self.max_recording = max_recording
 
         # Create receiver object
@@ -113,7 +113,7 @@ class Scanner(object):
         # Open channel log file for appending data, if it is specified
         if channel_log_file_name != "":
             self.channel_log_file = open(channel_log_file_name, 'a')
-            if self.channel_log_file != None:
+            if self.channel_log_file is not None:
                 self.log_mode = "file"
             else:
                 # Opening log file failed so cannot perform this log mode
@@ -131,11 +131,11 @@ class Scanner(object):
         self.receiver.start()
         time.sleep(1)
 
-        if self.channel_log_file != None :
+        if self.channel_log_file is not None :
            self.channel_log_file.flush()
 
     def __del__(self):
-        if self.channel_log_file != None :
+        if self.channel_log_file is not None :
            self.channel_log_file.close()
 
     def _print_channel_log_active(self, freq, state):
@@ -162,7 +162,7 @@ class Scanner(object):
     def _print_channel_log(self, freq, state, idx):
         if self.log_mode is not None and self.log_mode != "none":
             state_str = {True: "on", False: "off"}
-            if state == False:
+            if state is False:
                 freq = 0
             now = datetime.datetime.now()
             if self.log_mode == "file" and self.channel_log_file is not None:
@@ -201,7 +201,7 @@ class Scanner(object):
 
         self._assign_channels_to_demodulators(channels)
 
-        self._enriched_channels = self._add_metadata(channels)
+        self._add_metadata(channels)
 
         self._log_recent_active_channels()
 
@@ -288,7 +288,7 @@ class Scanner(object):
             else:
                 pass
 
-    def _add_metadata(self, active_channels: NDArray) -> list[Channel]:
+    def _add_metadata(self, active_channels: NDArray) -> None:
 
         demod_freqs = self.receiver.get_demod_freqs()
 
@@ -312,7 +312,7 @@ class Scanner(object):
                                       priority=priority,
                                       hanging=channel in demod_freqs and channel not in active_channels))
 
-        return sweep
+        self._enriched_channels = sweep
 
     def _log_recent_active_channels(self) -> None:
         # TODO: should this functionality be moved into the demodulator?
@@ -365,14 +365,14 @@ class Scanner(object):
         return locked
 
     def _generate_gui_lockout_channels(self) -> None:
-        # Create a lockout channel list of strings for the GUI in Mhz
+        # Create a lockout channel list for the GUI in Mhz
         self.gui_lockout_channels = []
-        gui_lockout_channel: dict[str, float] | float
+        gui_lockout_channel: dict[str, float] | float   # list of ranges or single frequencies
         for lockout_channel in self.lockout_channels:
             if isinstance(lockout_channel, dict):  # add the range lockout
                 gui_lockout_channel = {'min': self._baseband_to_frequency(lockout_channel['min']), 'max': self._baseband_to_frequency(lockout_channel['max'])}
             else:  # add the frequency lockout
-                gui_lockout_channel = self._baseband_to_frequency(lockout_channel)
+                gui_lockout_channel = self._baseband_to_frequency(int(lockout_channel))
                 
             self.gui_lockout_channels.append(gui_lockout_channel)
 
@@ -385,10 +385,9 @@ class Scanner(object):
         # Check to make sure index is within the number of demodulators
         if idx < len(self.receiver.demodulators):
             # Lockout if not zero and not already locked out
-            demod_freq = self.receiver.demodulators[idx].center_freq
+            demod_freq: int = self.receiver.demodulators[idx].center_freq
             if (demod_freq != 0) and (demod_freq not in self.lockout_channels):
-                self.lockout_channels = np.append(self.lockout_channels,
-                                                  demod_freq)
+                self.lockout_channels.append(demod_freq)
 
         self._generate_gui_lockout_channels()
 
@@ -400,7 +399,7 @@ class Scanner(object):
     def _baseband_to_frequency(self, bb_freq: int) -> float:
         return (bb_freq + self.receiver.center_freq)/1E6
     
-    def clear_lockout(self):
+    def clear_lockout(self) -> None:
         """Clears lockout channels and updates GUI list
         """
         # Clear the lockout channels
@@ -424,7 +423,7 @@ class Scanner(object):
 
         self._generate_gui_lockout_channels()
 
-    def update_priority(self):
+    def update_priority(self) -> None:
         """Updates priority channels
         """
         # Clear the priority channels
@@ -434,9 +433,7 @@ class Scanner(object):
         if self.priority_file_name != "":
             # Open file, split to list, remove empty strings
             with open(self.priority_file_name) as priority_file:
-                lines = priority_file.read().splitlines()
-                priority_file.close()
-                lines = builtins.filter(None, lines)
+                lines = list(filter(str.rstrip, priority_file))
             # Convert to baseband frequencies, round, and append if within BW
             for freq in lines:
                 bb_freq = float(freq) - self.center_freq
@@ -449,7 +446,7 @@ class Scanner(object):
         else:
             pass
 
-    def set_center_freq(self, center_freq):
+    def set_center_freq(self, center_freq: int) -> None:
         """Sets RF center frequency of hardware and clears lockout channels
            Sets low and high demod frequency limits based on provided bounds in command line
 
@@ -466,7 +463,7 @@ class Scanner(object):
         # Clear the lockout since frequency is changing
         self.clear_lockout()
 
-    def filter_and_set_gains(self, all_gains):
+    def filter_and_set_gains(self, all_gains: list[dict]) -> list[dict]:
         """Set the supported gains and return them
 
         Args:
@@ -475,7 +472,7 @@ class Scanner(object):
         self.gains = self.receiver.filter_and_set_gains(all_gains)
         return self.gains
 
-    def set_gains(self, gains):
+    def set_gains(self, gains: list[dict]) -> list[dict]:
         """Set all the gains
 
         Args:
@@ -484,39 +481,39 @@ class Scanner(object):
         self.gains = self.receiver.set_gains(gains)
         return self.gains
 
-    def set_squelch(self, squelch_db):
+    def set_squelch(self, squelch_db: int) -> None:
         """Sets squelch of all demodulators
 
         Args:
-            squelch_db (float): Squelch in dB
+            squelch_db (int): Squelch in dB
         """
         self.receiver.set_squelch(squelch_db)
         self.squelch_db = self.receiver.squelch_db
 
-    def set_volume(self, volume_db):
+    def set_volume(self, volume_db: int) -> None:
         """Sets volume of all demodulators
 
         Args:
-            volume_db (float): Volume in dB
+            volume_db (int): Volume in dB
         """
         self.receiver.set_volume(volume_db)
         self.volume_db = self.receiver.volume_db
 
-    def set_threshold(self, threshold_db):
+    def set_threshold(self, threshold_db: int) -> None:
         """Sets threshold in dB for channel detection
 
         Args:
-            threshold_db (float): Threshold in dB
+            threshold_db (int): Threshold in dB
         """
         self.threshold_db = threshold_db
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the receiver
         """
         self.receiver.stop()
         self.receiver.wait()
 
-    def clean_up(self):
+    def clean_up(self) -> None:
         # cleanup terminating all demodulators
         for demod in self.receiver.demodulators:
             demod.set_center_freq(0, 0)

@@ -17,7 +17,7 @@ class CLParser(object):
         hw_args (string): Argument string to pass to harwdare
         num_demod (int): Number of parallel demodulators
         center_freq (float): Hardware RF center frequency in Hz
-        ask_samp_rate (float): Asking sample rate of hardware in sps (1E6 min)
+        ask_samp_rate (int): Asking sample rate of hardware in sps (1E6 min)
         gains : Enumerated gain types and values
         squelch_db (int): Squelch in dB
         volume_dB (int): Volume in dB
@@ -61,7 +61,7 @@ class CLParser(object):
                           default=146E6,
                           help="Hardware RF center frequency in Hz")
 
-        parser.add_argument("-r", "--rate", type=str, dest="ask_samp_rate",
+        parser.add_argument("-r", "--rate", type=float, dest="ask_samp_rate",
                           default=4E6,
                           help="Hardware ask sample rate in sps (1E6 minimum)")
 
@@ -103,7 +103,7 @@ class CLParser(object):
                           dest="volume_db", default=0,
                           help="Volume in dB")
 
-        parser.add_argument("-t", "--threshold", type=float,
+        parser.add_argument("-t", "--threshold", type=int,
                           dest="threshold_db", default=10,
                           help="Threshold in dB")
 
@@ -183,7 +183,7 @@ class CLParser(object):
         self.num_demod = int(options.num_demod)
         self.type_demod = int(options.type_demod)
         self.center_freq = float(options.center_freq)
-        self.ask_samp_rate = float(options.ask_samp_rate)
+        self.ask_samp_rate = int(options.ask_samp_rate)
         self.gains = [
             { "name": "RF", "value": float(options.rf_gain_db) },
             { "name": "LNA","value": float(options.lna_gain_db) },
@@ -198,7 +198,7 @@ class CLParser(object):
         ]
         self.squelch_db = int(options.squelch_db)
         self.volume_db = int(options.volume_db)
-        self.threshold_db = float(options.threshold_db)
+        self.threshold_db = int(options.threshold_db)
         self.record = bool(options.record)
         self.play = bool(options.play)
         self.lockout_file_name = str(options.lockout_file_name)

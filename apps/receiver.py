@@ -468,7 +468,8 @@ class Receiver(gr.top_block):
                 raise
 
         # Default values
-        self.center_freq = int(144E6)
+        self.center_freq: int = int(144E6)
+        self.samp_rate: int
         self.squelch_db = -60
         self.volume_db = 0
         audio_rate = 8000

@@ -20,17 +20,17 @@ class SpectrumWindow(object):
         screen (object): a curses screen object
 
     Attributes:
-        max_db (float): Top of window in dB
-        min_db (float): Bottom of window in dB
-        threshold_db (float): Threshold horizontal line
+        max_db (int): Top of window in dB
+        min_db (int): Bottom of window in dB
+        threshold_db (int): Threshold horizontal line
     """
     def __init__(self, screen):
         self.screen = screen
 
         # Set default values
-        self.max_db = 50.0
-        self.min_db = -20.0
-        self.threshold_db = 20.0
+        self.max_db = 50
+        self.min_db = -20
+        self.threshold_db = 20
 
         # Create a window object in top half of the screen, within the border
         screen_dims = screen.getmaxyx()
@@ -137,7 +137,7 @@ class SpectrumWindow(object):
         # Update virtual window
         self.win.noutrefresh()
 
-    def proc_keyb(self, keyb):
+    def proc_keyb(self, keyb: int):
         """Process keystrokes
 
         Args:
@@ -305,7 +305,7 @@ class LockoutWindow(object):
         # Update virtual window
         self.win.noutrefresh()
 
-    def proc_keyb_set_lockout(self, keyb):
+    def proc_keyb_set_lockout(self, keyb: int):
         """Process keystrokes to lock out channels 0 - 9
 
         Args:
@@ -322,7 +322,7 @@ class LockoutWindow(object):
         else:
             return False
 
-    def proc_keyb_clear_lockout(self, keyb):
+    def proc_keyb_clear_lockout(self, keyb: int):
         """Process keystrokes to clear lockout with "l"
 
         Args:
@@ -541,7 +541,7 @@ class RxWindow(object):
         # Update virtual window
         self.win.noutrefresh()
 
-    def proc_keyb_hard(self, keyb):
+    def proc_keyb_hard(self, keyb: int):
         """Process keystrokes to adjust hard receiver settings
 
         Tune center_freq in 100 MHz steps with 'x' and 'c'
@@ -612,7 +612,7 @@ class RxWindow(object):
         else:
             return False
 
-    def proc_keyb_soft(self, keyb):
+    def proc_keyb_soft(self, keyb: int):
         """Process keystrokes to adjust soft receiver settings
 
         Tune gain_db in 10 dB steps with 'g' and 'f'
