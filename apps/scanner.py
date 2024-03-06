@@ -8,7 +8,7 @@ Created on Fri Jul  3 13:38:36 2015
 import receiver as recvr
 import estimate
 import h2m_parser as prsr
-from h2h_types import Channel
+from h2m_types import Channel
 import time
 import numpy as np
 import sys

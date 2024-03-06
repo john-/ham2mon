@@ -10,7 +10,6 @@ import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper, echo, nocbreak, endwin
 import cursesgui
 import h2m_parser as h2m_parser
-import time
 import asyncio
 import errors as err
 import logging
@@ -21,7 +20,7 @@ import _curses
 
 class MyDisplay():
 
-    def __init__(self, stdscr: "_curses._CursesWindow"):
+    def __init__(self, stdscr: "_curses._CursesWindow") -> None:
         self.stdscr = stdscr
 
     async def run(self) -> None:
@@ -85,10 +84,13 @@ class MyDisplay():
 
         self.specwin.max_db = PARSER.max_db
         self.specwin.min_db = PARSER.min_db
-        self.rxwin.classifier_params = self.classifier_params
+        self.rxwin.classifier_params = { 'V': PARSER.voice,
+                                         'D': PARSER.data,
+                                         'S': PARSER.skip
+                                       }
         self.specwin.threshold_db = self.scanner.threshold_db
 
-    async def cycle(self):
+    async def cycle(self) -> None:
         # Initiate a scan cycle
 
         # No need to go faster than 10 Hz rate of GNU Radio probe
@@ -105,7 +107,7 @@ class MyDisplay():
         # Update physical screen
         self.stdscr.refresh()
 
-    def init_scanner(self) -> object:
+    def init_scanner(self) -> scnr.Scanner:
         # Create scanner object
         ask_samp_rate = PARSER.ask_samp_rate
         num_demod = PARSER.num_demod
@@ -123,17 +125,17 @@ class MyDisplay():
         center_freq = PARSER.center_freq
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
-        self.classifier_params = { 'V': PARSER.voice,
-                                   'D': PARSER.data,
-                                   'S': PARSER.skip
-                                 }
+        classifier_params = { 'V': PARSER.voice,
+                              'D': PARSER.data,
+                              'S': PARSER.skip
+                            }
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                             freq_correction, record, lockout_file_name,
                             priority_file_name, channel_log_file_name, channel_log_timeout,
                             play, audio_bps, channel_spacing,
                             center_freq,
-                            min_recording, max_recording, self.classifier_params)
+                            min_recording, max_recording, classifier_params)
 
         # Set the paramaters
         scanner.set_center_freq(PARSER.center_freq)
@@ -173,7 +175,7 @@ class MyDisplay():
         if self.lockoutwin.proc_keyb_clear_lockout(keyb):
             self.scanner.clear_lockout()
 
-async def display_main(stdscr):
+async def display_main(stdscr) -> None:
     display = MyDisplay(stdscr)
     await display.run()
 
@@ -194,24 +196,24 @@ if __name__ == '__main__':
         wrapper(main)
     except KeyboardInterrupt:
         pass
-    except RuntimeError as err:
+    except RuntimeError as error:
         print("")
-        print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root.")
+        print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root or with --debug option.")
         print("")
-        print("RuntimeError: {err=}, {type(err)=}")
+        print(f'RuntimeError: {error=}, {type(error)=}')
         logging.debug(traceback.format_exc())
         print("")
     except err.LogError:
         print("")
         print("LogError: database logging not active, to be expanded.")
         print("")
-    except OSError as err:
+    except OSError as error:
         print("")
-        print("OS error: {0}".format(err))
+        print(f'OS error: {error=}, {type(error)=}')
         print("")
-    except BaseException as err:
+    except BaseException as error:
         print("")
-        print("Unexpected: {err=}, {type(err)=}", err, type(err))
+        print(f'Unexpected: {error=}, {type(error)=}')
         logging.debug(traceback.format_exc())
         print("")
 

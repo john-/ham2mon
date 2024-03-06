@@ -10,7 +10,7 @@ import curses
 import time
 import numpy as np
 import logging
-from h2h_types import Channel
+from h2m_types import Channel
 
 locale.setlocale(locale.LC_ALL, '')
 class SpectrumWindow(object):
@@ -378,6 +378,7 @@ class RxWindow(object):
         self.priority_file_name = ""
         self.channel_log_file_name = ""
         self.channel_log_timeout = 15
+        self.gains = None
         # nothing other than file logging defined
         if (self.channel_log_file_name != ""):
             self.log_mode = "file"

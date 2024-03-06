@@ -95,11 +95,11 @@ class CLParser(object):
         parser.add_argument("-x", "--mix_gain", type=float, dest="mix_gain_db",
                           default=5, help="Hardware MIX gain index")
 
-        parser.add_argument("-s", "--squelch", type=float,
+        parser.add_argument("-s", "--squelch", type=int,
                           dest="squelch_db", default=-60,
                           help="Squelch in dB")
 
-        parser.add_argument("-v", "--volume", type=float,
+        parser.add_argument("-v", "--volume", type=int,
                           dest="volume_db", default=0,
                           help="Volume in dB")
 
@@ -196,8 +196,8 @@ class CLParser(object):
             { "name": "PGA", "value": float(options.pga_gain_db) },
             { "name": "LB", "value": float(options.lb_gain_db) }
         ]
-        self.squelch_db = float(options.squelch_db)
-        self.volume_db = float(options.volume_db)
+        self.squelch_db = int(options.squelch_db)
+        self.volume_db = int(options.volume_db)
         self.threshold_db = float(options.threshold_db)
         self.record = bool(options.record)
         self.play = bool(options.play)
