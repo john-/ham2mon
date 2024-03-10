@@ -376,14 +376,9 @@ class RxWindow(object):
         self.record = True
         self.lockout_file_name = ""
         self.priority_file_name = ""
-        self.channel_log_file_name = ""
-        self.channel_log_timeout = 15
+        self.channel_log_type = ""
+        self.channel_log_target = ""
         self.gains = None
-        # nothing other than file logging defined
-        if (self.channel_log_file_name != ""):
-            self.log_mode = "file"
-        else:
-            self.log_mode = "none"
         self.classifier_params = None
 
         # Create a window object in the bottom half of the screen
@@ -457,16 +452,13 @@ class RxWindow(object):
         self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
 
         index = index+1
-        text = "Log File     : "
+        text = "Log Type     : "
         self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
 
-        index = index+1
-        text = "Log Timeout  : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
-
-        index = index+1
-        text = "Log Mode     : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+        if self.channel_log_target is not None:
+            index = index+1
+            text = "Log Target   : "
+            self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
 
         # Draw the receiver info suffix fields
         index = 1
@@ -524,16 +516,13 @@ class RxWindow(object):
         self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
 
         index = index+1
-        text = str(self.channel_log_file_name)
+        text = str(self.channel_log_type)
         self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
 
-        index = index+1
-        text = str(self.channel_log_timeout)
-        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
-
-        index = index+1
-        text = str(self.log_mode)
-        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+        if self.channel_log_target is not None:
+            index = index+1
+            text = str(self.channel_log_target)
+            self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
 
         # Hide cursor
         self.win.leaveok(1)

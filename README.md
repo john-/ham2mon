@@ -89,13 +89,6 @@ Example of reading from an IQ file:
 
 ./ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,freq=466E6" -r 8E6 -w
 
-## Channel Detection Log File
-For console operation, it is possible to specify the log file name, in which channel detection, and removal will be logged. The option is `--log_file=<file-name>`.
-
-Whenever a channel appears/dissapears, new line will be written in the log file. For the line format, check `__print_channel_log__()` in `scanner.Scanner`.
-
-Active channels are flagged as active periodically based on the active channel logging timeout.
-
 ## GUI Controls:
 `t/r = Detection threshold +/- 5 dB. (T/R for +/- 1dB)`
 
@@ -133,75 +126,77 @@ Active channels are flagged as active periodically based on the active channel l
 ```
 Usage: ham2mon.py [options]
 
-Options:
-Usage: ham2mon.py [options]
-
-Options:
+options:
   -h, --help            show this help message and exit
-  -a HW_ARGS, --args=HW_ARGS
+  -a HW_ARGS, --args HW_ARGS
                         Hardware args
-  -n NUM_DEMOD, --demod=NUM_DEMOD
+  -n NUM_DEMOD, --demod NUM_DEMOD
                         Number of demodulators
-  -d TYPE_DEMOD, --demodulator=TYPE_DEMOD
+  -d TYPE_DEMOD, --demodulator TYPE_DEMOD
                         Type of demodulator (0=NBFM, 1=AM)
-  -f CENTER_FREQ, --freq=CENTER_FREQ
+  -f CENTER_FREQ, --freq CENTER_FREQ
                         Hardware RF center frequency in Hz
-  -r ASK_SAMP_RATE, --rate=ASK_SAMP_RATE
+  -r ASK_SAMP_RATE, --rate ASK_SAMP_RATE
                         Hardware ask sample rate in sps (1E6 minimum)
-  -g RF_GAIN_DB, --gain=RF_GAIN_DB, --rf_gain=RF_GAIN_DB
+  -g RF_GAIN_DB, --gain RF_GAIN_DB, --rf_gain RF_GAIN_DB
                         Hardware RF gain in dB
-  -i IF_GAIN_DB, --if_gain=IF_GAIN_DB
+  -i IF_GAIN_DB, --if_gain IF_GAIN_DB
                         Hardware IF gain in dB
-  -o BB_GAIN_DB, --bb_gain=BB_GAIN_DB
+  -o BB_GAIN_DB, --bb_gain BB_GAIN_DB
                         Hardware BB gain in dB
-  --lna_gain=LNA_GAIN_DB
+  --lna_gain LNA_GAIN_DB
                         Hardware LNA gain in dB
-  --att_gain=ATT_GAIN_DB
+  --att_gain ATT_GAIN_DB
                         Hardware ATT gain in dB
-  --lna_mix_bb_gain=LNA_MIX_BB_GAIN_DB
+  --lna_mix_bb_gain LNA_MIX_BB_GAIN_DB
                         Hardware LNA_MIX_BB gain in dB
-  --tia_gain=TIA_GAIN_DB
+  --tia_gain TIA_GAIN_DB
                         Hardware TIA gain in dB
-  --pga_gain=PGA_GAIN_DB
+  --pga_gain PGA_GAIN_DB
                         Hardware PGA gain in dB
-  --lb_gain=LB_GAIN_DB  Hardware LB gain in dB
-  -x MIX_GAIN_DB, --mix_gain=MIX_GAIN_DB
+  --lb_gain LB_GAIN_DB  Hardware LB gain in dB
+  -x MIX_GAIN_DB, --mix_gain MIX_GAIN_DB
                         Hardware MIX gain index
-  -s SQUELCH_DB, --squelch=SQUELCH_DB
+  -s SQUELCH_DB, --squelch SQUELCH_DB
                         Squelch in dB
-  -v VOLUME_DB, --volume=VOLUME_DB
+  -v VOLUME_DB, --volume VOLUME_DB
                         Volume in dB
-  -t THRESHOLD_DB, --threshold=THRESHOLD_DB
+  -t THRESHOLD_DB, --threshold THRESHOLD_DB
                         Threshold in dB
   -w, --write           Record (write) channels to disk
-  -l LOCKOUT_FILE_NAME, --lockout=LOCKOUT_FILE_NAME
-                        YAML file of lockout channels/ranges in Mhz
-  -p PRIORITY_FILE_NAME, --priority=PRIORITY_FILE_NAME
-                          File of EOL delimited priority channels in Hz (descending priority order)
-  -L CHANNEL_LOG_FILE_NAME, --log_file=CHANNEL_LOG_FILE_NAME
-                        Log file for channel detection
-  -A CHANNEL_LOG_TIMEOUT, --log_active_timeout=CHANNEL_LOG_TIMEOUT
+  -l LOCKOUT_FILE_NAME, --lockout LOCKOUT_FILE_NAME
+                        File of EOL delimited lockout channels in Hz
+  -p PRIORITY_FILE_NAME, --priority PRIORITY_FILE_NAME
+                        File of EOL delimited priority channels in Hz
+                        (descending priority order)
+  -T CHANNEL_LOG_TYPE, --log_type CHANNEL_LOG_TYPE
+                        Log file type for channel detection
+  -L CHANNEL_LOG_TARGET, --log_target CHANNEL_LOG_TARGET
+                        Log file or endpoint for channel detection
+  -A CHANNEL_LOG_TIMEOUT, --log_active_timeout CHANNEL_LOG_TIMEOUT
                         Timeout delay for active channel log entries
-  -c FREQ_CORRECTION, --correction=FREQ_CORRECTION
+  -c FREQ_CORRECTION, --correction FREQ_CORRECTION
                         Frequency correction in ppm
   -m, --mute-audio      Mute audio from speaker (still allows recording)
-  -b AUDIO_BPS, --bps=AUDIO_BPS
+  -b AUDIO_BPS, --bps AUDIO_BPS
                         Audio bit depth (bps)
-  -M MAX_DB, --max_db=MAX_DB
+  -M MAX_DB, --max_db MAX_DB
                         Spectrum window max dB for display
-  -N MIN_DB, --min_db=MIN_DB
+  -N MIN_DB, --min_db MIN_DB
                         Spectrum window min dB for display (no greater than
                         -10dB from max
-  -B CHANNEL_SPACING, --channel-spacing=CHANNEL_SPACING
+  -B CHANNEL_SPACING, --channel-spacing CHANNEL_SPACING
                         Channel spacing (spectrum bin size)
-  --min_recording=MIN_RECORDING
+  --min_recording MIN_RECORDING
                         Minumum length of a recording in seconds
-  --max_recording=MAX_RECORDING
+  --max_recording MAX_RECORDING
                         Maximum length of a recording in seconds
-  --voice, --data, --skip
-                        Record audio if classified as this type
-  --debug
-                        Enable debug file with additional information (ham2mon.log)                        
+  --voice               Record voice
+  --data                Record voice
+  --skip                Record voice
+  --debug               Enable debug file with additional information
+                        (ham2mon.log)
+
 ```
 Note: The available gains are hardware specific.  The user interface will list the gains availble based on hardware option supplied to ham2mon.
 
@@ -234,6 +229,19 @@ A use case for this is as follows: You want to hear something, anything, but wan
 ## Lockout File
 The Lockout file is a YAML file that can contain individual frequencies to be locked out as well as ranges of frequencies.  All values are in Mhz (see the example for details).  Requires the `-l/--lockout` option.  
 
+## Channel Detection Log File
+Channel events can be written to file or other targets.  Events occur when channel activity is detected as well as for ongoing activity.
+
+By default, no channel activity is recorded.  The type can be specified with `--log_type`.  Current types include `fixed-field`, `debug` and `json-server`.  The default type is `none`.
+
+A type may support a target throught the `--log_target` option.  In the case of types the write to a file the target will be a file name.  The default target is `channel-log`.
+
+An activity log entry is written every 15 seconds (by detault).  This can be changed with `--log_active_timeout`.  Set this to 0 to disable activity logging (channel on/off messages will still occur).
+
+If `debug` is selected as logging type than channel events can be viewed when the `--debug` option is also selected on the command line.
+
+See [json-server example](doc/json-server_example.md) for one way this can be used.
+
 ## Logging
 Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.
 
@@ -249,7 +257,6 @@ The classification designator will be added after the frequency (e.g. 460.125_V_
 No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the provided model.
 
 ## Ham2mon Development
-
 To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it im ham2mon.
 
 Example recording with airspy:

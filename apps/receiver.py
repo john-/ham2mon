@@ -20,22 +20,33 @@ import errno
 import time
 import numpy as np
 from gnuradio.filter import pfb
-import classification
+from classification import Classifier
 import logging
+from utilities import baseband_to_frequency
+import asyncio
+import channel_loggers as loggers
+#from channel_loggers import ChannelLogger, FixedField
+from h2m_types import ChannelMessage
 
 class BaseTuner(gr.hier_block2):
     """Some base methods that are the same between the known tuner types.
 
     See TunerDemodNBFM and TunerDemodAM for better documentation.
     """
-    def __init__(self, classify: classification.Classifier | None) -> None:
+    def __init__(self, classify: Classifier | None, channel_logger: loggers.ChannelLogger, channel: int) -> None:
         # Default values
         self.classify = classify
+        self.channel_logger = channel_logger
+        self.channel = channel
         self.last_heard: float = 0.0
         self.file_name: str | None = None
+        self.log_task: asyncio.Task | None = None
+        self.center_freq: int
 
     def set_last_heard(self, a_time: float) -> None:
         self.last_heard = a_time
+        # channel_log active channel if at required interval
+        # alternately use a timer or something that is created on demod start
 
     def set_center_freq(self, center_freq: int, rf_center_freq: int) -> None:
         """Sets baseband center frequency and file name
@@ -49,14 +60,28 @@ class BaseTuner(gr.hier_block2):
             center_freq (int): Baseband center frequency in Hz
             rf_center_freq (int): RF center in Hz (for file name)
         """
-        # Since the frequency (hence file name) changed, then close it
-        if (self.record and self.file_name and
-                self.file_name is not None):
-            self.blocks_wavfile_sink.close()
+        # address completed transmissions
+        results: ChannelMessage | None
+        if self.record:
+            # Move file from tmp directory if it is long enough
+            # and classified appropriately
+            results = self._persist_wavfile(rf_center_freq)   # also get channel_log information
+        elif self.center_freq != 0:
+            # not recording files and center_freq has changed
+            results = ChannelMessage(state='off',
+                                     frequency=baseband_to_frequency(
+                                         self.center_freq, rf_center_freq),
+                                     channel=self.channel)
+        else:
+            # center_freq is 0
+            results = None
+            
+        self.channel_logger.log(results)
 
-        # Move file from tmp directory if it is long enough
-        # and classified appropriately
-        self._persist_wavfile()
+        if self.log_task:
+            was_cancelled = self.log_task.cancel()
+            if not was_cancelled:
+                logging.error('Could not cancel logging task')
 
         # Set the frequency of the tuner
         self.center_freq = center_freq
@@ -73,30 +98,60 @@ class BaseTuner(gr.hier_block2):
         if (self.file_name is not None and self.record):
             self.blocks_wavfile_sink.open(self.file_name)
 
+        if self.center_freq != 0:
+            self.channel_logger.log(ChannelMessage(state='on',
+                                                   frequency=baseband_to_frequency(
+                                                       self.center_freq, rf_center_freq),
+                                                   channel=self.channel))
+            if self.channel_logger.timeout > 0:
+                self.log_task = asyncio.create_task(self.log_active(self.center_freq, rf_center_freq))
+
+    async def log_active(self, center_freq, rf_center_freq):
+        while True:
+            await asyncio.sleep(self.channel_logger.timeout)
+            self.channel_logger.log(ChannelMessage(state='act',
+                                                   frequency=baseband_to_frequency(
+                                                       center_freq, rf_center_freq),
+                                                   channel=self.channel))
+
     def set_file_name(self, rf_center_freq: int) -> None:
         # Use frequency and time stamp for file name
         tstamp = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "{:.3f}".format(self.time_stamp%1)[1:]
-        file_freq = (rf_center_freq + self.center_freq)/1E6
+        file_freq = (rf_center_freq + self.center_freq)/1E6  # TODO: use utilities function
         file_freq = np.round(file_freq, 4)
         # avoid "chatter" of possibly unwanted files by working in tmp dir initially
         self.file_name = f'wav/tmp/{file_freq:.4f}_{tstamp}.wav'
 
-    def _persist_wavfile(self) -> None:
+    def _persist_wavfile(self, rf_center_freq: int) -> ChannelMessage | None:
         """Save the current wavfile if duration long enough"""
-        if (not self.record or not self.file_name or
+        if (not self.file_name or
                 self.file_name is None):
-            return 
+            # currently recording and transmission started
+            return None
+        
+        self.blocks_wavfile_sink.close()
+
+        # base message used for channel log
+        xmit_msg = ChannelMessage(state='off',
+                                  frequency=baseband_to_frequency(
+                                      self.center_freq, rf_center_freq),
+                                  channel=self.channel)
 
         # Delete short wavfiles otherwise move ones that are long enough
         min_size = 44 + self.audio_bps*1000 * self.min_recording
         if os.stat(self.file_name).st_size <= min_size:
             os.unlink(self.file_name)
-            return
+            # channel_log threw away short recording
+            xmit_msg.file = 'threw away short recording'
+            return xmit_msg
 
         # If not classifying then move from tmp directory
         if not self.classify:
-            os.rename(self.file_name, self.file_name.replace('tmp/', ''))
-            return
+            name = self.file_name.replace('tmp/', '')
+            os.rename(self.file_name, name)
+            # channel_log complete transmission
+            xmit_msg.file = name
+            return xmit_msg
 
         # If user wants file of this classification
         # then move from tmp directory and rename
@@ -106,13 +161,20 @@ class BaseTuner(gr.hier_block2):
             name = self.file_name.replace('tmp/', '')
             name = name.replace('.wav', '_' + is_wanted + '.wav')
             os.rename(self.file_name, name)
+            # channel_log complete transmission (classified)
             
             # if using recent python3 have self.file_name be a Path
             # new_name = PurePath(self.file_name)
             # name = f'wav/{new_name.stem}_{is_wanted}{new_name.suffix}'
+            xmit_msg.file = name
+            xmit_msg.classification = is_wanted
+            return xmit_msg
         else:
             os.unlink(self.file_name)
-      
+            # channel_log (classified but not wanted)
+            xmit_msg.note = 'unwanted classification'
+            return  xmit_msg
+    
     def set_squelch(self, squelch_db: int) -> None:
         """Sets the threshold for both squelches
 
@@ -160,13 +222,14 @@ class TunerDemodNBFM(BaseTuner):
     """
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, samp_rate: int=int(4E6), audio_rate: int=8000, record: bool=True,
-                 audio_bps: int=8, min_recording: float=0, classify: classification.Classifier | None=None):
+    def __init__(self, samp_rate: int, audio_rate: int, record: bool,
+                 audio_bps: int, min_recording: float, classify: Classifier | None,
+                 channel_logger: loggers.ChannelLogger, channel: int):
         gr.hier_block2.__init__(self, "TunerDemodNBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify)
+        super().__init__(classify, channel_logger, channel)
 
         # Default values
         self.center_freq = 0
@@ -309,13 +372,14 @@ class TunerDemodAM(BaseTuner):
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-locals
 
-    def __init__(self, samp_rate: int=int(4E6), audio_rate: int=8000, record: bool=True,
-                 audio_bps: int=16, min_recording: float=0, classify: classification.Classifier | None=None):
+    def __init__(self, samp_rate: int, audio_rate: int, record: bool,
+                 audio_bps: int, min_recording: float, classify: Classifier | None,
+                 channel_logger: loggers.ChannelLogger, channel: int):
         gr.hier_block2.__init__(self, "TunerDemodAM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify)
+        super().__init__(classify, channel_logger, channel)
 
         # Default values
         self.center_freq = 0
@@ -448,10 +512,10 @@ class Receiver(gr.top_block):
     # pylint: disable=too-many-locals
     # pylint: disable=too-many-arguments
 
-    def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
-                 hw_args: str="uhd", freq_correction: int=0, record: bool=True, play: bool=True,
-                 audio_bps: int=16, min_recording: float=0,
-                 classifier_params: dict={'V':False,'D':False,'S':False }):
+    def __init__(self, ask_samp_rate: int, num_demod: int, type_demod: int,
+                 hw_args: str, freq_correction: int, record: bool, play: bool,
+                 audio_bps: int, min_recording: float,
+                 classifier_params: dict, channel_log_params: loggers.ChannelLogParams):
 
         # Call the initialization method from the parent class
         gr.top_block.__init__(self, "Receiver")
@@ -526,31 +590,37 @@ class Receiver(gr.top_block):
                      fft_vcc, complex_to_mag_squared,
                      integrate_ff, self.probe_signal_vf)
 
-        classifier: classification.Classifier | None
+        classifier: Classifier | None
         try:
-          classifier = classification.Classifier(classifier_params, audio_rate)
+          classifier = Classifier(classifier_params, audio_rate)
         except Exception as error:
             logging.info(f'classification disabled: {error}')
             classifier = None
+
+        channel_logger = loggers.ChannelLogger.get_logger(channel_log_params)
 
         # -----------Flow for Demod--------------
 
         # Create N parallel demodulators as a list of objects
         # Default to NBFM demod
         self.demodulators = []
-        for idx in range(num_demod):
+        for channel_idx in range(num_demod):
             if type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
                                                       audio_bps,
                                                       min_recording,
-                                                      classifier))
+                                                      classifier,
+                                                      channel_logger,
+                                                      channel_idx+1))
             else:
                 self.demodulators.append(TunerDemodNBFM(self.samp_rate,
                                                         audio_rate, record,
                                                         audio_bps,
                                                         min_recording,
-                                                        classifier))
+                                                        classifier,
+                                                        channel_logger,
+                                                        channel_idx+1))
 
         if play:
             # Create an adder

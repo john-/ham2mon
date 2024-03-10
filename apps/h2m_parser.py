@@ -9,6 +9,7 @@ Created on Sat Jul 18 15:21:33 2015
 # from optparse import OptionParser
 from argparse import ArgumentParser
 # from gnuradio.eng_option import eng_option
+from channel_loggers import ChannelLogParams
 
 class CLParser(object):
     """Command line parser
@@ -26,7 +27,8 @@ class CLParser(object):
         play (bool): Play audio through speaker if True
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels to for priority
-        channel_log_file_name (string): Name of file for channel logging
+        channel_log_target (string): Name of file or endpoint for channel logging
+        channel_log_type (string): Log file type for channel detection
         channel_log_timeout (int): Timeout delay between active channel log entries
         freq_correction (int): Frequency correction in ppm
         audio_bps (int): Audio bit depth in bps
@@ -121,10 +123,15 @@ class CLParser(object):
                           default="",
                           help="File of EOL delimited priority channels in Hz (descending priority order)")
 
-        parser.add_argument("-L", "--log_file", type=str,
-                          dest="channel_log_file_name",
+        parser.add_argument("-T", "--log_type", type=str,
+                          dest="channel_log_type",
+                          default="none",
+                          help="Log file type for channel detection")
+
+        parser.add_argument("-L", "--log_target", type=str,
+                          dest="channel_log_target",
                           default="channel-log",
-                          help="Log file for channel detection")
+                          help="Log file or endpoint for channel detection")
 
         parser.add_argument("-A", "--log_active_timeout", type=int,
                           dest="channel_log_timeout",
@@ -203,8 +210,11 @@ class CLParser(object):
         self.play = bool(options.play)
         self.lockout_file_name = str(options.lockout_file_name)
         self.priority_file_name = str(options.priority_file_name)
-        self.channel_log_file_name = str(options.channel_log_file_name)
-        self.channel_log_timeout = int(options.channel_log_timeout)
+        self.channel_log_params = ChannelLogParams(
+            target=str(options.channel_log_target),
+            type=str(options.channel_log_type),
+            timeout=int(options.channel_log_timeout)
+        )
         self.freq_correction = int(options.freq_correction)
         self.audio_bps = int(options.audio_bps)
         self.max_db = float(options.max_db)
@@ -241,8 +251,9 @@ def main():
     print("play:                " + str(parser.play))
     print("lockout_file_name:   " + str(parser.lockout_file_name))
     print("priority_file_name:  " + str(parser.priority_file_name))
-    print("channel_log_file_name:  " + str(parser.channel_log_file_name))
-    print("channel_log_timeout:  " + str(parser.channel_log_timeout))
+    print("channel_log target:  " + str(parser.channel_log_params.target))
+    print("channel_log timeout: " + str(parser.channel_log_params.timeout))
+    print("channel_log type:    " + str(parser.channel_log_params.type))
     print("freq_correction:     " + str(parser.freq_correction))
     print("audio_bps:           " + str(parser.audio_bps))
     print("max_db:              " + str(parser.max_db))

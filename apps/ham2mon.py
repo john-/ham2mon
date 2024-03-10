@@ -75,12 +75,13 @@ class MyDisplay():
         self.rxwin.type_demod = PARSER.type_demod
         self.rxwin.lockout_file_name = self.scanner.lockout_file_name
         self.rxwin.priority_file_name = self.scanner.priority_file_name
-        self.rxwin.channel_log_file_name = self.scanner.channel_log_file_name
-        self.rxwin.channel_log_timeout = self.scanner.channel_log_timeout
-        if (self.rxwin.channel_log_file_name != ""):
-            self.rxwin.log_mode = "file"
+        self.rxwin.channel_log_type = self.scanner.channel_log_params.type
+        # not all channel_log types use a target
+        if self.scanner.channel_log_params.type == 'fixed-field':
+            target = self.scanner.channel_log_params.target
         else:
-            self.rxwin.log_mode = "none"
+            target = None
+        self.rxwin.channel_log_target = target
 
         self.specwin.max_db = PARSER.max_db
         self.specwin.min_db = PARSER.min_db
@@ -117,8 +118,7 @@ class MyDisplay():
         play = PARSER.play
         lockout_file_name = PARSER.lockout_file_name
         priority_file_name = PARSER.priority_file_name
-        channel_log_file_name = PARSER.channel_log_file_name
-        channel_log_timeout = PARSER.channel_log_timeout
+        channel_log_params = PARSER.channel_log_params
         freq_correction = PARSER.freq_correction
         audio_bps = PARSER.audio_bps
         channel_spacing = PARSER.channel_spacing
@@ -131,11 +131,11 @@ class MyDisplay():
                             }
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
-                            freq_correction, record, lockout_file_name,
-                            priority_file_name, channel_log_file_name, channel_log_timeout,
-                            play, audio_bps, channel_spacing,
-                            center_freq,
-                            min_recording, max_recording, classifier_params)
+                               freq_correction, record, lockout_file_name,
+                               priority_file_name, channel_log_params,
+                               play, audio_bps, channel_spacing,
+                               center_freq,
+                               min_recording, max_recording, classifier_params)
 
         # Set the paramaters
         scanner.set_center_freq(PARSER.center_freq)

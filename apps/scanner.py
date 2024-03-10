@@ -12,11 +12,10 @@ from h2m_types import Channel
 import time
 import numpy as np
 import sys
-import datetime
-import errors as err
 import yaml
 import logging
 from numpy.typing import NDArray
+from channel_loggers import ChannelLogParams
 
 class Scanner(object):
     """Scanner that controls receiver
@@ -36,8 +35,6 @@ class Scanner(object):
         record (bool): Record audio to file if True
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels for priority
-        channel_log_file_name (string): Name of file with channel log entries
-        channel_log_timeout (int): Timeout delay between active channel entries in log
         audio_bps (int): Audio bit depth in bps (bits/samples)
         center_freq (int): initial center frequency for receiver (Hz)
         spacing (int): granularity of frequency quantization
@@ -60,9 +57,6 @@ class Scanner(object):
         channel_spacing (float):  Spacing that channels will be rounded
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels for priority
-        channel_log_file_name (string): Name of file with channel log entries
-        channel_log_timeout (int): Timeout delay between active channel entries in log
-        log_timeout_last (int): Last timestamp when recently active channels were logged and cleared
     """
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
@@ -70,10 +64,10 @@ class Scanner(object):
     def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
                  hw_args: str="uhd", freq_correction: int=0, record: bool=True,
                  lockout_file_name: str="", priority_file_name: str="",
-                 channel_log_file_name: str="", channel_log_timeout: int=15,
+                 channel_log_params: ChannelLogParams=ChannelLogParams(type='none', target='', timeout=0),
                  play: bool=True,
                  audio_bps: int=8, channel_spacing: int=5000,
-                 center_freq: int=0, 
+                 center_freq: int=0,
                  min_recording: float=0, max_recording: float=0,
                  classifier_params: dict[str, bool]={'V':False,'D':False,'S':False }):
 
@@ -91,12 +85,10 @@ class Scanner(object):
         self.priority_channels: list[int] = []
         self._enriched_channels: list[Channel] = []
         self.gui_lockout_channels: list[dict[str, float] | float] = []
+        self.channel_log_params = channel_log_params
         self.channel_spacing = channel_spacing
         self.lockout_file_name = lockout_file_name
         self.priority_file_name = priority_file_name
-        self.channel_log_file_name = channel_log_file_name
-        self.channel_log_file = None
-        self.channel_log_timeout = channel_log_timeout
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
         self.hang_time: float = 1.0
@@ -105,23 +97,10 @@ class Scanner(object):
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
-                                       audio_bps, min_recording, classifier_params)
+                                       audio_bps, min_recording, classifier_params, channel_log_params)
 
         # Set the initial center frequency here to allow setting min/max and low/high bounds
         self.receiver.set_center_freq(center_freq)
-
-        # Open channel log file for appending data, if it is specified
-        if channel_log_file_name != "":
-            self.channel_log_file = open(channel_log_file_name, 'a')
-            if self.channel_log_file is not None:
-                self.log_mode = "file"
-            else:
-                # Opening log file failed so cannot perform this log mode
-                # Either raise exception or continue without logging, second preferable
-                self.log_mode = "none"
-                #raise(LogError("file","Cannot open log file"))
-        else:
-            self.channel_log_file = None
 
         # Get the hardware sample rate and center frequency in Hz
         self.samp_rate = self.receiver.samp_rate
@@ -130,57 +109,6 @@ class Scanner(object):
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
         time.sleep(1)
-
-        if self.channel_log_file is not None :
-           self.channel_log_file.flush()
-
-    def __del__(self):
-        if self.channel_log_file is not None :
-           self.channel_log_file.close()
-
-    def _print_channel_log_active(self, freq, state):
-        if self.log_mode is not None and self.log_mode != "none" and state is True:
-            state_str = {True: "act", False: "off"}
-            now = datetime.datetime.now()
-            if self.log_mode == "file" and self.channel_log_file is not None:
-                self.channel_log_file.write(
-                        "{}: {:<4}{:>13}{:>7} dB {:>7} dB timeout {:>3}\n".format(
-                            now.strftime("%Y-%m-%d, %H:%M:%S.%f"),
-                            state_str[state],
-                            freq,
-                            0,
-                            #self.gain_db,
-                            self.threshold_db,
-                            self.channel_log_timeout))
-            elif self.log_mode == "db":
-                # write log to db
-                raise(err.LogError("db","no db mode implemented"))
-            else:
-                # cannot log unknown mode
-                raise(err.LogError("unknown","no log mode defined"))
-
-    def _print_channel_log(self, freq, state, idx):
-        if self.log_mode is not None and self.log_mode != "none":
-            state_str = {True: "on", False: "off"}
-            if state is False:
-                freq = 0
-            now = datetime.datetime.now()
-            if self.log_mode == "file" and self.channel_log_file is not None:
-                self.channel_log_file.write(
-                        "{}: {:<4}{:>13}{:>7} dB {:>7} dB channel {:>3}\n".format(
-                            now.strftime("%Y-%m-%d, %H:%M:%S.%f"),
-                            state_str[state],
-                            freq,
-                            0,
-                            #self.gain_db,
-                            self.threshold_db,
-                            idx))
-            elif self.log_mode == "db":
-                # write log to db
-                raise(err.LogError("db","no db mode implemented"))
-            else:
-                # cannot log unknown mode
-                raise(err.LogError("unknown","no log mode defined"))
 
     def scan_cycle(self) -> None:
         """Execute one scan cycle
@@ -202,8 +130,6 @@ class Scanner(object):
         self._assign_channels_to_demodulators(channels)
 
         self._add_metadata(channels)
-
-        self._log_recent_active_channels()
 
     def get_channels(self) -> list[Channel]:
         return self._enriched_channels
@@ -251,11 +177,6 @@ class Scanner(object):
             if demodulator.center_freq not in channels:
                 if the_now - demodulator.last_heard > self.hang_time:
                     demodulator.set_center_freq(0, self.center_freq)
-                    # Write in channel log file that the channel is off
-                    demodulator_freq = demodulator.center_freq
-                    # TODO:  Does logging need to occur if demodulators zeroed out elsewhere?
-                    self._print_channel_log(
-                        demodulator_freq + self.center_freq, False, idx)
             else:
                 demodulator.set_last_heard(the_now)
 
@@ -276,9 +197,6 @@ class Scanner(object):
                     demodulator = self.receiver.demodulators[idx]
                     # If channel is higher priority than what is being demodulated
                     if self.is_higher_priority(channel, demodulator.center_freq):
-                        # Write in channel log file that the channel is on
-                        self._print_channel_log(
-                            channel + self.center_freq, True, idx)
                         # Assigning channel to empty demodulator
                         demodulator.set_center_freq(
                             channel, self.center_freq)
@@ -313,25 +231,6 @@ class Scanner(object):
                                       hanging=channel in demod_freqs and channel not in active_channels))
 
         self._enriched_channels = sweep
-
-    def _log_recent_active_channels(self) -> None:
-        # TODO: should this functionality be moved into the demodulator?
-
-        # log recently active channels if we are beyond timeout delay from last logging
-        # clear list of recently active channels after logging
-        # reset timeout (a low fidelity/effort timer)
-        cur_timestamp = int(time.time())
-        # if cur_timestamp > timeout_timestamp + timeout
-        if cur_timestamp > (self.log_timeout_last + self.channel_log_timeout):
-            # set last timeout to this timestamp
-            self.log_timeout_last = cur_timestamp
-            # iterate all recent channels print to log
-            log_channels = [
-                c for c in self._enriched_channels if c.active or c.hanging]
-            for channel in log_channels:
-                # Write in channel log file that the channel is on
-                self._print_channel_log_active(
-                    float(channel.frequency)*1E6, True)
 
     def is_higher_priority(self, channel: int, demod_freq: int) -> bool:
 
@@ -516,7 +415,7 @@ class Scanner(object):
     def clean_up(self) -> None:
         # cleanup terminating all demodulators
         for demod in self.receiver.demodulators:
-            demod.set_center_freq(0, 0)
+            demod.set_center_freq(0, self.center_freq)
 
 
 def main():
@@ -546,7 +445,6 @@ def main():
     lockout_file_name = parser.lockout_file_name
     priority_file_name = parser.priority_file_name
     play = parser.play
-    channel_log_file_name = parser.channel_log_file_name
     audio_bps = parser.audio_bps
     channel_spacing = parser.channel_spacing
     center_freq = parser.center_freq
@@ -554,7 +452,7 @@ def main():
     max_recording = 0
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, lockout_file_name,
-                        priority_file_name, channel_log_file_name, play,
+                        priority_file_name, play,
                         audio_bps, channel_spacing,
                         center_freq,
                         min_recording, max_recording)
