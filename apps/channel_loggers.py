@@ -100,6 +100,16 @@ class JsonToServer(ChannelLogger):
             return
 
         msg_dict = asdict(msg)
+        logging.debug(f'{msg =}')
 
-        post_response = self.requests.post(self.server, json=msg_dict)
-        logging.debug(f'{post_response =}')
+        try:
+            request = self.requests.post(self.server, json=msg_dict)
+            request.raise_for_status()
+        except self.requests.exceptions.HTTPError as errh:
+            logging.error(f'HTTP Error: {errh.args[0]}')
+        except self.requests.exceptions.ConnectionError as errc:
+            logging.error(f'Connection Error: {errc.args[0]}')
+        except self.requests.exceptions.Timeout as errt:
+            logging.error(f'Timeout Error: {errt.args[0]}')
+        except self.requests.exceptions.RequestException as err:
+            logging.error(f'Some kind of Error: {err.args[0]}')

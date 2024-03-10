@@ -50,4 +50,4 @@ mode: single
 ## Important notes
 Ham2mon can generate a lot of messages which could result in a significant amount of network traffic and overhead on Home Assistant.  Although the example automation has some throttling (triggers no more than once every 30 seconds) all the messages are still received by HA.
 
-Additional ham2mon options can improve this.  For example, recording voice only and locking out channels/ranges that are not of interest.
+Additional ham2mon options can improve this.  For example, recording voice only and locking out channels/ranges that are not of interest.  Also, disable activity logging to send only on/off events (`--log_active_timeout 0`)
