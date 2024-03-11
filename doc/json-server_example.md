@@ -5,15 +5,15 @@ This is a example of sending json messages from Ham2mon to [Home Assistant](http
 ## Dependencies
 In addition to the standard ham2mon dependencies, the json-server channel logger requires the python `requests` library.  It is imported if this channel logger is used.
 
-For this exmaple, Home Assistant needs to be running on the same network as Ham2mon.
+For this example, Home Assistant needs to be running on the same network as Ham2mon.
 
 ## Command line arguments
 
-These are the specific command line parameters required for this to function.  These are in addition to any others required for your situation.
+These are the specific command line parameters required/recommended for this to function.  These are in addition to any others required for your situation.
 ```
---log_type json-server --log_target "<Home Assistant url>"
+--log_type json-server --log_target "<Home Assistant url> --log_active_timeout 0"
 ```
-The Home Assistant (HA) url can be copy/pasted from Home Assistant|Settings|Automation & scenes|<your automation>|Webhook Trigger.  Even though HA shows only the Webhook ID the copy include the url (includes the ID).
+The Home Assistant (HA) url can be copy/pasted from Home Assistant|Settings|Automation & scenes|<your automation>|Webhook Trigger.  Altough HA shows only the Webhook ID the copy includes the url (with the ID).
 
 ## Home Assistant configuration
 

@@ -6,12 +6,12 @@ Created on Fri Jul  3 13:38:36 2015
 @author: madengr
 """
 
-from gnuradio import gr
-import osmosdr
+from gnuradio import gr  # type: ignore
+import osmosdr  # type: ignore
 from gnuradio import filter as grfilter # Don't redefine Python's filter()
 from gnuradio import blocks
 from gnuradio import fft
-from gnuradio.fft import window
+from gnuradio.fft import window  # type: ignore
 from gnuradio import analog
 from gnuradio import audio
 import os
@@ -19,13 +19,12 @@ import glob
 import errno
 import time
 import numpy as np
-from gnuradio.filter import pfb
+from gnuradio.filter import pfb  # type: ignore
 from classification import Classifier
 import logging
 from utilities import baseband_to_frequency
 import asyncio
 import channel_loggers as loggers
-#from channel_loggers import ChannelLogger, FixedField
 from h2m_types import ChannelMessage
 
 class BaseTuner(gr.hier_block2):
@@ -76,12 +75,7 @@ class BaseTuner(gr.hier_block2):
             # center_freq is 0
             results = None
             
-        self.channel_logger.log(results)
-
-        if self.log_task:
-            was_cancelled = self.log_task.cancel()
-            if not was_cancelled:
-                logging.error('Could not cancel logging task')
+        self.channel_logger.log(results)  # off events or nothing to note
 
         # Set the frequency of the tuner
         self.center_freq = center_freq
@@ -102,16 +96,6 @@ class BaseTuner(gr.hier_block2):
             self.channel_logger.log(ChannelMessage(state='on',
                                                    frequency=baseband_to_frequency(
                                                        self.center_freq, rf_center_freq),
-                                                   channel=self.channel))
-            if self.channel_logger.timeout > 0:
-                self.log_task = asyncio.create_task(self.log_active(self.center_freq, rf_center_freq))
-
-    async def log_active(self, center_freq, rf_center_freq):
-        while True:
-            await asyncio.sleep(self.channel_logger.timeout)
-            self.channel_logger.log(ChannelMessage(state='act',
-                                                   frequency=baseband_to_frequency(
-                                                       center_freq, rf_center_freq),
                                                    channel=self.channel))
 
     def set_file_name(self, rf_center_freq: int) -> None:
@@ -141,15 +125,13 @@ class BaseTuner(gr.hier_block2):
         min_size = 44 + self.audio_bps*1000 * self.min_recording
         if os.stat(self.file_name).st_size <= min_size:
             os.unlink(self.file_name)
-            # channel_log threw away short recording
-            xmit_msg.file = 'threw away short recording'
+            xmit_msg.detail = 'Discarded short recording'
             return xmit_msg
 
         # If not classifying then move from tmp directory
         if not self.classify:
             name = self.file_name.replace('tmp/', '')
             os.rename(self.file_name, name)
-            # channel_log complete transmission
             xmit_msg.file = name
             return xmit_msg
 
@@ -161,7 +143,6 @@ class BaseTuner(gr.hier_block2):
             name = self.file_name.replace('tmp/', '')
             name = name.replace('.wav', '_' + is_wanted + '.wav')
             os.rename(self.file_name, name)
-            # channel_log complete transmission (classified)
             
             # if using recent python3 have self.file_name be a Path
             # new_name = PurePath(self.file_name)
@@ -171,8 +152,7 @@ class BaseTuner(gr.hier_block2):
             return xmit_msg
         else:
             os.unlink(self.file_name)
-            # channel_log (classified but not wanted)
-            xmit_msg.note = 'unwanted classification'
+            xmit_msg.detail = 'Discarded unwanted classification'
             return  xmit_msg
     
     def set_squelch(self, squelch_db: int) -> None:

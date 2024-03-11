@@ -23,4 +23,4 @@ class ChannelMessage:
     channel: int
     file: Optional[str] = None
     classification: Optional[str] = None
-    note: Optional[str] = None
+    detail: Optional[str] = None
