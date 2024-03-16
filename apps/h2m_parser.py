@@ -10,14 +10,15 @@ Created on Sat Jul 18 15:21:33 2015
 from argparse import ArgumentParser
 # from gnuradio.eng_option import eng_option
 from channel_loggers import ChannelLogParams
+from frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
 
 class CLParser(object):
     """Command line parser
 
     Attributes:
-        hw_args (string): Argument string to pass to harwdare
+        hw_args (string): Argument string to pass to hardware
         num_demod (int): Number of parallel demodulators
-        center_freq (float): Hardware RF center frequency in Hz
+        frequency_params (FrequencyParams): Requested RF center frequency or range in Hz
         ask_samp_rate (int): Asking sample rate of hardware in sps (1E6 min)
         gains : Enumerated gain types and values
         squelch_db (int): Squelch in dB
@@ -37,12 +38,12 @@ class CLParser(object):
         channel_spacing (int): Channel spacing (spectrum bin size) for identification of channels
         freq_low (int): Low frequency for channels
         freq_high (int): High frequency for channels
-        min_duration (float): Minumum length of a recording in seconds
+        min_duration (float): Minimum length of a recording in seconds
     """
     # pylint: disable=too-few-public-methods
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self):
+    def __init__(self) -> None:
 
         # Setup the parser for command line arguments
         parser = ArgumentParser()
@@ -59,9 +60,18 @@ class CLParser(object):
                           default=0,
                           help="Type of demodulator (0=NBFM, 1=AM)")
 
-        parser.add_argument("-f", "--freq", type=str, dest="center_freq",
-                          default=146E6,
-                          help="Hardware RF center frequency in Hz")
+        parser.add_argument("-f", "--freq", type=str, dest="freq_spec",
+                          nargs='+', default=["146000000"],
+                          help="Hardware RF center frequency or range in Hz")
+        
+        parser.add_argument("--quiet_timeout", type=int,
+                          dest="quiet_timeout", default=12,
+                          help="Timeout when there is no activity")
+
+        parser.add_argument("--active_timeout", type=int,
+                          dest="active_timeout", default=20,
+                          help="Timeout when there is activity")
+
 
         parser.add_argument("-r", "--rate", type=float, dest="ask_samp_rate",
                           default=4E6,
@@ -164,7 +174,7 @@ class CLParser(object):
 
         parser.add_argument("--min_recording", type=float, dest="min_recording",
                           default=0,
-                          help="Minumum length of a recording in seconds")
+                          help="Minimum length of a recording in seconds")
 
         parser.add_argument("--max_recording", type=float, dest="max_recording",
                           default=0,
@@ -189,8 +199,41 @@ class CLParser(object):
         self.hw_args = str(options.hw_args)
         self.num_demod = int(options.num_demod)
         self.type_demod = int(options.type_demod)
-        self.center_freq = float(options.center_freq)
+
         self.ask_samp_rate = int(options.ask_samp_rate)
+
+        # this handles multiple -f option (frequency or frequency range in Hz)
+        single_freq: int
+        lower_freq: int
+        upper_freq: int
+        single_params: list[FrequencySingleParams] = []
+        range_params: list[FrequencyRangeParams] = []
+        self.frequency_params: FrequencyGroup
+        for freq_entry in options.freq_spec:
+            try:
+                (lower_freq, upper_freq) = freq_entry.split('-')
+                # there are 2 values provided
+                try:
+                    if lower_freq:
+                        lower_freq = int(float(lower_freq))  # float first to handle scientific notation
+                    if upper_freq:
+                        upper_freq = int(float(upper_freq))
+                except ValueError as err:
+                    raise Exception(f'Frequencies must be integers: {err}')
+                range_params.append(FrequencyRangeParams(lower_freq=lower_freq, upper_freq=upper_freq))
+            except ValueError:
+                # there is a single value provided
+                try:
+                    single_freq = int(float(freq_entry))
+                    single_params.append(FrequencySingleParams(freq=single_freq))
+                except ValueError as err:
+                    raise Exception(f'Frequency must be integers: {err}')
+
+        self.frequency_params =  FrequencyGroup(ranges=range_params, singles=single_params,
+                                                sample_rate=self.ask_samp_rate,
+                                                quiet_timeout=int(options.quiet_timeout),
+                                                active_timeout=int(options.active_timeout))
+        
         self.gains = [
             { "name": "RF", "value": float(options.rf_gain_db) },
             { "name": "LNA","value": float(options.lna_gain_db) },
@@ -223,10 +266,15 @@ class CLParser(object):
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
-        self.voice = bool(options.voice)        
-        self.data = bool(options.data)
-        self.skip = bool(options.skip)
-        if self.voice or self.data or self.skip:
+        voice = bool(options.voice)        
+        data = bool(options.data)
+        skip = bool(options.skip)
+        self.classifier_params = {'V': voice,
+                                  'D': data,
+                                  'S': skip
+                                  }
+
+        if voice or data or skip:
             self.record = True
 
         self.debug = bool(options.debug)
@@ -239,7 +287,12 @@ def main():
     print("hw_args:             " + parser.hw_args)
     print("num_demod:           " + str(parser.num_demod))
     print("type_demod:          " + str(parser.type_demod))
-    print("center_freq:         " + str(parser.center_freq))
+    single_freqs = [f'{single.freq}' for single in parser.frequency_params.singles]
+    range_freqs = [f'{range.lower_freq}-{range.upper_freq}' for range in parser.frequency_params.ranges]
+    print("single frequencies:  " + str(single_freqs))
+    print("range frequencies:   " + str(range_freqs))
+    print("quiet timeout:       " + str(parser.frequency_params.quiet_timeout))
+    print("active timeout:      " + str(parser.frequency_params.active_timeout))
     print("ask_samp_rate:       " + str(parser.ask_samp_rate))
     for gain in parser.gains:
         #print(str(gain["value"]))
@@ -261,9 +314,9 @@ def main():
     print("channel_spacing:     " + str(parser.channel_spacing))
     print("min_recording:       " + str(parser.min_recording))
     print("max_recording:       " + str(parser.max_recording))
-    print("voice:               " + str(parser.voice))
-    print("data:                " + str(parser.data))
-    print("skip:                " + str(parser.skip))
+    print("voice:               " + str(parser.classifier_params['V']))
+    print("data:                " + str(parser.classifier_params['D']))
+    print("skip:                " + str(parser.classifier_params['S']))
     print("debug:               " + str(parser.debug))
 
 if __name__ == '__main__':

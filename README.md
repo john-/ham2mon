@@ -134,8 +134,12 @@ options:
                         Number of demodulators
   -d TYPE_DEMOD, --demodulator TYPE_DEMOD
                         Type of demodulator (0=NBFM, 1=AM)
-  -f CENTER_FREQ, --freq CENTER_FREQ
-                        Hardware RF center frequency in Hz
+  -f FREQ_SPEC [FREQ_SPEC ...], --freq FREQ_SPEC [FREQ_SPEC ...]
+                        Hardware RF center frequency or range in Hz
+  --quiet_timeout QUIET_TIMEOUT
+                        Timeout when there is no activity
+  --active_timeout ACTIVE_TIMEOUT
+                        Timeout when there is activity
   -r ASK_SAMP_RATE, --rate ASK_SAMP_RATE
                         Hardware ask sample rate in sps (1E6 minimum)
   -g RF_GAIN_DB, --gain RF_GAIN_DB, --rf_gain RF_GAIN_DB
@@ -188,7 +192,7 @@ options:
   -B CHANNEL_SPACING, --channel-spacing CHANNEL_SPACING
                         Channel spacing (spectrum bin size)
   --min_recording MIN_RECORDING
-                        Minumum length of a recording in seconds
+                        Minimum length of a recording in seconds
   --max_recording MAX_RECORDING
                         Maximum length of a recording in seconds
   --voice               Record voice
@@ -196,9 +200,8 @@ options:
   --skip                Record voice
   --debug               Enable debug file with additional information
                         (ham2mon.log)
-
 ```
-Note: The available gains are hardware specific.  The user interface will list the gains availble based on hardware option supplied to ham2mon.
+Note: The available gains are hardware specific.  The user interface will list the gains available based on hardware option supplied to ham2mon.
 
 ## Description:
 The high speed signal processing is done in GR and the logic & control in Python. There are no custom GR blocks.  The GUI is written in Curses and is meant to be lightweight.  See the video for a basic overview.  I attempted to make the program very object oriented and “Pythonic”.  Each module runs on it's own for testing purposes.
@@ -219,8 +222,30 @@ The default settings are optimized for an Ettus B200.  The RTL dongle will requi
 
 The next iteration of this program will probably use gr-dsd to decode P25 public safety in the 800 MHz band.
 
+## Frequency Specification and Range Scanning
+The simple case is to specify a single center frequency with the `-f` option.  With this the receiver will stay on this center frequency.
+
+It is also possible to specify multiple center frequencies or ranges of frequencies.  For example, `-f 150.0E6 460.0E6-480.0E6`.  In this case the scanner will divide the frequencies up based into a series of steps (based on the sample rate) and iterate through those steps.
+
+How long the scanner waits on each step is dependent on the timeouts and the presence of activity of "interest" on that step.
+
+Currently, whether ham2mon is configured to record or not will determine how the logic behaves. These two cases determine if a channel is active:
+
+1.  If not recording, a *channel opening* will be considered activity.
+2.  If recording, the *completion of a recording* will be considered activity.
+
+The completion of the recording does not occur until after the channel is closed and an audio file is saved.  See option `-w` and Audio Classification for saving of audio files. 
+
+There are two timeouts.  If there is no activity on a channel the scanner will move to next step when `--quiet_timeout` is reached.  With activity, the scanner will hold until `--active_timeout` is reached.
+
+An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) classified as voice 2) at least 2 seconds long 3) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
+
+`./ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0E6-174E6 421.0E6-512.0E6 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60`
+
+When range scanning, the RECEIVER section will show current step, number of steps and the percent complete.
+
 ## Priority File
-The Priority file contains a frequency (in Hz) in each line.  The frequencies are to be arranged in descending priority order.  Therefore, the highest priority frequenncy will be the one at the top.
+The Priority file contains a frequency (in Hz) in each line.  The frequencies are to be arranged in descending priority order.  Therefore, the highest priority frequency will be the one at the top.
 
 When the scanner detects a priority frequency it will demodulate that frequency over any one that is lower priority.  Priority channels with be flagged with a 'P' in the CHANNELS section.  Without a priority file the scanner will only demodulate a frequency if there is a demodulator that is inactive.
 
@@ -234,9 +259,9 @@ Channel events can be written to file or other targets.  Events occur when chann
 
 By default, no channel activity is recorded.  The type can be specified with `--log_type`.  Current types include `fixed-field`, `debug` and `json-server`.  The default type is `none`.
 
-A type may support a target throught the `--log_target` option.  In the case of types the write to a file the target will be a file name.  The default target is `channel-log`.
+A type may support a target through the `--log_target` option.  In the case of types the write to a file the target will be a file name.  The default target is `channel-log`.
 
-An activity log entry is written every 15 seconds (by detault).  This can be changed with `--log_active_timeout`.  Set this to 0 to disable activity logging (channel on/off messages will still occur).
+An activity log entry is written every 15 seconds (by default).  This can be changed with `--log_active_timeout`.  Set this to 0 to disable activity logging (channel on/off messages will still occur).
 
 If `debug` is selected as logging type than channel events can be viewed when the `--debug` option is also selected on the command line.
 

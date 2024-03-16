@@ -367,6 +367,8 @@ class RxWindow(object):
 
         # Set default values
         self.center_freq = 146E6
+        self.step = None
+        self.steps: list[int] = []
         self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
@@ -393,8 +395,8 @@ class RxWindow(object):
                                  int(screen_dims[1]-width-1))
         self.dims = self.win.getmaxyx()
 
-    def draw_rx(self):
-        """Draws receiver paramaters
+    def draw_rx(self) -> None:
+        """Draws receiver parameters
         """
 
         # Clear previous contents, draw border, and title
@@ -432,6 +434,11 @@ class RxWindow(object):
         self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
 
         index = 1
+
+        # skip a line when range scanning to insert the status
+        if len(self.steps) > 1:
+            index = index + 1
+
         text = "AF Vol  (dB) : "
         self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
 
@@ -491,6 +498,16 @@ class RxWindow(object):
         self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
 
         index = 1
+
+        # status line when range scanning
+        num_steps: int = len(self.steps)
+        if num_steps > 1:
+            step = self.step + 1  # start at 1 instead of 0
+            percent = int((step/num_steps)*100)
+            text = f'-> Step {step} of {num_steps} ({percent}%)'
+            self.win.addnstr(index, 26, text, 22, curses.color_pair(6))
+            index = index + 1
+
         text = str(self.volume_db)
         self.win.addnstr(index, 44, text, 8, curses.color_pair(5))
 

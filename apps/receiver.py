@@ -47,7 +47,7 @@ class BaseTuner(gr.hier_block2):
         # channel_log active channel if at required interval
         # alternately use a timer or something that is created on demod start
 
-    def set_center_freq(self, center_freq: int, rf_center_freq: int) -> None:
+    async def set_center_freq(self, center_freq: int, rf_center_freq: int) -> None:
         """Sets baseband center frequency and file name
 
         Sets baseband center frequency of frequency translating FIR filter
@@ -75,7 +75,7 @@ class BaseTuner(gr.hier_block2):
             # center_freq is 0
             results = None
             
-        self.channel_logger.log(results)  # off events or nothing to note
+        await self.channel_logger.log(results)  # off events or nothing to note
 
         # Set the frequency of the tuner
         self.center_freq = center_freq
@@ -93,7 +93,7 @@ class BaseTuner(gr.hier_block2):
             self.blocks_wavfile_sink.open(self.file_name)
 
         if self.center_freq != 0:
-            self.channel_logger.log(ChannelMessage(state='on',
+            await self.channel_logger.log(ChannelMessage(state='on',
                                                    frequency=baseband_to_frequency(
                                                        self.center_freq, rf_center_freq),
                                                    channel=self.channel))

@@ -1,112 +1,135 @@
-'''Functionality to accept an event from a demodulator channel and format it in various formats
-
-   Created on Fri Mar 8 2024
-
-   @author: john
+'''
+Log channel activity in various formats and provide channel activity to scanner.
 '''
 import logging
 import datetime
 from h2m_types import ChannelMessage
 from abc import ABC
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from importlib import import_module
 import asyncio
+import typing
 
 @dataclass(kw_only=True)
 class ChannelLogParams:
-    '''Holds channel log command line options provided by the user'''
+    '''
+    Holds channel log command line options provided by the user
+    '''
     type: str
     target: str
     timeout: int
+    notify_scanner: typing.Callable = field(default=lambda: None)
 
 class ChannelLogger(ABC):
-    '''Base class for all loggers'''
-
-    def __init__(self) -> None:
+    '''
+    Base class for all loggers.  Also notify scanner of activity.
+    '''
+    def __init__(self, params: ChannelLogParams) -> None:
         logging.debug(f'Creating {self.__class__.__name__} channel logger')
-        self.timeout: int = 0  # overriden by child classes
+        self.timeout: int = 0  # overridden by child classes
         self.log_task: dict[int, asyncio.Task] = {}  # activity logging tasks are channel specific
+        self.params = params
 
-    def log(self, msg: ChannelMessage | None) -> None:
-        '''Abstract method to log an event
+    async def log(self, msg: ChannelMessage | None) -> None:
+        '''
+        Abstract method to log an event.  Also provide message to scanner
+        with receiver details (files created and/or classified)
 
-           Overridden in the child class'''
-        pass
+        Overridden in each child class for specific loggers
+        '''
+        await self.params.notify_scanner(msg)
 
     @staticmethod
     def get_logger(params: ChannelLogParams) -> 'ChannelLogger':
-        '''Factory to generate a class instance based on command line options'''
-
+        '''
+        Factory to generate a class instance based on command line options
+        '''
         if params.type == 'fixed-field':
-            return FixedField(params.target, params.timeout)
+            return FixedField(params)
         elif params.type == 'json-server':
-            return JsonToServer(params.target, params.timeout)
+            return JsonToServer(params)
         elif params.type == 'debug':
-            return Debug(params.timeout)
+            return Debug(params)
         else:
-            return NoOp()
+            return NoOp(params)
         
     def handle_channel_state(self, msg: ChannelMessage) -> None:
-        '''Use on/off events to start/stop activity timer'''
+        '''
+        Use on/off events to start/stop activity timer
+        '''
         if self.timeout == 0:
             return
 
         if msg.state == 'on':
+            # start reoccurring task to log that channel is active
             self.log_task[msg.channel] = asyncio.create_task(self.log_active(msg))
         elif msg.state == 'off':
+            # stop the reoccurring task
             if self.log_task[msg.channel]:
                 was_cancelled = self.log_task[msg.channel].cancel()
                 if not was_cancelled:
                     logging.error('Could not cancel logging task')
 
     async def log_active(self, msg: ChannelMessage) -> None:
-        '''Simce the channel is active log at an interval'''
+        '''
+        While the channel is active log at an interval
+        '''
         while True:
             await asyncio.sleep(self.timeout)
-            self.log(ChannelMessage(state='act',
+            await self.log(ChannelMessage(state='act',
                                     frequency=msg.frequency,
                                     channel=msg.channel))
 
 class NoOp(ChannelLogger):
-    '''Logger that ignores all events'''
-
-    def __init__(self) -> None:
-        super().__init__()
+    '''
+    Logger that ignores all events
+    '''
+    def __init__(self, params: ChannelLogParams) -> None:
+        super().__init__(params)
 
         self.timeout: int = 0
 
-    def log(self, msg: ChannelMessage | None) -> None:
-        pass
+    async def log(self, msg: ChannelMessage | None) -> None:
+        if msg is None:
+            return
+
+        await super().log(msg)
 
 class Debug(ChannelLogger):
-    '''Send channel events to the debug log (enable with --debug)'''
+    '''
+    Send channel events to the debug log (enable with --debug)
+    '''
+    def __init__(self, params: ChannelLogParams) -> None:
+        super().__init__(params)
 
-    def __init__(self, timeout: int) -> None:
-        super().__init__()
+        self.timeout = params.timeout
 
-        self.timeout = timeout
-
-    def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
             return
         
+        await super().log(msg)
+
         # for this logger we just write to the debug log
         logging.debug(msg)
 
         self.handle_channel_state(msg)
         
 class FixedField(ChannelLogger):
-    '''Send channel events to a file with fixed field length records'''
+    '''
+    Send channel events to a file with fixed field length records
+    '''
+    def __init__(self, params) -> None:
+        super().__init__(params)
 
-    def __init__(self, file_name: str, timeout: int) -> None:
-        super().__init__()
+        self.file_name = params.target
+        self.timeout = params.timeout
 
-        self.file_name = file_name
-        self.timeout = timeout
-
-    def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
             return
+
+        await super().log(msg)
         
         now = datetime.datetime.now()
         with open(self.file_name, 'a') as file:
@@ -114,22 +137,25 @@ class FixedField(ChannelLogger):
 
         self.handle_channel_state(msg)
 class JsonToServer(ChannelLogger):
-    '''Send channels events as json messages to remote server'''
+    '''
+    Send channels events as json messages to  a remote server
+    '''
+    def __init__(self, params) -> None:
+        super().__init__(params)
 
-    def __init__(self, endpoint: str, timeout: int) -> None:
-        super().__init__()
-
-        self.server = endpoint
-        self.timeout = timeout
+        self.server = params.target
+        self.timeout = params.timeout
 
         self.requests = import_module('requests')
         # urllib3 is very chatty.  Uncomment is log event for every connection is needed.
         # remove this if there is a single connection approach
         logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
             return
+
+        await super().log(msg)
 
         msg_dict = asdict(msg)
         logging.debug(f'{msg =}')

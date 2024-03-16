@@ -15,7 +15,10 @@ import sys
 import yaml
 import logging
 from numpy.typing import NDArray
-from channel_loggers import ChannelLogParams
+from channel_loggers import ChannelLogParams, ChannelMessage
+from frequency_provider import FrequencyGroup, FrequencyProvider
+#import asyncio
+import typing
 
 class Scanner(object):
     """Scanner that controls receiver
@@ -67,7 +70,7 @@ class Scanner(object):
                  channel_log_params: ChannelLogParams=ChannelLogParams(type='none', target='', timeout=0),
                  play: bool=True,
                  audio_bps: int=8, channel_spacing: int=5000,
-                 center_freq: int=0,
+                 frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
                  min_recording: float=0, max_recording: float=0,
                  classifier_params: dict[str, bool]={'V':False,'D':False,'S':False }):
 
@@ -79,7 +82,7 @@ class Scanner(object):
         self.play = play
         self.audio_bps = audio_bps
         self.samp_rate: int
-        self.center_freq: int = center_freq  # gets overwritten by receiver value
+        self.frequency_params = frequency_params
         self.spectrum: NDArray = np.empty(0)
         self.lockout_channels: list[dict[str, int] | int] = []
         self.priority_channels: list[int] = []
@@ -94,23 +97,42 @@ class Scanner(object):
         self.hang_time: float = 1.0
         self.max_recording = max_recording
 
+        channel_log_params.notify_scanner = self.got_provider_activity
+
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
                                        audio_bps, min_recording, classifier_params, channel_log_params)
 
-        # Set the initial center frequency here to allow setting min/max and low/high bounds
-        self.receiver.set_center_freq(center_freq)
-
-        # Get the hardware sample rate and center frequency in Hz
+        # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
+
+        self.frequency_params.notify_scanner = self.center_freq_changed
+        self.frequency_params.sample_rate = self.samp_rate  # update with hardware sample rate
+
+        self.frequency_provider = FrequencyProvider(self.frequency_params)
+
+        # Set the initial center frequency here to allow setting min/max
+        self.center_freq = self.frequency_provider.center_freq
+        self.receiver.set_center_freq(self.center_freq)
+        # Get the hardware center frequency in Hz
         self.center_freq = self.receiver.center_freq
+        # Frequency provider info is used by the interface
+        self.step = self.frequency_provider.step
+        self.steps = self.frequency_provider.steps
 
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
         time.sleep(1)
 
-    def scan_cycle(self) -> None:
+    def center_freq_changed(self):
+        '''
+        Callback used to propagate provider value with self.  This
+        will also result in interface being updated.
+        '''
+        self.set_center_freq(self.frequency_provider.center_freq)
+    
+    async def scan_cycle(self) -> None:
         """Execute one scan cycle
 
         Should be called no more than 10 Hz rate
@@ -125,13 +147,13 @@ class Scanner(object):
 
         channels = self._get_raw_channels()
 
-        self._process_current_demodulators(channels)
+        await self._process_current_demodulators(channels)
 
-        self._assign_channels_to_demodulators(channels)
+        await self._assign_channels_to_demodulators(channels)
 
         self._add_metadata(channels)
 
-    def get_channels(self) -> list[Channel]:
+    def get_channels(self) -> list[Channel]:  # TODO: get rid of this getter and use attribute instead
         return self._enriched_channels
 
     def _get_raw_channels(self) -> NDArray:
@@ -160,7 +182,7 @@ class Scanner(object):
 
         return channels
 
-    def _process_current_demodulators(self, channels: NDArray) -> None:
+    async def _process_current_demodulators(self, channels: NDArray) -> None:
 
         the_now = time.time()
         for idx in range(len(self.receiver.demodulators)):
@@ -170,13 +192,13 @@ class Scanner(object):
 
             # Stop locked out demodulator
             if self.locked_out(demodulator.center_freq):
-                demodulator.set_center_freq(0, self.center_freq)
+                await demodulator.set_center_freq(0, self.center_freq)
                 continue
 
             # Stop the demodulator if not being scanned and outside the hang time
             if demodulator.center_freq not in channels:
                 if the_now - demodulator.last_heard > self.hang_time:
-                    demodulator.set_center_freq(0, self.center_freq)
+                    await demodulator.set_center_freq(0, self.center_freq)
             else:
                 demodulator.set_last_heard(the_now)
 
@@ -184,9 +206,9 @@ class Scanner(object):
             if self.max_recording > 0:
                 if time.time() - demodulator.time_stamp >= self.max_recording:
                     # clear the demodulator to reset file
-                    demodulator.set_center_freq(0, self.center_freq)
+                    await demodulator.set_center_freq(0, self.center_freq)
 
-    def _assign_channels_to_demodulators(self, channels: NDArray) -> None:
+    async def _assign_channels_to_demodulators(self, channels: NDArray) -> None:
 
         # assign channels to available demodulators
         for channel in channels:
@@ -198,7 +220,7 @@ class Scanner(object):
                     # If channel is higher priority than what is being demodulated
                     if self.is_higher_priority(channel, demodulator.center_freq):
                         # Assigning channel to empty demodulator
-                        demodulator.set_center_freq(
+                        await demodulator.set_center_freq(
                             channel, self.center_freq)
                         break
                     else:
@@ -309,7 +331,7 @@ class Scanner(object):
             with open(self.lockout_file_name, 'r') as file:
                 lockout_config = yaml.safe_load(file)
 
-            # Iindividual frequenices
+            # Individual frequencies
             for freq in lockout_config['frequencies']:
                 self.lockout_channels.append(self._frequency_to_baseband(freq))
 
@@ -346,15 +368,20 @@ class Scanner(object):
             pass
 
     def set_center_freq(self, center_freq: int) -> None:
-        """Sets RF center frequency of hardware and clears lockout channels
-           Sets low and high demod frequency limits based on provided bounds in command line
+        """Sets RF center frequency of hardware, clears lockout
+        channels, and notify interface that things have changed
 
         Args:
             center_freq (float): Hardware RF center frequency in Hz
         """
         # Tune the receiver then update with actual frequency
+        # and on frequency provider info
         self.receiver.set_center_freq(center_freq)
         self.center_freq = self.receiver.center_freq
+        self.step = self.frequency_provider.step
+        self.steps = self.frequency_provider.steps
+
+        self.frequency_params.notify_interface()
 
         # Update the priority since frequency is changing
         self.update_priority()
@@ -406,19 +433,42 @@ class Scanner(object):
         """
         self.threshold_db = threshold_db
 
+    async def got_provider_activity(self, msg: ChannelMessage) -> None:
+        '''
+        The channel logger let us know about a possibly interesting transmission
+    
+        If so let the frequency provider know.  It will hold  the channel
+        open a bit longer.
+        '''
+
+        if self.interesting(msg):
+            await self.frequency_provider.interesting_activity()
+
+    def interesting(self, msg: ChannelMessage) -> bool:
+        '''
+        What is interesting?
+        1.  If recording and a wav file was created
+        2.  If not recording and channel was set to active
+        '''
+        if (self.record and msg.file is not None) or \
+            (not self.record and msg.state == 'on'):
+            return True
+        else:
+            return False
+
     def stop(self) -> None:
         """Stop the receiver
         """
         self.receiver.stop()
         self.receiver.wait()
 
-    def clean_up(self) -> None:
+    async def clean_up(self) -> None:
         # cleanup terminating all demodulators
         for demod in self.receiver.demodulators:
-            demod.set_center_freq(0, self.center_freq)
+            await demod.set_center_freq(0, self.center_freq)
 
 
-def main():
+async def main() -> None:
     """Test the scanner
 
     Gets options from parser
@@ -431,9 +481,9 @@ def main():
     # Create parser object
     parser = prsr.CLParser()
 
-    if len(parser.parser_args) != 0:
+    if not len(sys.argv) > 1:
         parser.print_help() #pylint: disable=maybe-no-member
-        raise(SystemExit, 1)
+        raise SystemExit(1)
 
     # Create scanner object
     ask_samp_rate = parser.ask_samp_rate
@@ -444,22 +494,23 @@ def main():
     record = parser.record
     lockout_file_name = parser.lockout_file_name
     priority_file_name = parser.priority_file_name
+    channel_log_params = parser.channel_log_params
     play = parser.play
     audio_bps = parser.audio_bps
     channel_spacing = parser.channel_spacing
-    center_freq = parser.center_freq
+    frequency_params = parser.frequency_params
     min_recording = 0
     max_recording = 0
+    classifier_params = parser.classifier_params
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, lockout_file_name,
-                        priority_file_name, play,
-                        audio_bps, channel_spacing,
-                        center_freq,
-                        min_recording, max_recording)
+                        priority_file_name, channel_log_params, play,
+                        audio_bps, channel_spacing, frequency_params,
+                        min_recording, max_recording,
+                        classifier_params)
 
 
     # Set frequency, gain, squelch, and volume
-    scanner.set_center_freq(parser.center_freq)
     print("\n")
     print("Started %s at %.3f Msps" % (hw_args, scanner.samp_rate/1E6))
     scanner.filter_and_set_gains(parser.gains)
@@ -471,28 +522,33 @@ def main():
         (num_demod, type_demod, scanner.squelch_db, scanner.volume_db))
 
     # Create this epmty list to allow printing to screen
-    old_gui_tuned_channels = []
+    old_freqs: list[float] = []
 
     while 1:
         # No need to go faster than 10 Hz rate of GNU Radio probe
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
 
         # Execute a scan cycle
-        scanner.scan_cycle()
+        await scanner.scan_cycle()
 
-        # Print the GUI tuned channels if they have changed
-        if scanner.gui_tuned_channels != old_gui_tuned_channels:
-            sys.stdout.write("Tuners at: ")
-            for text in scanner.gui_tuned_channels:
-                sys.stdout.write(text + " ")
-            sys.stdout.write("\n")
-        else:
-            pass
-        old_gui_tuned_channels = scanner.gui_tuned_channels
+        # Print the tuned channels if they have changed
+
+        channels =  scanner.get_channels()
+
+        freqs = [freq.frequency for freq in channels if freq.active]
+
+        freqs.sort()
+        if freqs != old_freqs:
+            print(freqs)
+        old_freqs = freqs
 
 
 if __name__ == '__main__':
+
+    import asyncio
+
     try:
-        main()
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
     except KeyboardInterrupt:
         pass

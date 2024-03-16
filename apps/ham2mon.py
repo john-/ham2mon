@@ -16,6 +16,7 @@ import logging
 import traceback
 from os.path import realpath, dirname
 
+
 import _curses
 
 class MyDisplay():
@@ -45,7 +46,7 @@ class MyDisplay():
 
             await self.cycle()
 
-        self.scanner.clean_up()
+        await self.scanner.clean_up()
 
     def make_display(self) -> None:
         """Start scanner with GUI interface
@@ -68,6 +69,8 @@ class MyDisplay():
         # Get the initial settings for GUI
         self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
         self.rxwin.center_freq = self.scanner.center_freq
+        self.rxwin.step = self.scanner.step
+        self.rxwin.steps = self.scanner.steps
         self.rxwin.samp_rate = self.scanner.samp_rate
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
@@ -85,10 +88,7 @@ class MyDisplay():
 
         self.specwin.max_db = PARSER.max_db
         self.specwin.min_db = PARSER.min_db
-        self.rxwin.classifier_params = { 'V': PARSER.voice,
-                                         'D': PARSER.data,
-                                         'S': PARSER.skip
-                                       }
+        self.rxwin.classifier_params = PARSER.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
 
     async def cycle(self) -> None:
@@ -97,7 +97,7 @@ class MyDisplay():
         # No need to go faster than 10 Hz rate of GNU Radio probe
         await asyncio.sleep(0.1)
 
-        self.scanner.scan_cycle()
+        await self.scanner.scan_cycle()
 
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
@@ -122,29 +122,36 @@ class MyDisplay():
         freq_correction = PARSER.freq_correction
         audio_bps = PARSER.audio_bps
         channel_spacing = PARSER.channel_spacing
-        center_freq = PARSER.center_freq
+
+        frequency_params = PARSER.frequency_params
+        frequency_params.notify_interface = self.center_freq_changed
+
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
-        classifier_params = { 'V': PARSER.voice,
-                              'D': PARSER.data,
-                              'S': PARSER.skip
-                            }
+        classifier_params = PARSER.classifier_params
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                                freq_correction, record, lockout_file_name,
                                priority_file_name, channel_log_params,
                                play, audio_bps, channel_spacing,
-                               center_freq,
+                               frequency_params,
                                min_recording, max_recording, classifier_params)
 
-        # Set the paramaters
-        scanner.set_center_freq(PARSER.center_freq)
+        # Set the parameters
         scanner.set_squelch(PARSER.squelch_db)
         scanner.set_volume(PARSER.volume_db)
         scanner.set_threshold(PARSER.threshold_db)
 
         return scanner
 
+    def center_freq_changed(self):
+        '''
+        Callback that notifies when the scanner changed 
+        the center frequency.  This occurs when range scanning.
+        '''
+        self.rxwin.center_freq = self.scanner.center_freq
+        self.rxwin.step = self.scanner.step
+        self.rxwin.steps = self.scanner.steps
 
     def handle_char(self, keyb: int) -> None:
         # Send keystroke to spectrum window and update scanner if True
