@@ -37,6 +37,8 @@ class ChannelLogger(ABC):
 
         Overridden in each child class for specific loggers
         '''
+        if msg is None:
+            return
         await self.params.notify_scanner(msg)
 
     @staticmethod
@@ -60,13 +62,14 @@ class ChannelLogger(ABC):
         if self.timeout == 0:
             return
 
+        channel = msg.channel
         if msg.state == 'on':
             # start reoccurring task to log that channel is active
-            self.log_task[msg.channel] = asyncio.create_task(self.log_active(msg))
+            self.log_task[channel] = asyncio.create_task(self.log_active(msg))
         elif msg.state == 'off':
             # stop the reoccurring task
-            if self.log_task[msg.channel]:
-                was_cancelled = self.log_task[msg.channel].cancel()
+            if self.log_task[channel]:
+                was_cancelled = self.log_task[channel].cancel()
                 if not was_cancelled:
                     logging.error('Could not cancel logging task')
 
