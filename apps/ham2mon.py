@@ -138,6 +138,7 @@ class MyDisplay():
                                min_recording, max_recording, classifier_params)
 
         # Set the parameters
+        scanner.set_center_freq(scanner.center_freq)
         scanner.set_squelch(PARSER.squelch_db)
         scanner.set_volume(PARSER.volume_db)
         scanner.set_threshold(PARSER.threshold_db)

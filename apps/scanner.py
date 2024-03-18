@@ -131,6 +131,8 @@ class Scanner(object):
         will also result in interface being updated.
         '''
         self.set_center_freq(self.frequency_provider.center_freq)
+
+        self.frequency_params.notify_interface()
     
     async def scan_cycle(self) -> None:
         """Execute one scan cycle
@@ -380,8 +382,6 @@ class Scanner(object):
         self.center_freq = self.receiver.center_freq
         self.step = self.frequency_provider.step
         self.steps = self.frequency_provider.steps
-
-        self.frequency_params.notify_interface()
 
         # Update the priority since frequency is changing
         self.update_priority()
