@@ -133,7 +133,7 @@ options:
   -n NUM_DEMOD, --demod NUM_DEMOD
                         Number of demodulators
   -d TYPE_DEMOD, --demodulator TYPE_DEMOD
-                        Type of demodulator (0=NBFM, 1=AM)
+                        Type of demodulator (0=NBFM, 1=AM and 2=WBFM)
   -f FREQ_SPEC [FREQ_SPEC ...], --freq FREQ_SPEC [FREQ_SPEC ...]
                         Hardware RF center frequency or range in Hz
   --quiet_timeout QUIET_TIMEOUT

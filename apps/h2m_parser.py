@@ -58,7 +58,7 @@ class CLParser(object):
 
         parser.add_argument("-d", "--demodulator", type=int, dest="type_demod",
                           default=0,
-                          help="Type of demodulator (0=NBFM, 1=AM)")
+                          help="Type of demodulator (0=NBFM, 1=AM and 2=WBFM)")
 
         parser.add_argument("-f", "--freq", type=str, dest="freq_spec",
                           nargs='+', default=["146000000"],

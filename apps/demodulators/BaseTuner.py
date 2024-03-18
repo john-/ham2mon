@@ -7,6 +7,7 @@ from asyncio import Task
 import time
 import numpy as np
 import os
+import logging
 
 from h2m_types import ChannelMessage
 from utilities import baseband_to_frequency

@@ -217,6 +217,7 @@ if __name__ == '__main__':
     except OSError as error:
         print("")
         print(f'OS error: {error=}, {type(error)=}')
+        logging.debug(traceback.format_exc())
         print("")
     except BaseException as error:
         print("")

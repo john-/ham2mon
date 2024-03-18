@@ -21,6 +21,7 @@ import logging
 
 from demodulators.NBFM import TunerDemodNBFM
 from demodulators.AM import TunerDemodAM
+from demodulators.WBFM import TunerDemodWBFM
 from classification import Classifier
 from channel_loggers import ChannelLogParams, ChannelLogger
 
@@ -157,6 +158,13 @@ class Receiver(gr.top_block):
                                                       min_recording,
                                                       classifier,
                                                       channel_logger))
+            elif type_demod == 2:
+                self.demodulators.append(TunerDemodWBFM(self.samp_rate,
+                                                        audio_rate, record,
+                                                        audio_bps,
+                                                        min_recording,
+                                                        classifier,
+                                                        channel_logger))
             else:
                 raise Exception(f'Invalid demodulator type: {type_demod}')
 
@@ -177,6 +185,7 @@ class Receiver(gr.top_block):
             # Just connect each demodulator to the receiver source
             for demodulator in self.demodulators:
                 self.connect(self.src, demodulator)
+
 
     def set_center_freq(self, center_freq: int) -> None:
         """Sets RF center frequency of hardware

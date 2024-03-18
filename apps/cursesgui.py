@@ -383,6 +383,12 @@ class RxWindow(object):
         self.gains = None
         self.classifier_params = None
 
+        self.demod_map = {
+            0: 'NBFM',
+            1: 'AM',
+            2: 'WBFM',
+        }
+
         # Create a window object in the bottom half of the screen
         # Make it about 1/2 the screen width
         # Place on right side and to the left of the border
@@ -521,7 +527,7 @@ class RxWindow(object):
         self.win.addnstr(index, 44, text, 8)
 
         index = index+1
-        text = str(self.type_demod)
+        text = self.demod_map[self.type_demod]
         self.win.addnstr(index, 44, text, 8, curses.color_pair(6))
 
         index = index+1
