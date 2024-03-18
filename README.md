@@ -28,6 +28,7 @@ lordmorgul:
 - pulled gain corrections to python3 version from john
 - channel width configurable from command line option
 - incorporate miweber67 freq range limits
+- WBFM support
 
 miweber67
 - frequency range to limit selected channels to within specific limit
