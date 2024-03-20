@@ -17,8 +17,11 @@ import logging
 from numpy.typing import NDArray
 from channel_loggers import ChannelLogParams, ChannelMessage
 from frequency_provider import FrequencyGroup, FrequencyProvider
+from lockout_manager import LockoutManager, LockoutListRadioFreq
+from utilities import baseband_to_frequency
 #import asyncio
 import typing
+from pathlib import Path
 
 class Scanner(object):
     """Scanner that controls receiver
@@ -33,10 +36,10 @@ class Scanner(object):
         ask_samp_rate (int): Asking sample rate of hardware in sps (1E6 min)
         num_demod (int): Number of parallel demodulators
         type_demod (int): Type of demodulator (0=NBFM, 1=AM)
-        hw_args (string): Argument string to pass to harwdare
+        hw_args (string): Argument string to pass to hardware
         freq_correction (int): Frequency correction in ppm
         record (bool): Record audio to file if True
-        lockout_file_name (string): Name of file with channels to lockout
+        lockout_file_name (Path): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels for priority
         audio_bps (int): Audio bit depth in bps (bits/samples)
         center_freq (int): initial center frequency for receiver (Hz)
@@ -47,15 +50,13 @@ class Scanner(object):
 
     Attributes:
         center_freq (int): Hardware RF center frequency in Hz
-        low_bound (int): Freq below which we won't tune a receiver (Hz)
-        high_bound (int): Freq above which we won't tune a receiver (Hz)
         samp_rate (int): Hardware sample rate in sps (1E6 min)
         gains : Enumerated gain types and values
         squelch_db (int): Squelch in dB
         volume_dB (int): Volume in dB
         threshold_dB (int): Threshold for channel detection in dB
         spectrum (numpy.ndarray): FFT power spectrum data in linear, not dB
-        lockout_channels [float]: List of baseband lockout channels in Hz
+        lockout_channels (LockoutListRadioFreq): List of baseband lockout channels in MHz
         priority_channels list[int]: List of baseband priority channels in Hz
         channel_spacing (float):  Spacing that channels will be rounded
         lockout_file_name (string): Name of file with channels to lockout
@@ -66,7 +67,7 @@ class Scanner(object):
 
     def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
                  hw_args: str="uhd", freq_correction: int=0, record: bool=True,
-                 lockout_file_name: str="", priority_file_name: str="",
+                 lockout_file_name: Path=Path(""), priority_file_name: str="",
                  channel_log_params: ChannelLogParams=ChannelLogParams(type='none', target='', timeout=0),
                  play: bool=True,
                  audio_bps: int=8, channel_spacing: int=5000,
@@ -84,13 +85,12 @@ class Scanner(object):
         self.samp_rate: int
         self.frequency_params = frequency_params
         self.spectrum: NDArray = np.empty(0)
-        self.lockout_channels: list[dict[str, int] | int] = []
+        self.lockout_channels: LockoutListRadioFreq = []
         self.priority_channels: list[int] = []
-        self._enriched_channels: list[Channel] = []
-        self.gui_lockout_channels: list[dict[str, float] | float] = []
+        self.channels: list[Channel] = []
         self.channel_log_params = channel_log_params
         self.channel_spacing = channel_spacing
-        self.lockout_file_name = lockout_file_name
+        self.lockout_file_name = lockout_file_name  # used by lockout manager and the gui
         self.priority_file_name = priority_file_name
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
@@ -121,14 +121,17 @@ class Scanner(object):
         self.step = self.frequency_provider.step
         self.steps = self.frequency_provider.steps
 
+        self.lockout_manager = LockoutManager(lockout_file_name, self.center_freq, self.channel_spacing)
+        self.lockout_channels = self.lockout_manager.lockouts
+
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
         time.sleep(1)
 
     def center_freq_changed(self):
         '''
-        Callback used to propagate provider value with self.  This
-        will also result in interface being updated.
+        Callback used to propagate provider value with self.  Also,
+        notify the interface that the center frequency changed.
         '''
         self.set_center_freq(self.frequency_provider.center_freq)
 
@@ -154,9 +157,6 @@ class Scanner(object):
         await self._assign_channels_to_demodulators(channels)
 
         self._add_metadata(channels)
-
-    def get_channels(self) -> list[Channel]:  # TODO: get rid of this getter and use attribute instead
-        return self._enriched_channels
 
     def _get_raw_channels(self) -> NDArray:
         # Grab the FFT data, set threshold, and estimate baseband channels
@@ -193,7 +193,7 @@ class Scanner(object):
                 continue
 
             # Stop locked out demodulator
-            if self.locked_out(demodulator.center_freq):
+            if self.lockout_manager.locked_out(demodulator.center_freq):
                 await demodulator.set_center_freq(0, self.center_freq)
                 continue
 
@@ -215,7 +215,7 @@ class Scanner(object):
         # assign channels to available demodulators
         for channel in channels:
             # If channel not in demodulators
-            if channel not in self.receiver.get_demod_freqs() and not self.locked_out(channel):
+            if channel not in self.receiver.get_demod_freqs() and not self.lockout_manager.locked_out(channel):
                 # Sequence through each demodulator
                 for idx in range(len(self.receiver.demodulators)):
                     demodulator = self.receiver.demodulators[idx]
@@ -244,17 +244,17 @@ class Scanner(object):
 
         sweep: list[Channel] = []
         for channel in all_channels:
-            frequency = self._baseband_to_frequency(channel)
+            frequency = baseband_to_frequency(channel, self.receiver.center_freq)
             priority: bool = channel in self.priority_channels
             idx = 0 if priority else len(sweep)  # priority channels up front
             sweep.insert(idx, Channel(baseband=channel,
                                       frequency=frequency,
-                                      locked=self.locked_out(channel),
+                                      locked=self.lockout_manager.locked_out(channel),
                                       active=channel in demod_freqs and channel in active_channels,
                                       priority=priority,
                                       hanging=channel in demod_freqs and channel not in active_channels))
 
-        self._enriched_channels = sweep
+        self.channels = sweep
 
     def is_higher_priority(self, channel: int, demod_freq: int) -> bool:
 
@@ -276,75 +276,21 @@ class Scanner(object):
         else:
             return False
 
-    def locked_out(self, channel: int) -> bool:
-        locked = False
-        for lockout_channel in self.lockout_channels:
-            if isinstance(lockout_channel, dict):  # is range this range locked out?
-                if lockout_channel['min'] <= channel <= lockout_channel['max']:
-                    locked = True
-            else:  # is this frequency locked out?
-                if channel == lockout_channel:
-                    locked = True
-        return locked
-
-    def _generate_gui_lockout_channels(self) -> None:
-        # Create a lockout channel list for the GUI in Mhz
-        self.gui_lockout_channels = []
-        gui_lockout_channel: dict[str, float] | float   # list of ranges or single frequencies
-        for lockout_channel in self.lockout_channels:
-            if isinstance(lockout_channel, dict):  # add the range lockout
-                gui_lockout_channel = {'min': self._baseband_to_frequency(lockout_channel['min']), 'max': self._baseband_to_frequency(lockout_channel['max'])}
-            else:  # add the frequency lockout
-                gui_lockout_channel = self._baseband_to_frequency(int(lockout_channel))
-                
-            self.gui_lockout_channels.append(gui_lockout_channel)
-
     def add_lockout(self, idx: int) -> None:
-        """Adds baseband frequency to lockout channels and updates GUI list
-
-        Args:
-            idx (int): Index of tuned channel
-        """
-        # Check to make sure index is within the number of demodulators
-        if idx < len(self.receiver.demodulators):
-            # Lockout if not zero and not already locked out
-            demod_freq: int = self.receiver.demodulators[idx].center_freq
-            if (demod_freq != 0) and (demod_freq not in self.lockout_channels):
-                self.lockout_channels.append(demod_freq)
-
-        self._generate_gui_lockout_channels()
-
-    def _frequency_to_baseband(self, freq: float) -> int:
-        bb_freq = float(freq) * 1E6 - self.center_freq
-        bb_freq = round(bb_freq/self.channel_spacing) * self.channel_spacing
-        return bb_freq
-    
-    def _baseband_to_frequency(self, bb_freq: int) -> float:
-        return (bb_freq + self.receiver.center_freq)/1E6
+        # need the same subset here as in cursesgui.ChannelWindow so idx gets the right channel
+        subset = [c for c in self.channels if c.active or c.hanging]
+        try:
+            self.lockout_channels = self.lockout_manager.add(subset[idx].frequency)
+        except IndexError:
+            # user selected a digit but no channels in interface
+            return
     
     def clear_lockout(self) -> None:
-        """Clears lockout channels and updates GUI list
         """
-        # Clear the lockout channels
-        self.lockout_channels = []
-
-        # Process lockout file if it was provided
-        if self.lockout_file_name != "":
-            with open(self.lockout_file_name, 'r') as file:
-                lockout_config = yaml.safe_load(file)
-
-            # Individual frequencies
-            for freq in lockout_config['frequencies']:
-                self.lockout_channels.append(self._frequency_to_baseband(freq))
-
-            # Ranges of frequencies
-            for range in lockout_config['ranges']:
-                self.lockout_channels.append({
-                    'min': self._frequency_to_baseband(range['min']),
-                    'max': self._frequency_to_baseband(range['max'])
-                })
-
-        self._generate_gui_lockout_channels()
+        Clears lockout channels and rebuilds based on config.  Usually called
+        by the user interface ('l' key).
+        """
+        self.lockout_channels = self.lockout_manager.load()
 
     def update_priority(self) -> None:
         """Updates priority channels
@@ -370,11 +316,11 @@ class Scanner(object):
             pass
 
     def set_center_freq(self, center_freq: int) -> None:
-        """Sets RF center frequency of hardware, clears lockout
-        channels, and notify interface that things have changed
+        """Sets RF center frequency of hardware, update lockout
+        baseband frequencies, and notify interface that things have changed
 
         Args:
-            center_freq (float): Hardware RF center frequency in Hz
+            center_freq (int): Hardware RF center frequency in Hz
         """
         # Tune the receiver then update with actual frequency
         # and on frequency provider info
@@ -386,8 +332,9 @@ class Scanner(object):
         # Update the priority since frequency is changing
         self.update_priority()
 
-        # Clear the lockout since frequency is changing
-        self.clear_lockout()
+        # Recreate baseband lockout since frequency is changing
+        self.lockout_manager.update(self.center_freq)
+        #self.generate_baseband_lockout_channels()
 
     def filter_and_set_gains(self, all_gains: list[dict]) -> list[dict]:
         """Set the supported gains and return them
@@ -521,7 +468,7 @@ async def main() -> None:
     print("%d demods of type %d at %d dB squelch and %d dB volume" % \
         (num_demod, type_demod, scanner.squelch_db, scanner.volume_db))
 
-    # Create this epmty list to allow printing to screen
+    # Create this empty list to allow printing to screen
     old_freqs: list[float] = []
 
     while 1:
@@ -533,7 +480,7 @@ async def main() -> None:
 
         # Print the tuned channels if they have changed
 
-        channels =  scanner.get_channels()
+        channels =  scanner.channels
 
         freqs = [freq.frequency for freq in channels if freq.active]
 

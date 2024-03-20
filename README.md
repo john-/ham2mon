@@ -170,7 +170,7 @@ options:
                         Threshold in dB
   -w, --write           Record (write) channels to disk
   -l LOCKOUT_FILE_NAME, --lockout LOCKOUT_FILE_NAME
-                        File of EOL delimited lockout channels in Hz
+                        YAML lockout file containing frequencies and ranges in Mhz
   -p PRIORITY_FILE_NAME, --priority PRIORITY_FILE_NAME
                         File of EOL delimited priority channels in Hz
                         (descending priority order)
@@ -254,6 +254,8 @@ A use case for this is as follows: You want to hear something, anything, but wan
 
 ## Lockout File
 The Lockout file is a YAML file that can contain individual frequencies to be locked out as well as ranges of frequencies.  All values are in Mhz (see the example for details).  Requires the `-l/--lockout` option.  
+
+Although the user can add lockout frequencies to the active lockouts there currently is no save option to write these out to the lockout file.  However, those unsaved lockouts will be flagged with a 'U' in the LOCKOUT section.
 
 ## Channel Detection Log File
 Channel events can be written to file or other targets.  Events occur when channel activity is detected as well as for ongoing activity.

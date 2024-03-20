@@ -8,7 +8,7 @@ Created on Sat Jul 18 15:21:33 2015
 
 # from optparse import OptionParser
 from argparse import ArgumentParser
-# from gnuradio.eng_option import eng_option
+from pathlib import Path
 from channel_loggers import ChannelLogParams
 from frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
 
@@ -123,10 +123,10 @@ class CLParser(object):
                           dest="record", default=False, action="store_true",
                           help="Record (write) channels to disk")
 
-        parser.add_argument("-l", "--lockout", type=str,
+        parser.add_argument("-l", "--lockout", type=Path,
                           dest="lockout_file_name",
                           default="",
-                          help="File of EOL delimited lockout channels in Hz")
+                          help="YAML lockout file containing frequencies and ranges in Mhz")
 
         parser.add_argument("-p", "--priority", type=str,
                           dest="priority_file_name",
@@ -251,7 +251,7 @@ class CLParser(object):
         self.threshold_db = int(options.threshold_db)
         self.record = bool(options.record)
         self.play = bool(options.play)
-        self.lockout_file_name = str(options.lockout_file_name)
+        self.lockout_file_name = Path(options.lockout_file_name)
         self.priority_file_name = str(options.priority_file_name)
         self.channel_log_params = ChannelLogParams(
             target=str(options.channel_log_target),
@@ -302,7 +302,7 @@ def main():
     print("threshold_db:        " + str(parser.threshold_db))
     print("record:              " + str(parser.record))
     print("play:                " + str(parser.play))
-    print("lockout_file_name:   " + str(parser.lockout_file_name))
+    print("lockout_file_name:   " + str(parser.lockout_file_name.name))
     print("priority_file_name:  " + str(parser.priority_file_name))
     print("channel_log target:  " + str(parser.channel_log_params.target))
     print("channel_log timeout: " + str(parser.channel_log_params.timeout))

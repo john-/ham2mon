@@ -10,7 +10,9 @@ import curses
 import time
 import numpy as np
 import logging
+from pathlib import PurePath
 from h2m_types import Channel
+from lockout_manager import RadioFreqRange, LockoutListRadioFreq
 
 locale.setlocale(locale.LC_ALL, '')
 class SpectrumWindow(object):
@@ -214,7 +216,7 @@ class ChannelWindow(object):
         # Draw the tuned channels prefixed by index in list (demodulator index)
         # Use color if tuned channel is active during this scan_cycle
         subset = channels[:max_length]
-        subset = [c for c in subset if c.active or c.hanging]
+        subset = [c for c in subset if c.active or c.hanging]  # needs to match Scanner.add_lockout
         for idx, channel in enumerate(subset):
             icon = 'P' if channel.priority else ''
             text = f'{idx:02d}: {channel.frequency:.3f}'
@@ -265,7 +267,7 @@ class LockoutWindow(object):
         self.win = curses.newwin(height, width, screen_dims[0] - height - 1, width+1)
         self.dims = self.win.getmaxyx()
 
-    def draw_channels(self, gui_lockout_channels, channels: list[Channel]):
+    def draw_channels(self, lockout_channels: LockoutListRadioFreq, channels: list[Channel]):
         """Draws lockout channels list
 
         Args:
@@ -281,21 +283,27 @@ class LockoutWindow(object):
         # Draw the lockout channels
         # Use color if lockout channel is in active channel list during this scan_cycle
         locked_channels = [c for c in channels if c.locked]
-        for idx, lockout in enumerate(gui_lockout_channels):
+        for idx, lockout in enumerate(lockout_channels):
             # Don't draw past height of window
             if idx <= self.dims[0]-3:
+                if not lockout.saved:
+                    icon = 'U'
+                else:
+                    icon = None
                 attr = curses.color_pair(6)
-                if isinstance(lockout, dict):  # handle this range
-                    text = f"{lockout['min']:.3f}-{lockout['max']:.3f}"
+                if isinstance(lockout, RadioFreqRange):
+                    text = f"{lockout.min:.3f}-{lockout.max:.3f}"
                     for channel in locked_channels:
-                        if lockout['min'] <= channel.frequency <= lockout['max']:
+                        if lockout.min <= channel.frequency <= lockout.max:
                             attr = curses.color_pair(5) | curses.A_BOLD
                 else:  # handle this single frequency
-                    text = f"{lockout:.3f}"
+                    text = f"{lockout.freq:.3f}"
                     for channel in locked_channels:
-                        if lockout == channel.frequency:
+                        if lockout.freq == channel.frequency:
                                 attr = curses.color_pair(5) | curses.A_BOLD
                 self.win.addnstr(idx+1, 1, text, 20, attr)
+                if icon:
+                    self.win.addnstr(idx+1, len(text)+1, icon, 1, attr & ~curses.A_BOLD)
             else:
                 pass
 
@@ -354,7 +362,7 @@ class RxWindow(object):
         volume_dB (int): Volume in dB
         type_demod (int): Type of demodulation (0 = FM, 1 = AM)
         record (bool): Record audio to file if True
-        lockout_file_name (string): Name of file with channels to lockout
+        lockout_file_name (PurePath): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels for priority
         channel_log_file_name (string): Name of file for channel activity logging
         channel_log_timeout (int): Timeout delay between logging active state of channel in seconds
@@ -376,7 +384,7 @@ class RxWindow(object):
         self.volume_db = 0
         self.type_demod = 0
         self.record = True
-        self.lockout_file_name = ""
+        self.lockout_file_name: PurePath = None
         self.priority_file_name = ""
         self.channel_log_type = ""
         self.channel_log_target = ""
@@ -531,7 +539,7 @@ class RxWindow(object):
         self.win.addnstr(index, 44, text, 8, curses.color_pair(6))
 
         index = index+1
-        text = str(self.lockout_file_name)
+        text = str(self.lockout_file_name.name)
         self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
 
         index = index+1

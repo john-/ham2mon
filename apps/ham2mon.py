@@ -7,15 +7,15 @@ Created on Fri Jul  3 13:38:36 2015
 """
 
 import scanner as scnr
-from curses import ERR, KEY_RESIZE, curs_set, wrapper, echo, nocbreak, endwin
+from curses import ERR, KEY_RESIZE, curs_set, wrapper
 import cursesgui
 import h2m_parser as h2m_parser
 import asyncio
 import errors as err
 import logging
 import traceback
+#from pathlib import Path
 from os.path import realpath, dirname
-
 
 import _curses
 
@@ -101,8 +101,8 @@ class MyDisplay():
 
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
-        self.chanwin.draw_channels(self.scanner.get_channels())
-        self.lockoutwin.draw_channels(self.scanner.gui_lockout_channels, self.scanner.get_channels())
+        self.chanwin.draw_channels(self.scanner.channels)
+        self.lockoutwin.draw_channels(self.scanner.lockout_channels, self.scanner.channels)
         self.rxwin.draw_rx()
 
         # Update physical screen
@@ -220,14 +220,3 @@ if __name__ == '__main__':
         print(f'OS error: {error=}, {type(error)=}')
         logging.debug(traceback.format_exc())
         print("")
-    except BaseException as error:
-        print("")
-        print(f'Unexpected: {error=}, {type(error)=}')
-        logging.debug(traceback.format_exc())
-        print("")
-
-    finally:
-        # --- Cleanup on exit ---
-        echo()
-        nocbreak()
-        endwin()

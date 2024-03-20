@@ -10,7 +10,7 @@ def frequency_to_baseband(freq: float, center_freq: int, channel_spacing: int) -
     bb_freq = round(bb_freq/channel_spacing) * channel_spacing
     return bb_freq
 
-def baseband_to_frequency(bb_freq: int, rf_freq: int) -> float:
+def baseband_to_frequency(bb_freq: int, center_freq: int) -> float:
     """Return frequency in Mhz
     """
-    return (bb_freq + rf_freq)/1E6
+    return (bb_freq + center_freq)/1E6
