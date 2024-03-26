@@ -157,16 +157,20 @@ class FrequencyProvider():
         # the approach could be user selectable.    
         for a_range in self.params.ranges:
 
-            # break the range into pieces based on sample rate
             sample_rate = self.params.sample_rate
+
+            # handle range less than sample rate
+            if a_range.upper_freq - a_range.lower_freq <= sample_rate:
+                center = a_range.lower_freq + int((a_range.upper_freq - a_range.lower_freq) / 2)
+                centers.append(center)
+                continue
+
+            # break the range into pieces based on sample rate
             start_at = a_range.lower_freq + int(sample_rate/2)
             end_at = a_range.upper_freq - int(sample_rate/2)
-            number_of_moves = int((end_at - start_at) / sample_rate) + 1
+            number_of_moves = int((end_at - start_at) / sample_rate) + 2
 
-            # if range is small just return the midpoint between them
-            if number_of_moves == 1:
-                centers = [start_at + int((end_at - start_at) / 2)]
-                return centers
+            logging.debug(f'{a_range=} {start_at=} {end_at=} {number_of_moves=}')
 
             distance = int((end_at - start_at) / (number_of_moves - 1))
 
