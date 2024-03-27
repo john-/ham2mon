@@ -170,8 +170,6 @@ class FrequencyProvider():
             end_at = a_range.upper_freq - int(sample_rate/2)
             number_of_moves = int((end_at - start_at) / sample_rate) + 2
 
-            logging.debug(f'{a_range=} {start_at=} {end_at=} {number_of_moves=}')
-
             distance = int((end_at - start_at) / (number_of_moves - 1))
 
             logging.debug(f'Range: {start_at}-{end_at} Steps: {number_of_moves} Distance: {distance}, Min time: {number_of_moves*self.params.quiet_timeout}')

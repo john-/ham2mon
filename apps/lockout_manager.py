@@ -66,12 +66,14 @@ class LockoutManager:
             lockout_config = yaml.safe_load(file)
 
         # Individual frequencies
-        for freq in lockout_config['frequencies']:
-            self.lockouts.append(RadioFreq(freq=freq))
+        if 'frequencies' in lockout_config:
+            for freq in lockout_config['frequencies']:
+                self.lockouts.append(RadioFreq(freq=freq))
 
         # Ranges of frequencies
-        for a_range in lockout_config['ranges']:
-            self.lockouts.append(RadioFreqRange(min=a_range['min'], max=a_range['max']))
+        if 'ranges' in lockout_config:
+            for a_range in lockout_config['ranges']:
+                self.lockouts.append(RadioFreqRange(min=a_range['min'], max=a_range['max']))
 
         return self.lockouts
 
