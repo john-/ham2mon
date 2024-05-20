@@ -12,6 +12,7 @@ Code is copied from:
 from pathlib import Path
 import numpy as np
 import logging
+from typing import Tuple
 
 try:
     import tensorflow as tf
@@ -46,13 +47,13 @@ class Classifier(object):
         self.input_details = self.model.get_input_details()
         self.output_details = self.model.get_output_details()
 
-    def is_wanted(self, file: str) -> str | None:
+    def is_wanted(self, file: str) -> Tuple[bool, str]:
 
         spectrogram = self.get_spectrogram(file)
         detected_as = self.predict(spectrogram)
 
         wanted = detected_as if detected_as and self.params[detected_as] else None
-        return wanted
+        return wanted, detected_as
         
     # convert the waveform into a spectrogram
     def get_spectrogram(self, file: str) -> tf.Tensor:
@@ -107,7 +108,7 @@ class Classifier(object):
         audio, _ = tf.audio.decode_wav(audio_binary)
         return tf.squeeze(audio, axis=-1)
 
-    def predict(self, spectrogram: tf.Tensor) -> str | None:
+    def predict(self, spectrogram: tf.Tensor) -> str:
         if spectrogram is None:
             return None
 

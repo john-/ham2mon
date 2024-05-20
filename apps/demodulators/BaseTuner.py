@@ -130,17 +130,17 @@ class BaseTuner(gr.hier_block2):
         # If user wants file of this classification
         # then move from tmp directory and rename
         # otherwise delete it
-        is_wanted = self.classify.is_wanted(self.file_name)
+        (is_wanted, classification) = self.classify.is_wanted(self.file_name)
+        xmit_msg.classification = classification
         if  is_wanted:
             name = self.file_name.replace('tmp/', '')
-            name = name.replace('.wav', '_' + is_wanted + '.wav')
+            name = name.replace('.wav', '_' + classification + '.wav')
             os.rename(self.file_name, name)
             
             # if using recent python3 have self.file_name be a Path
             # new_name = PurePath(self.file_name)
             # name = f'wav/{new_name.stem}_{is_wanted}{new_name.suffix}'
             xmit_msg.file = name
-            xmit_msg.classification = is_wanted
             return xmit_msg
         else:
             os.unlink(self.file_name)

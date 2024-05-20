@@ -134,6 +134,7 @@ class LockoutManager:
             else:
                 logging.error(f'invalid lockout: {lockout}')
 
+
 def main() -> None:
 
     file = Path('/cart/ham2mon/apps/lockout-example.yaml')

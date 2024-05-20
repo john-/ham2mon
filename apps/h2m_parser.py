@@ -28,6 +28,7 @@ class CLParser(object):
         play (bool): Play audio through speaker if True
         lockout_file_name (string): Name of file with channels to lockout
         priority_file_name (string): Name of file with channels to for priority
+        auto_priority (bool): Automatically set priority channels
         channel_log_target (string): Name of file or endpoint for channel logging
         channel_log_type (string): Log file type for channel detection
         channel_log_timeout (int): Timeout delay between active channel log entries
@@ -132,6 +133,10 @@ class CLParser(object):
                           dest="priority_file_name",
                           default="",
                           help="File of EOL delimited priority channels in Hz (descending priority order)")
+
+        parser.add_argument("-P", "--auto-priority", action="store_true",
+                          dest="auto_priority",
+                          help="Automatically add tuned channel as priority channel if it contains voice transmissions")
 
         parser.add_argument("-T", "--log_type", type=str,
                           dest="channel_log_type",
@@ -269,6 +274,11 @@ class CLParser(object):
         voice = bool(options.voice)        
         data = bool(options.data)
         skip = bool(options.skip)
+
+        self.auto_priority = bool(options.auto_priority)
+        if self.auto_priority:
+            voice = True
+
         self.classifier_params = {'V': voice,
                                   'D': data,
                                   'S': skip
@@ -317,6 +327,7 @@ def main():
     print("voice:               " + str(parser.classifier_params['V']))
     print("data:                " + str(parser.classifier_params['D']))
     print("skip:                " + str(parser.classifier_params['S']))
+    print("auto_priority:       " + str(parser.auto_priority))
     print("debug:               " + str(parser.debug))
 
 if __name__ == '__main__':

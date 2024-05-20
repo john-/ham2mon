@@ -128,14 +128,17 @@ class MyDisplay():
 
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
+
         classifier_params = PARSER.classifier_params
+
+        auto_priority = PARSER.auto_priority
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                                freq_correction, record, lockout_file_name,
                                priority_file_name, channel_log_params,
                                play, audio_bps, channel_spacing,
-                               frequency_params,
-                               min_recording, max_recording, classifier_params)
+                               frequency_params, min_recording, max_recording,
+                               classifier_params, auto_priority)
 
         # Set the parameters
         scanner.set_center_freq(scanner.center_freq)

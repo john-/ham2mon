@@ -174,6 +174,8 @@ options:
   -p PRIORITY_FILE_NAME, --priority PRIORITY_FILE_NAME
                         File of EOL delimited priority channels in Hz
                         (descending priority order)
+  -P, --auto-priority   Automatically add tuned channel as priority channel if it contains voice
+                        transmissions
   -T CHANNEL_LOG_TYPE, --log_type CHANNEL_LOG_TYPE
                         Log file type for channel detection
   -L CHANNEL_LOG_TARGET, --log_target CHANNEL_LOG_TARGET
@@ -269,6 +271,11 @@ An activity log entry is written every 15 seconds (by default).  This can be cha
 If `debug` is selected as logging type than channel events can be viewed when the `--debug` option is also selected on the command line.
 
 See [json-server example](doc/json-server_example.md) for one way this can be used.
+
+## Auto Priority
+With the `-P` option, channels that meet specific conditions will automatically be added to the priority list.  Currently, only one algorithm is supported: Voice priority.  With this, those channels that have more voice transmissions than data/skip transmissions will be added to the priority list.
+
+Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.
 
 ## Logging
 Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.
