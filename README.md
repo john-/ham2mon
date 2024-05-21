@@ -7,7 +7,21 @@ http://youtu.be/BXptQFSV8E4
 
 ## Tested with:
 
-Although ham2mon has been tested with a variety of hardware, this fork has only been tested with airspy sdr.
+This fork been tested with:
+
+- Airspy Mini (https://airspy.com/airspy-mini/)
+- RTL-SDR v3 RTL2832 + R820T at 2 Msps (http://rtl-sdr.com)
+- RTL-SDR NOOELEC NESDR+ (RTL2838 DVB-T)
+
+Note: This fork is expected with the following SDRs:
+
+- GNU Radio 3.8.2.0 (https://github.com/gnuradio/gnuradio)
+- GrOsmoSDR 0.1.4-29 (http://sdr.osmocom.org/trac/wiki/GrOsmoSDR)
+- Ettus B200 at 16 Msps (http://www.ettus.com)
+- NooElec RTL2832 + R820T at 2 Msps (http://www.nooelec.com)
+- GNU Radio 3.7.10 (https://github.com/gnuradio/gnuradio)
+- GrOsmoSDR 0.1.4 (http://sdr.osmocom.org/trac/wiki/GrOsmoSDR)
+- Ettus UHD 3.10.0 (https://github.com/EttusResearch/uhd)
 
 This fork has only been tested with recent versions of python 3.  It will not work with python 2.7.
 
@@ -29,6 +43,7 @@ lordmorgul:
 - channel width configurable from command line option
 - incorporate miweber67 freq range limits
 - WBFM support
+- CTCSS support (in progress)
 
 miweber67
 - frequency range to limit selected channels to within specific limit
@@ -296,7 +311,7 @@ To validate changes to ham2mon source code that may impact scanning it is best t
 
 Example recording with airspy:
 
-`airspy_rx -r case1.dump -t 0 -f 460.4 -a 3000000 -v 8 -m 10 -l 11`
+`airspy_rx -r case1.dump -t 0 -f 460.4 -a 3000000 -v 11 -m 10 -l 11`
 
 This can then be replayed in ham2mon:
 
