@@ -83,7 +83,7 @@ class Scanner(object):
                  frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
                  min_recording: float=0, max_recording: float=0,
                  classifier_params: dict[str, bool]={'V':False,'D':False,'S':False },
-                 auto_priority: bool=False):
+                 auto_priority: bool=False, agc: bool=False):
 
         # Default values
         self.squelch_db = -60
@@ -116,7 +116,7 @@ class Scanner(object):
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
                                        audio_bps, min_recording, classifier_params,
-                                       channel_log_params)
+                                       channel_log_params, agc)
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate

@@ -126,6 +126,8 @@ class MyDisplay():
         frequency_params = PARSER.frequency_params
         frequency_params.notify_interface = self.center_freq_changed
 
+        agc = PARSER.agc
+
         min_recording = PARSER.min_recording
         max_recording = PARSER.max_recording
 
@@ -138,7 +140,7 @@ class MyDisplay():
                                priority_file_name, channel_log_params,
                                play, audio_bps, channel_spacing,
                                frequency_params, min_recording, max_recording,
-                               classifier_params, auto_priority)
+                               classifier_params, auto_priority, agc)
 
         # Set the parameters
         scanner.set_center_freq(scanner.center_freq)

@@ -177,6 +177,7 @@ options:
   --lb_gain LB_GAIN_DB  Hardware LB gain in dB
   -x MIX_GAIN_DB, --mix_gain MIX_GAIN_DB
                         Hardware MIX gain index
+  --agc                 Enable automatic gain control
   -s SQUELCH_DB, --squelch SQUELCH_DB
                         Squelch in dB
   -v VOLUME_DB, --volume VOLUME_DB
@@ -189,8 +190,7 @@ options:
   -p PRIORITY_FILE_NAME, --priority PRIORITY_FILE_NAME
                         File of EOL delimited priority channels in Hz
                         (descending priority order)
-  -P, --auto-priority   Automatically add tuned channel as priority channel if it contains voice
-                        transmissions
+  -P, --auto-priority   Automatically add voice channels as priority channels
   -T CHANNEL_LOG_TYPE, --log_type CHANNEL_LOG_TYPE
                         Log file type for channel detection
   -L CHANNEL_LOG_TARGET, --log_target CHANNEL_LOG_TARGET
@@ -261,6 +261,30 @@ An example use case:  Private Land Mobile Radio Service operates in the 150-174 
 `./ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0E6-174E6 421.0E6-512.0E6 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60`
 
 When range scanning, the RECEIVER section will show current step, number of steps and the percent complete.
+
+## Automatic Gain Control (AGC)
+This is a work in progress as the implementation may not function with all SDRs.  Furthermore, the UI may leave gain elements enabled that have no effect on underlying SDR.
+
+### Underlying AGC
+AGC may be *enabled* in one of two ways (SDR dependent):
+
+- A call to set_gain_mode() in the SDR driver
+  - The `--agc` option uses this method
+- A hardware argument supplied to ham2mon (`-a` option)
+  - This needs to be confirmed
+
+AGC may be *configured* via hardware argument supplied to ham2mon (`-a` option):
+
+- For example, with the Airspy Mini the AGC algorithm can be one of two types: linearity or sensitivity
+    - e.g. `-a "airspy,linearity"`
+- See documentation of your radio for details.
+
+### Enabling AGC in ham2mon
+AGC mode can be requested by specifying the `--agc` option to ham2mon.  Support is required in gr-osmosdr, SDR driver and the SDR hardware.  AGC is turned off by default.
+
+With AGC, not all gain elements are used by the SDR.  the ones not used will be changeable in the UI but have no impact on the underlying hardware gain element.
+
+For example, if AGC is specified for the Airspy Mini, the IF gain will be the only working gain element.  The others will be controlled by the SDR using its algorithm.  The UI values for the other elements will be ignored by the SDR.
 
 ## Priority File
 The Priority file contains a frequency (in Hz) in each line.  The frequencies are to be arranged in descending priority order.  Therefore, the highest priority frequency will be the one at the top.

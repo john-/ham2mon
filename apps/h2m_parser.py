@@ -108,6 +108,9 @@ class CLParser(object):
         parser.add_argument("-x", "--mix_gain", type=float, dest="mix_gain_db",
                           default=5, help="Hardware MIX gain index")
 
+        parser.add_argument("--agc", dest="agc", action="store_true",
+                          help="Enable automatic gain control")
+
         parser.add_argument("-s", "--squelch", type=int,
                           dest="squelch_db", default=-60,
                           help="Squelch in dB")
@@ -136,7 +139,7 @@ class CLParser(object):
 
         parser.add_argument("-P", "--auto-priority", action="store_true",
                           dest="auto_priority",
-                          help="Automatically add tuned channel as priority channel if it contains voice transmissions")
+                          help="Automatically add voice channels as priority channels")
 
         parser.add_argument("-T", "--log_type", type=str,
                           dest="channel_log_type",
@@ -251,6 +254,7 @@ class CLParser(object):
             { "name": "PGA", "value": float(options.pga_gain_db) },
             { "name": "LB", "value": float(options.lb_gain_db) }
         ]
+        self.agc = bool(options.agc)
         self.squelch_db = int(options.squelch_db)
         self.volume_db = int(options.volume_db)
         self.threshold_db = int(options.threshold_db)
@@ -307,6 +311,7 @@ def main():
     for gain in parser.gains:
         #print(str(gain["value"]))
         print('{0: <21}'.format(gain["name"] + " gain:") + str(gain["value"]))
+    print("agc:                 " + str(parser.agc))
     print("squelch_db:          " + str(parser.squelch_db))
     print("volume_db:           " + str(parser.volume_db))
     print("threshold_db:        " + str(parser.threshold_db))

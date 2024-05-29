@@ -54,7 +54,8 @@ class Receiver(gr.top_block):
     def __init__(self, ask_samp_rate: int, num_demod: int, type_demod: int,
                  hw_args: str, freq_correction: int, record: bool, play: bool,
                  audio_bps: int, min_recording: float,
-                 classifier_params: dict, channel_log_params: ChannelLogParams):
+                 classifier_params: dict, channel_log_params: ChannelLogParams,
+                 agc: bool):
 
         # Call the initialization method from the parent class
         gr.top_block.__init__(self, "Receiver")
@@ -82,6 +83,16 @@ class Receiver(gr.top_block):
         self.src.set_sample_rate(ask_samp_rate)
         self.src.set_center_freq(self.center_freq)
         self.src.set_freq_corr(freq_correction)
+
+        # Set AGC if the user wants it
+        if agc:
+            try:
+                agc_is_set = self.src.set_gain_mode(agc, 0)
+                assert agc == agc_is_set, f'set_gain_mode returned "{agc_is_set}"'
+            except Exception as error:
+                msg = f'Could not set AGC mode ({error})'
+                logging.error(msg)
+                raise Exception(msg)
 
         # Get the sample rate and center frequency from the hardware
         self.samp_rate = self.src.get_sample_rate()
@@ -210,6 +221,8 @@ class Receiver(gr.top_block):
         Args:
             all_gains (list of dictionary): Supported gains in dB
         """
+        # TODO: If using AGC remove the uneeded gain. (e.g. Airspy Mini only uses
+        #       IF gain so remove LNA and MIX)
         gains: list[dict] = []
         names = self.get_gain_names()
         for gain in all_gains:
@@ -304,6 +317,7 @@ async def main():
     audio_bps = 8
     min_recording=1.0
     classifier_params={'V':False,'D':False,'S':False }
+    agc = False
 
     async def print_to_screen(msg: ChannelMessage):  # callback used when channel opens 
         print(f'Opened channel {msg.channel-1}')  # channel is a 1 based representation of the demod
@@ -311,7 +325,7 @@ async def main():
     channel_log_params=ChannelLogParams(type='none', target='', timeout=0, notify_scanner=print_to_screen)
     receiver = Receiver(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, play, audio_bps,
-                        min_recording, classifier_params, channel_log_params)
+                        min_recording, classifier_params, channel_log_params, agc)
 
     # Start the receiver and wait for samples to accumulate
     receiver.start()
