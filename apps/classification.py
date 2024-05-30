@@ -12,7 +12,9 @@ Code is copied from:
 from pathlib import Path
 import numpy as np
 import logging
-from typing import Tuple
+from typing import Tuple, Dict, Literal, Optional
+
+from dataclasses import dataclass
 
 try:
     import tensorflow as tf
@@ -22,22 +24,48 @@ except ImportError as error:
 # stops log spamming for a harmless debug message
 logging.getLogger("h5py").setLevel(logging.INFO)
 
+@dataclass(kw_only=True)
+class ModelParams:
+    '''
+    Holds command line options provided by the user
+    for model location and version
+    '''
+    directory: str
+    version: Optional[int] = None
+
+@dataclass(kw_only=True)
+class ClassifierParams:
+    '''
+    Holds classifier command line options provided by the user
+    '''
+    wanted: Dict[Literal['V', 'D', 'S'], bool]
+    model: ModelParams
+
+class ClassificationNotWanted(Exception):
+    pass
+
 class Classifier(object):
 
-    def __init__(self, params: dict[str, bool], audio_rate: int):
+    def __init__(self, params: ClassifierParams, audio_rate: int):
 
         self.params = params
         self.audio_rate = audio_rate
 
-        if all(value is False for value in self.params.values()):
-            raise Exception('user does not want to classify audio')
+        if all(value is False for value in self.params.wanted.values()):
+            raise ClassificationNotWanted()
+        
+        path = Path(f'{self.params.model.directory}')
 
-        path = Path('model/model_1.tflite')
+        models = path.glob('**/*.tflite')
+        max_version = max([int(model.stem.split('_')[1]) for model in models])
+        
+        version = max_version if self.params.model.version is None else self.params.model.version
+        path = Path(f'{self.params.model.directory}/model_{version}.tflite')
 
         try:
             path.resolve(strict=True)
             self.load_model(path)
-            logging.info('Model loaded')
+            logging.info(f'Model loaded: {path.resolve()}')
         except:
             raise
         
@@ -52,7 +80,7 @@ class Classifier(object):
         spectrogram = self.get_spectrogram(file)
         detected_as = self.predict(spectrogram)
 
-        wanted = detected_as if detected_as and self.params[detected_as] else None
+        wanted = detected_as if detected_as and self.params.wanted[detected_as] else None
         return wanted, detected_as
         
     # convert the waveform into a spectrogram
@@ -134,20 +162,26 @@ def main():
     """Test the classifier
 
     Sets up the classifier
-    Classifies a couple files
+    Classifies a couple of audio files for testing purposes
     """
 
     audio_rate = 8000
-    classifier_params={'V':True,'D':True,'S':True }
+    classifier_params = ClassifierParams(
+        wanted={'V': True,
+                'D': True,
+                'S': True
+        },
+        model=ModelParams(directory='model')
+    )
+
     try:
         classifier = Classifier(classifier_params, audio_rate)
     except Exception as error:
-        print(f'classification disabled: {error}')
-        classifier = False
+        raise Exception(f'Could not create classifier ({error})')
 
-    print('should be data (V): ' + classifier.is_wanted("test/voice.wav"))
-    print('should be data (D): ' + classifier.is_wanted("test/data.wav"))
-    print('should be skip (S): ' + classifier.is_wanted("test/skip.wav"))
+    print('should be voice (V): ' + classifier.is_wanted("test/voice.wav")[1])
+    print('should be data (D): ' + classifier.is_wanted("test/data.wav")[1])
+    print('should be skip (S): ' + classifier.is_wanted("test/skip.wav")[1])
 
 if __name__ == '__main__':
     try:

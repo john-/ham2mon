@@ -527,8 +527,8 @@ class RxWindow(object):
 
         index = index+1
         text = ''
-        for key in self.classifier_params.keys():
-            if self.classifier_params[key]:
+        for key in self.classifier_params.wanted.keys():
+            if self.classifier_params.wanted[key]:
                 text = text + key
         if text == '':
             text = str(self.record)

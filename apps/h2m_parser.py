@@ -10,6 +10,7 @@ Created on Sat Jul 18 15:21:33 2015
 from argparse import ArgumentParser
 from pathlib import Path
 from channel_loggers import ChannelLogParams
+from classification import ClassifierParams, ModelParams
 from frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
 
 class CLParser(object):
@@ -72,7 +73,6 @@ class CLParser(object):
         parser.add_argument("--active_timeout", type=int,
                           dest="active_timeout", default=20,
                           help="Timeout when there is activity")
-
 
         parser.add_argument("-r", "--rate", type=float, dest="ask_samp_rate",
                           default=4E6,
@@ -197,6 +197,15 @@ class CLParser(object):
         parser.add_argument("--skip", dest="skip", action="store_true",
                           help="Record voice")  
 
+        parser.add_argument("--model_dir", type=Path,
+                          dest="model_dir",
+                          default="model",
+                          help="Directory that contains the classification model")
+
+        parser.add_argument("--model_ver", type=int,
+                          dest="model_ver",
+                          help="Version of the classification model")
+
         parser.add_argument("--debug", dest="debug", action="store_true",
                           help="Enable debug file with additional information (ham2mon.log)")              
 
@@ -283,10 +292,17 @@ class CLParser(object):
         if self.auto_priority:
             voice = True
 
-        self.classifier_params = {'V': voice,
-                                  'D': data,
-                                  'S': skip
-                                  }
+        self.model_dir = Path(options.model_dir)
+        self.model_ver = int(options.model_ver) if options.model_ver else None
+        self.classifier_params = ClassifierParams(
+            wanted={'V': voice,
+                    'D': data,
+                    'S': skip,
+            },
+            model=ModelParams(directory=self.model_dir,
+                              version=self.model_ver
+                              ),
+        )
 
         if voice or data or skip:
             self.record = True
@@ -329,9 +345,11 @@ def main():
     print("channel_spacing:     " + str(parser.channel_spacing))
     print("min_recording:       " + str(parser.min_recording))
     print("max_recording:       " + str(parser.max_recording))
-    print("voice:               " + str(parser.classifier_params['V']))
-    print("data:                " + str(parser.classifier_params['D']))
-    print("skip:                " + str(parser.classifier_params['S']))
+    print("voice:               " + str(parser.classifier_params.wanted['V']))
+    print("data:                " + str(parser.classifier_params.wanted['D']))
+    print("skip:                " + str(parser.classifier_params.wanted['S']))
+    print("model_dir:           " + str(parser.model_dir))
+    print("model_ver:           " + str(parser.model_ver))
     print("auto_priority:       " + str(parser.auto_priority))
     print("debug:               " + str(parser.debug))
 

@@ -22,7 +22,7 @@ import logging
 from demodulators.NBFM import TunerDemodNBFM
 from demodulators.AM import TunerDemodAM
 from demodulators.WBFM import TunerDemodWBFM
-from classification import Classifier
+from classification import ClassificationNotWanted, Classifier, ClassifierParams
 from channel_loggers import ChannelLogParams, ChannelLogger
 
 class Receiver(gr.top_block):
@@ -54,7 +54,7 @@ class Receiver(gr.top_block):
     def __init__(self, ask_samp_rate: int, num_demod: int, type_demod: int,
                  hw_args: str, freq_correction: int, record: bool, play: bool,
                  audio_bps: int, min_recording: float,
-                 classifier_params: dict, channel_log_params: ChannelLogParams,
+                 classifier_params: ClassifierParams, channel_log_params: ChannelLogParams,
                  agc: bool):
 
         # Call the initialization method from the parent class
@@ -143,9 +143,12 @@ class Receiver(gr.top_block):
         classifier: Classifier | None
         try:
           classifier = Classifier(classifier_params, audio_rate)
+        except ClassificationNotWanted:
+            classifier = None   
         except Exception as error:
-            logging.info(f'classification disabled: {error}')
-            classifier = None
+            msg = f'Could not create classifier ({error})'
+            logging.error(msg)
+            raise Exception(msg)
 
         channel_logger = ChannelLogger.get_logger(channel_log_params)
 

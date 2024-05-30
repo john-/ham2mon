@@ -16,6 +16,7 @@ import yaml
 import logging
 from numpy.typing import NDArray
 from channel_loggers import ChannelLogParams, ChannelMessage
+from classification import ClassifierParams
 from frequency_provider import FrequencyGroup, FrequencyProvider
 from lockout_manager import LockoutManager, LockoutListRadioFreq
 from utilities import baseband_to_frequency, frequency_to_baseband
@@ -82,7 +83,7 @@ class Scanner(object):
                  audio_bps: int=8, channel_spacing: int=5000,
                  frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
                  min_recording: float=0, max_recording: float=0,
-                 classifier_params: dict[str, bool]={'V':False,'D':False,'S':False },
+                 classifier_params: ClassifierParams=None, # dict[str, bool]={'V':False,'D':False,'S':False },
                  auto_priority: bool=False, agc: bool=False):
 
         # Default values
