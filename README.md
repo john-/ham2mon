@@ -216,6 +216,10 @@ options:
   --voice               Record voice
   --data                Record voice
   --skip                Record voice
+  --model_dir MODEL_DIR
+                        Directory that contains the classification model
+  --model_ver MODEL_VER
+                        Version of the classification model
   --debug               Enable debug file with additional information
                         (ham2mon.log)
 ```
