@@ -10,7 +10,7 @@ Created on Sat Jul 18 15:21:33 2015
 from argparse import ArgumentParser
 from pathlib import Path
 from channel_loggers import ChannelLogParams
-from classification import ClassifierParams, ModelParams
+from classification import ClassifierParams
 from frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
 
 class CLParser(object):
@@ -197,14 +197,10 @@ class CLParser(object):
         parser.add_argument("--skip", dest="skip", action="store_true",
                           help="Record voice")  
 
-        parser.add_argument("--model_dir", type=Path,
-                          dest="model_dir",
-                          default="model",
-                          help="Directory that contains the classification model")
-
-        parser.add_argument("--model_ver", type=int,
-                          dest="model_ver",
-                          help="Version of the classification model")
+        parser.add_argument("--model", type=Path,
+                          dest="model_file_name",
+                          default="model/model_1.tflite",
+                          help="Classification model file in tflite format")
 
         parser.add_argument("--debug", dest="debug", action="store_true",
                           help="Enable debug file with additional information (ham2mon.log)")              
@@ -292,16 +288,13 @@ class CLParser(object):
         if self.auto_priority:
             voice = True
 
-        self.model_dir = Path(options.model_dir)
-        self.model_ver = int(options.model_ver) if options.model_ver else None
+        self.model_file_name = Path(options.model_file_name)
         self.classifier_params = ClassifierParams(
             wanted={'V': voice,
                     'D': data,
                     'S': skip,
             },
-            model=ModelParams(directory=self.model_dir,
-                              version=self.model_ver
-                              ),
+            model_file_name=self.model_file_name.resolve(),
         )
 
         if voice or data or skip:
@@ -348,8 +341,7 @@ def main():
     print("voice:               " + str(parser.classifier_params.wanted['V']))
     print("data:                " + str(parser.classifier_params.wanted['D']))
     print("skip:                " + str(parser.classifier_params.wanted['S']))
-    print("model_dir:           " + str(parser.model_dir))
-    print("model_ver:           " + str(parser.model_ver))
+    print("model_file_name:     " + str(parser.classifier_params.model_file_name))
     print("auto_priority:       " + str(parser.auto_priority))
     print("debug:               " + str(parser.debug))
 

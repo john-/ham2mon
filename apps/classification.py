@@ -25,21 +25,12 @@ except ImportError as error:
 logging.getLogger("h5py").setLevel(logging.INFO)
 
 @dataclass(kw_only=True)
-class ModelParams:
-    '''
-    Holds command line options provided by the user
-    for model location and version
-    '''
-    directory: str
-    version: Optional[int] = None
-
-@dataclass(kw_only=True)
 class ClassifierParams:
     '''
     Holds classifier command line options provided by the user
     '''
     wanted: Dict[Literal['V', 'D', 'S'], bool]
-    model: ModelParams
+    model_file_name: Path
 
 class ClassificationNotWanted(Exception):
     pass
@@ -54,13 +45,7 @@ class Classifier(object):
         if all(value is False for value in self.params.wanted.values()):
             raise ClassificationNotWanted()
         
-        path = Path(f'{self.params.model.directory}')
-
-        models = path.glob('**/*.tflite')
-        max_version = max([int(model.stem.split('_')[1]) for model in models])
-        
-        version = max_version if self.params.model.version is None else self.params.model.version
-        path = Path(f'{self.params.model.directory}/model_{version}.tflite')
+        path = Path(f'{self.params.model_file_name}')
 
         try:
             path.resolve(strict=True)
@@ -171,7 +156,7 @@ def main():
                 'D': True,
                 'S': True
         },
-        model=ModelParams(directory='model')
+        model_file_name='model/model_1.tflite'
     )
 
     try:
@@ -179,9 +164,9 @@ def main():
     except Exception as error:
         raise Exception(f'Could not create classifier ({error})')
 
-    print('should be voice (V): ' + classifier.is_wanted("test/voice.wav")[1])
-    print('should be data (D): ' + classifier.is_wanted("test/data.wav")[1])
-    print('should be skip (S): ' + classifier.is_wanted("test/skip.wav")[1])
+    print('should be voice (V) got ' + classifier.is_wanted("test/voice.wav")[1])
+    print('should be data (D) got ' + classifier.is_wanted("test/data.wav")[1])
+    print('should be skip (S) got ' + classifier.is_wanted("test/skip.wav")[1])
 
 if __name__ == '__main__':
     try:
