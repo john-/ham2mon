@@ -8,21 +8,18 @@ Created on Fri Jul  3 13:38:36 2015
 import receiver as recvr
 import estimate
 import h2m_parser as prsr
-from h2m_types import Channel
 import time
 import numpy as np
 import sys
-import yaml
+# import yaml
 import logging
 from numpy.typing import NDArray
-from channel_loggers import ChannelLogParams, ChannelMessage
+from channel_loggers import ChannelLogParams, ChannelMessage, ChannelLogger
 from classification import ClassifierParams
-from frequency_provider import FrequencyGroup, FrequencyProvider
-from lockout_manager import LockoutManager, LockoutListRadioFreq
+from center_frequency_provider import FrequencyGroup, FrequencyProvider
+from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
 from utilities import baseband_to_frequency, frequency_to_baseband
 #import asyncio
-import typing
-from pathlib import Path
 from dataclasses import dataclass, field
 
 @dataclass(kw_only=True)
@@ -47,15 +44,17 @@ class Scanner(object):
         hw_args (string): Argument string to pass to hardware
         freq_correction (int): Frequency correction in ppm
         record (bool): Record audio to file if True
-        lockout_file_name (Path): Name of file with channels to lockout
-        priority_file_name (string): Name of file with channels for priority
         auto_priority (bool): Automatically set priority channels
+        frequency_configuration (FrequencyConfiguration): File name and other config information
+        channel_log_params (ChannelLogParams): Parameters for logging channel activity
         audio_bps (int): Audio bit depth in bps (bits/samples)
-        center_freq (int): initial center frequency for receiver (Hz)
+        frequency_params (FrequencyGroup): Parameters for frequency provider
         spacing (int): granularity of frequency quantization
         min_recording (float): Minimum length of a recording in seconds
         max_recording (float): Maximum length of a recording in seconds
-
+        classifier_params (ClassifierParams): Parameters for channel classification
+        auto_priority (bool): Automatically set priority channels
+        agc (bool): Automatic gain control
 
     Attributes:
         center_freq (int): Hardware RF center frequency in Hz
@@ -65,25 +64,22 @@ class Scanner(object):
         volume_dB (int): Volume in dB
         threshold_dB (int): Threshold for channel detection in dB
         spectrum (numpy.ndarray): FFT power spectrum data in linear, not dB
-        lockout_channels (LockoutListRadioFreq): List of baseband lockout channels in MHz
-        priority_channels list[int]: List of baseband priority channels in Hz
+        frequencies (FrequencyList): List of frequencies including baseband values
         channel_spacing (float):  Spacing that channels will be rounded
         lockout_file_name (string): Name of file with channels to lockout
-        priority_file_name (string): Name of file with channels for priority
-        auto_priority (bool): Automatically set priority channels
     """
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
 
     def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
                  hw_args: str="uhd", freq_correction: int=0, record: bool=True,
-                 lockout_file_name: Path=Path(""), priority_file_name: str="",
+                 frequency_configuration: FrequencyConfiguration | None=None,
                  channel_log_params: ChannelLogParams=ChannelLogParams(type='none', target='', timeout=0),
                  play: bool=True,
                  audio_bps: int=8, channel_spacing: int=5000,
                  frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
                  min_recording: float=0, max_recording: float=0,
-                 classifier_params: ClassifierParams=None, # dict[str, bool]={'V':False,'D':False,'S':False },
+                 classifier_params: ClassifierParams=None,
                  auto_priority: bool=False, agc: bool=False):
 
         # Default values
@@ -96,28 +92,26 @@ class Scanner(object):
         self.samp_rate: int
         self.frequency_params = frequency_params
         self.spectrum: NDArray = np.empty(0)
-        self.lockout_channels: LockoutListRadioFreq = []
-        self.priority_channels: list[int] = []
-        self.channels: list[Channel] = []
+        self.frequencies: FrequencyList = []    # needed for the UI
+        self.channels: ChannelList = []
+        self._channels: ChannelList = []
         self.channel_log_params = channel_log_params
         self.channel_spacing = channel_spacing
-        self.lockout_file_name = lockout_file_name  # used by lockout manager and the gui
-        self.priority_file_name = priority_file_name
+        self.frequency_file_name = frequency_configuration.file_name  # used by the gui
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
         self.hang_time: float = 1.0
         self.max_recording = max_recording
         self.xmit_stats: dict[float, ClassificationCount] = {}
         self.auto_priority = auto_priority
-        self.auto_priority_frequencies: list[float] = []
 
-        channel_log_params.notify_scanner = self.got_provider_activity
+        self.channel_logger = ChannelLogger.get_logger(channel_log_params)
 
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
                                        audio_bps, min_recording, classifier_params,
-                                       channel_log_params, agc)
+                                       self.got_channel_activity, agc)
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
@@ -136,8 +130,8 @@ class Scanner(object):
         self.step = self.frequency_provider.step
         self.steps = self.frequency_provider.steps
 
-        self.lockout_manager = LockoutManager(lockout_file_name, self.center_freq, self.channel_spacing)
-        self.lockout_channels = self.lockout_manager.lockouts
+        self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
+        # self.frequencies = self.frequency_manager.frequencies
 
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
@@ -165,13 +159,15 @@ class Scanner(object):
         Log recent active channels
         """
 
-        channels = self._get_raw_channels()
+        raw_channels = self._get_raw_channels()
 
-        await self._process_current_demodulators(channels)
+        self._channels = self._add_metadata(raw_channels)
 
-        await self._assign_channels_to_demodulators(channels)
+        await self._process_current_demodulators(self._channels)
 
-        self._add_metadata(channels)
+        await self._assign_channels_to_demodulators(self._channels)
+
+        self.channels = self._channels
 
     def _get_raw_channels(self) -> NDArray:
         # Grab the FFT data, set threshold, and estimate baseband channels
@@ -199,7 +195,7 @@ class Scanner(object):
 
         return channels
 
-    async def _process_current_demodulators(self, channels: NDArray) -> None:
+    async def _process_current_demodulators(self, channels: ChannelList) -> None:
 
         the_now = time.time()
         for idx in range(len(self.receiver.demodulators)):
@@ -207,13 +203,13 @@ class Scanner(object):
             if demodulator.center_freq == 0:
                 continue
 
-            # Stop locked out demodulator
-            if self.lockout_manager.locked_out(demodulator.center_freq):
+            # Stop locked out demodulator (lockout was just added via UI)
+            if self.frequency_manager.locked_out(demodulator.center_freq):
                 await demodulator.set_center_freq(0, self.center_freq)
                 continue
 
             # Stop the demodulator if not being scanned and outside the hang time
-            if demodulator.center_freq not in channels:
+            if any(channel.hanging and channel.bb == demodulator.center_freq for channel in channels):
                 if the_now - demodulator.last_heard > self.hang_time:
                     await demodulator.set_center_freq(0, self.center_freq)
             else:
@@ -225,114 +221,71 @@ class Scanner(object):
                     # clear the demodulator to reset file
                     await demodulator.set_center_freq(0, self.center_freq)
 
-    async def _assign_channels_to_demodulators(self, channels: NDArray) -> None:
+    async def _assign_channels_to_demodulators(self, channels: ChannelList) -> None:
 
         # assign channels to available demodulators
-        for channel in channels:
+        for channel in [channel for channel in channels if not channel.hanging]:
+        #for channel in channels:
             # If channel not in demodulators
-            if channel not in self.receiver.get_demod_freqs() and not self.lockout_manager.locked_out(channel):
+            if channel.bb not in self.receiver.get_demod_freqs() and not channel.locked:
                 # Sequence through each demodulator
                 for idx in range(len(self.receiver.demodulators)):
                     demodulator = self.receiver.demodulators[idx]
                     # If channel is higher priority than what is being demodulated
-                    if self.is_higher_priority(channel, demodulator.center_freq):
+                    if self.frequency_manager.is_higher_priority(channel.bb, demodulator.center_freq):
                         # Assigning channel to empty demodulator
                         await demodulator.set_center_freq(
-                            channel, self.center_freq)
+                            channel.bb, self.center_freq)
                         break
                     else:
                         pass
             else:
                 pass
 
-    def _add_metadata(self, active_channels: NDArray) -> None:
+    def _add_metadata(self, active_channels: NDArray) -> ChannelList:
 
-        demod_freqs = self.receiver.get_demod_freqs()
+        all_channels = active_channels   # start out with the active channels
 
         # If a demodulator is not in channel list than it is waiting for hang time to end
         # There is no activity on it so it was not in the scan
-        all_channels = active_channels   # start out with the active channels
-
+        demod_freqs = self.receiver.get_demod_freqs()
         for demod_freq in demod_freqs:
             if demod_freq != 0 and demod_freq not in all_channels:
                all_channels = np.append(all_channels, demod_freq)
 
-        sweep: list[Channel] = []
+        sweep: ChannelList = []
         for channel in all_channels:
             frequency = baseband_to_frequency(channel, self.receiver.center_freq)
-            priority: bool = channel in self.priority_channels
-            idx = 0 if priority else len(sweep)  # priority channels up front
-            sweep.insert(idx, Channel(baseband=channel,
-                                      frequency=frequency,
-                                      locked=self.lockout_manager.locked_out(channel),
+            priority = self.frequency_manager.is_priority(channel)
+            idx = 0 if priority is not None else len(sweep)  # priority channels up front
+            sweep.insert(idx, ChannelFrequency(bb=channel,
+                                      rf=frequency,
+                                      locked=self.frequency_manager.locked_out(channel),
                                       active=channel in demod_freqs and channel in active_channels,
                                       priority=priority,
-                                      hanging=channel in demod_freqs and channel not in active_channels))
+                                      hanging=channel in demod_freqs and channel not in active_channels,
+                                      label=self.frequency_manager.get_label(frequency)))
 
-        self.channels = sweep
+        return sweep
 
-    def is_higher_priority(self, channel: int, demod_freq: int) -> bool:
-
-        if demod_freq == 0:
-            return True
-
-        try:
-            channel_priority = self.priority_channels.index(channel)
-        except ValueError:
-            return False  # channel not in priority list so low priority
-    
-        try:
-            demod_priority = self.priority_channels.index(demod_freq)
-        except ValueError:
-            return True   # there is a channel priority but no demod priority, therefore channel is higher priority
-
-        if channel_priority < demod_priority:  # channel is higher priority than current demod frequency
-            return True
-        else:
-            return False
-
-    def add_lockout(self, idx: int) -> None:
+    async def add_lockout(self, idx: int) -> None:
         # need the same subset here as in cursesgui.ChannelWindow so idx gets the right channel
         subset = [c for c in self.channels if c.active or c.hanging]
         try:
-            self.lockout_channels = self.lockout_manager.add(subset[idx].frequency)
+            self.frequencies = await self.frequency_manager.add(subset[idx].rf, {'locked': True})
         except IndexError:
             # user selected a digit but no channels in interface
             return
     
-    def clear_lockout(self) -> None:
+    async def clear_lockout(self) -> None:
         """
         Clears lockout channels and rebuilds based on config.  Usually called
         by the user interface ('l' key).
         """
-        self.lockout_channels = self.lockout_manager.load()
+        self.frequencies = await self.frequency_manager.load()
 
-    def update_priority(self) -> None:
-        """Updates priority channels
-        """
-        # Clear the priority channels
-        self.priority_channels = []
-
-        # Process priority file if it was provided
-        if self.priority_file_name != "":
-            # Open file, split to list, remove empty strings
-            with open(self.priority_file_name) as priority_file:
-                lines = list(filter(str.rstrip, priority_file))
-            # Convert to baseband frequencies, round, and append if within BW
-            for freq in lines:
-                bb_freq = frequency_to_baseband(float(freq)/1E6, self.center_freq, self.channel_spacing)
-                # bb_freq = float(freq) - self.center_freq
-                # bb_freq = round(bb_freq/self.channel_spacing)*\
-                #                        self.channel_spacing
-                if abs(bb_freq) <= self.samp_rate/2.0:
-                    self.priority_channels.append(bb_freq)
-                else:
-                    pass
-        else:
-            pass
-
-        # Bring up channels with more voice than data/skip
-        self.add_auto_priority_frequencies()
+    async def load_frequencies(self) -> None:
+        self.frequencies = await self.frequency_manager.load()
 
     def set_center_freq(self, center_freq: int) -> None:
         """Sets RF center frequency of hardware, update lockout
@@ -348,12 +301,8 @@ class Scanner(object):
         self.step = self.frequency_provider.step
         self.steps = self.frequency_provider.steps
 
-        # Update the priority since frequency is changing
-        self.update_priority()
-
         # Recreate baseband lockout since frequency is changing
-        self.lockout_manager.update(self.center_freq)
-        #self.generate_baseband_lockout_channels()
+        self.frequency_manager.set_center(self.center_freq)
 
     def filter_and_set_gains(self, all_gains: list[dict]) -> list[dict]:
         """Set the supported gains and return them
@@ -399,18 +348,30 @@ class Scanner(object):
         """
         self.threshold_db = threshold_db
 
-    async def got_provider_activity(self, msg: ChannelMessage) -> None:
+    async def got_channel_activity(self, msg: ChannelMessage) -> None:
         '''
-        The channel logger let us know about a possibly interesting transmission
+        This callback is to let the demodulators inform us about a
+        transmission.
     
-        If so let the frequency provider know.  It will hold the channel
-        open a bit longer.  Also, assess if the channel should be a priority channel.
+        1. Log the activity via the currently configured channel logger
+        2. If the channel is interesting, let the frequency provider know
+            - It will hold the current center frequency open a bit longer
+        3. assess if the channel should be an auto priority channel
         '''
+
+        if msg is None:
+            return
+
+        # embellish the message with frequency information
+        msg.label = self.frequency_manager.get_label(msg.rf)
+        msg.priority = self.frequency_manager.is_priority(msg.bb)   # TODO: is_priority only takes base band frequency
+
+        await self.channel_logger.log(msg)  # off events or nothing to note
 
         if self.interesting(msg):
             await self.frequency_provider.interesting_activity()
 
-        await self.priority_assess(msg.frequency, msg.classification)
+        await self.priority_assess(msg.rf, msg.classification)
 
     def interesting(self, msg: ChannelMessage) -> bool:
         '''
@@ -432,17 +393,12 @@ class Scanner(object):
 
     async def priority_assess(self, freq: float, classification: str) -> None:
         '''
-        Track classification of transmisions and use
-        the ratio of wanted/unwanted to set the priority.
+        Track classification of transmisions and use the ratio of wanted/unwanted to
+        set the priority.
         '''
 
         if not self.auto_priority:
             return
-
-        # TODO:  If the user has already defined a priority channel then this
-        #        function will duplicate the priority.  Need to prevent this.
-        #        When priority file format is changed maybe auto channels can be
-        #        metadata added to the data structure/file.
 
         if classification is None:  # ignore start of transission and thrown away short ones
             return
@@ -454,31 +410,17 @@ class Scanner(object):
             setattr(self.xmit_stats[freq], classification,
                     getattr(self.xmit_stats[freq], classification) + 1)
 
+        bb_freq = frequency_to_baseband(float(freq), self.center_freq, self.channel_spacing)
+
         metrics: ClassificationCount = self.xmit_stats[freq]
-        if metrics.V > metrics.D and metrics.V > metrics.S:
-            if freq not in self.auto_priority_frequencies:
+        if metrics.V > metrics.D and metrics.V > metrics.S:  # Flag voice frequency as priority if not already set
+            if self.frequency_manager.is_priority(bb_freq) is None:
                 logging.debug(f'adding {freq=} to priority list')
-                self.auto_priority_frequencies.append(freq)
-                self.update_priority()
-        else:
-            if freq in self.auto_priority_frequencies:
+                self.frequencies = await self.frequency_manager.add(freq, {'priority': 1})
+        else: # If not voice, remove from priority list if it currently a priority
+            if self.frequency_manager.is_priority(bb_freq) is not None:
                 logging.debug(f'removing {freq=} from the priority list')
-                self.auto_priority_frequencies.remove(freq)
-                self.update_priority()
-
-    def add_auto_priority_frequencies(self) -> None:
-        '''
-        Add any frequencies that have a high ratio of wanted/unwanted
-        to the priority list.
-        '''
-
-        for freq in self.auto_priority_frequencies:
-            bb_freq = frequency_to_baseband(float(freq), self.center_freq, self.channel_spacing)
-            if abs(bb_freq) <= self.samp_rate/2.0:
-                self.priority_channels.append(bb_freq)
-            else:
-                pass
-
+                self.frequencies = await self.frequency_manager.add(freq, {'priority': None})
 
     async def clean_up(self) -> None:
         # cleanup terminating all demodulators
@@ -510,8 +452,7 @@ async def main() -> None:
     hw_args = parser.hw_args
     freq_correction = parser.freq_correction
     record = parser.record
-    lockout_file_name = parser.lockout_file_name
-    priority_file_name = parser.priority_file_name
+    frequency_configuration = parser.frequency_configuration
     channel_log_params = parser.channel_log_params
     play = parser.play
     audio_bps = parser.audio_bps
@@ -521,12 +462,11 @@ async def main() -> None:
     max_recording = 0
     classifier_params = parser.classifier_params
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
-                        freq_correction, record, lockout_file_name,
-                        priority_file_name, channel_log_params, play,
+                        freq_correction, record, frequency_configuration,
+                        channel_log_params, play,
                         audio_bps, channel_spacing, frequency_params,
                         min_recording, max_recording,
                         classifier_params)
-
 
     # Set frequency, gain, squelch, and volume
     print("\n")
@@ -553,7 +493,7 @@ async def main() -> None:
 
         channels =  scanner.channels
 
-        freqs = [freq.frequency for freq in channels if freq.active]
+        freqs = [freq.rf for freq in channels if freq.active]
 
         freqs.sort()
         if freqs != old_freqs:

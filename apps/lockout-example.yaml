@@ -1,9 +1,0 @@
-frequencies:
-  - 450.225   # unknown data
-  - 451.125
-  - 460.4
-ranges:
-  - min: 460.4
-    max: 460.8
-  - min: 124.125
-    max: 134.625 

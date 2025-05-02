@@ -11,7 +11,8 @@ from argparse import ArgumentParser
 from pathlib import Path
 from channel_loggers import ChannelLogParams
 from classification import ClassifierParams
-from frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
+from center_frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
+from frequency_manager import FrequencyConfiguration
 
 class CLParser(object):
     """Command line parser
@@ -27,8 +28,9 @@ class CLParser(object):
         threshold_dB (int): Threshold for channel detection in dB
         record (bool): Record audio to file if True
         play (bool): Play audio through speaker if True
-        lockout_file_name (string): Name of file with channels to lockout
-        priority_file_name (string): Name of file with channels to for priority
+        frequency_file_name (Path): Name of file with frequencies
+        disable_lockout (bool): Disable locking out of channels
+        disable_priority (bool): Disable prioritization out of channels
         auto_priority (bool): Automatically set priority channels
         channel_log_target (string): Name of file or endpoint for channel logging
         channel_log_type (string): Log file type for channel detection
@@ -63,8 +65,8 @@ class CLParser(object):
                           help="Type of demodulator (0=NBFM, 1=AM and 2=WBFM)")
 
         parser.add_argument("-f", "--freq", type=str, dest="freq_spec",
-                          nargs='+', default=["146000000"],
-                          help="Hardware RF center frequency or range in Hz")
+                          nargs='+', default=["146"],
+                          help="Hardware RF center frequency or range in Mhz")
         
         parser.add_argument("--quiet_timeout", type=int,
                           dest="quiet_timeout", default=12,
@@ -127,15 +129,18 @@ class CLParser(object):
                           dest="record", default=False, action="store_true",
                           help="Record (write) channels to disk")
 
-        parser.add_argument("-l", "--lockout", type=Path,
-                          dest="lockout_file_name",
+        parser.add_argument("-F", "--frequencies", type=Path,
+                          dest="frequency_file_name",
                           default="",
-                          help="YAML lockout file containing frequencies and ranges in Mhz")
+                          help="YAML file containing frequencies and ranges in Mhz")
 
-        parser.add_argument("-p", "--priority", type=str,
-                          dest="priority_file_name",
-                          default="",
-                          help="File of EOL delimited priority channels in Hz (descending priority order)")
+        parser.add_argument("--disable-lockout", action="store_true",
+                          dest="disable_lockout",
+                          help="Disable locking out of channels")
+
+        parser.add_argument("--disable-priority", action="store_true",
+                          dest="disable_priority",
+                          help="Disable prioritization of channels")
 
         parser.add_argument("-P", "--auto-priority", action="store_true",
                           dest="auto_priority",
@@ -228,16 +233,16 @@ class CLParser(object):
                 # there are 2 values provided
                 try:
                     if lower_freq:
-                        lower_freq = int(float(lower_freq))  # float first to handle scientific notation
+                        lower_freq = int(float(lower_freq)*1E6)
                     if upper_freq:
-                        upper_freq = int(float(upper_freq))
+                        upper_freq = int(float(upper_freq)*1E6)
                 except ValueError as err:
                     raise Exception(f'Frequencies must be integers: {err}')
                 range_params.append(FrequencyRangeParams(lower_freq=lower_freq, upper_freq=upper_freq))
             except ValueError:
                 # there is a single value provided
                 try:
-                    single_freq = int(float(freq_entry))
+                    single_freq = int(float(freq_entry)*1E6)
                     single_params.append(FrequencySingleParams(freq=single_freq))
                 except ValueError as err:
                     raise Exception(f'Frequency must be integers: {err}')
@@ -265,8 +270,14 @@ class CLParser(object):
         self.threshold_db = int(options.threshold_db)
         self.record = bool(options.record)
         self.play = bool(options.play)
-        self.lockout_file_name = Path(options.lockout_file_name)
-        self.priority_file_name = str(options.priority_file_name)
+        self.auto_priority = bool(options.auto_priority)
+
+        self.frequency_configuration = FrequencyConfiguration(
+            file_name=Path(options.frequency_file_name),
+            disable_lockout=bool(options.disable_lockout),
+            disable_priority=bool(options.disable_priority)
+        )
+
         self.channel_log_params = ChannelLogParams(
             target=str(options.channel_log_target),
             type=str(options.channel_log_type),
@@ -284,7 +295,6 @@ class CLParser(object):
         data = bool(options.data)
         skip = bool(options.skip)
 
-        self.auto_priority = bool(options.auto_priority)
         if self.auto_priority:
             voice = True
 
@@ -326,8 +336,7 @@ def main():
     print("threshold_db:        " + str(parser.threshold_db))
     print("record:              " + str(parser.record))
     print("play:                " + str(parser.play))
-    print("lockout_file_name:   " + str(parser.lockout_file_name.name))
-    print("priority_file_name:  " + str(parser.priority_file_name))
+    print("frequency_file_name: " + str(parser.frequency_configuration.file_name))
     print("channel_log target:  " + str(parser.channel_log_params.target))
     print("channel_log timeout: " + str(parser.channel_log_params.timeout))
     print("channel_log type:    " + str(parser.channel_log_params.type))
@@ -343,6 +352,8 @@ def main():
     print("skip:                " + str(parser.classifier_params.wanted['S']))
     print("model_file_name:     " + str(parser.classifier_params.model_file_name))
     print("auto_priority:       " + str(parser.auto_priority))
+    print("disable_lockout:     " + str(parser.frequency_configuration.disable_lockout))
+    print("disable_priority:    " + str(parser.frequency_configuration.disable_priority))
     print("debug:               " + str(parser.debug))
 
 if __name__ == '__main__':

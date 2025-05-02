@@ -8,6 +8,7 @@ from gnuradio.fft import window  # type: ignore
 from gnuradio import analog
 from gnuradio.filter import pfb  # type: ignore
 from gnuradio import blocks
+from typing import Callable
 
 from demodulators.BaseTuner import BaseTuner
 from classification import Classifier
@@ -56,12 +57,12 @@ class TunerDemodAM(BaseTuner):
 
     def __init__(self, samp_rate: int, audio_rate: int, record: bool,
                  audio_bps: int, min_recording: float, classify: Classifier | None,
-                 channel_logger: ChannelLogger):
+                 notify_scanner: Callable):
         gr.hier_block2.__init__(self, "TunerDemodAM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, channel_logger)
+        super().__init__(classify, notify_scanner)
 
         # Default values
         self.center_freq = 0

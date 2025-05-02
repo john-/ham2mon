@@ -3,12 +3,11 @@ Log channel activity in various formats and provide channel activity to scanner.
 '''
 import logging
 import datetime
-from h2m_types import ChannelMessage
+from frequency_manager import ChannelMessage
 from abc import ABC
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from importlib import import_module
 import asyncio
-import typing
 
 @dataclass(kw_only=True)
 class ChannelLogParams:
@@ -18,7 +17,6 @@ class ChannelLogParams:
     type: str
     target: str
     timeout: int
-    notify_scanner: typing.Callable = field(default=lambda: None)
 
 class ChannelLogger(ABC):
     '''
@@ -39,7 +37,6 @@ class ChannelLogger(ABC):
         '''
         if msg is None:
             return
-        await self.params.notify_scanner(msg)
 
     @staticmethod
     def get_logger(params: ChannelLogParams) -> 'ChannelLogger':
@@ -54,7 +51,7 @@ class ChannelLogger(ABC):
             return Debug(params)
         else:
             return NoOp(params)
-        
+
     def handle_channel_state(self, msg: ChannelMessage) -> None:
         '''
         Use on/off events to start/stop activity timer
@@ -80,7 +77,7 @@ class ChannelLogger(ABC):
         while True:
             await asyncio.sleep(self.timeout)
             await self.log(ChannelMessage(state='act',
-                                    frequency=msg.frequency,
+                                    rf=msg.rf,
                                     channel=msg.channel))
 
 class NoOp(ChannelLogger):
@@ -110,14 +107,14 @@ class Debug(ChannelLogger):
     async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
             return
-        
+
         await super().log(msg)
 
         # for this logger we just write to the debug log
         logging.debug(msg)
 
         self.handle_channel_state(msg)
-        
+
 class FixedField(ChannelLogger):
     '''
     Send channel events to a file with fixed field length records
@@ -133,12 +130,18 @@ class FixedField(ChannelLogger):
             return
 
         await super().log(msg)
-        
+
         now = datetime.datetime.now()
         with open(self.file_name, 'a') as file:
-            file.write(f'{now.strftime("%Y-%m-%d, %H:%M:%S.%f")}: {msg.state:<4}{msg.frequency:<10}{msg.channel:<2}\n')
+            text = (f'{now.strftime("%Y-%m-%d, %H:%M:%S.%f")}: {msg.state:<4}{msg.rf:<10}'
+                    f'{msg.channel:<2}{msg.priority if msg.priority else "":<2}'
+                    f'{msg.classification if msg.classification else "":<2}'
+                    f'{msg.file if msg.file else "":<50}\n'
+                    )
+            file.write(text)
 
         self.handle_channel_state(msg)
+
 class JsonToServer(ChannelLogger):
     '''
     Send channels events as json messages to  a remote server

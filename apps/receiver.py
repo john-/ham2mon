@@ -18,12 +18,12 @@ import errno
 import time
 import numpy as np
 import logging
+from typing import Callable
 
 from demodulators.NBFM import TunerDemodNBFM
 from demodulators.AM import TunerDemodAM
 from demodulators.WBFM import TunerDemodWBFM
 from classification import ClassificationNotWanted, Classifier, ClassifierParams
-from channel_loggers import ChannelLogParams, ChannelLogger
 
 class Receiver(gr.top_block):
     """Receiver for NBFM and AM modulation
@@ -54,7 +54,7 @@ class Receiver(gr.top_block):
     def __init__(self, ask_samp_rate: int, num_demod: int, type_demod: int,
                  hw_args: str, freq_correction: int, record: bool, play: bool,
                  audio_bps: int, min_recording: float,
-                 classifier_params: ClassifierParams, channel_log_params: ChannelLogParams,
+                 classifier_params: ClassifierParams, notify_scanner: Callable,
                  agc: bool):
 
         # Call the initialization method from the parent class
@@ -150,7 +150,6 @@ class Receiver(gr.top_block):
             logging.error(msg)
             raise Exception(msg)
 
-        channel_logger = ChannelLogger.get_logger(channel_log_params)
 
         # -----------Flow for Demod--------------
 
@@ -164,21 +163,21 @@ class Receiver(gr.top_block):
                                                         audio_bps,
                                                         min_recording,
                                                         classifier,
-                                                        channel_logger))
+                                                        notify_scanner))
             elif type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
                                                       audio_bps,
                                                       min_recording,
                                                       classifier,
-                                                      channel_logger))
+                                                      notify_scanner))
             elif type_demod == 2:
                 self.demodulators.append(TunerDemodWBFM(self.samp_rate,
                                                         audio_rate, record,
                                                         audio_bps,
                                                         min_recording,
                                                         classifier,
-                                                        channel_logger))
+                                                        notify_scanner))
             else:
                 raise Exception(f'Invalid demodulator type: {type_demod}')
 
@@ -294,7 +293,8 @@ async def main():
     """
 
     import h2m_parser as prsr
-    from h2m_types import ChannelMessage
+    from frequency_manager import ChannelMessage
+    #from h2m_types import ChannelMessage
 
         # Create parser object
     parser = prsr.CLParser()
@@ -319,16 +319,23 @@ async def main():
     record = False
     audio_bps = 8
     min_recording=1.0
-    classifier_params={'V':False,'D':False,'S':False }
+    classifier_params = ClassifierParams(
+        wanted={'V': False,
+                'D': False,
+                'S': False,
+        },
+        model_file_name=None
+    )
     agc = False
 
-    async def print_to_screen(msg: ChannelMessage):  # callback used when channel opens 
+    async def print_to_screen(msg: ChannelMessage):  # callback used when channel opens
+        if msg is None:
+            return
         print(f'Opened channel {msg.channel-1}')  # channel is a 1 based representation of the demod
     
-    channel_log_params=ChannelLogParams(type='none', target='', timeout=0, notify_scanner=print_to_screen)
     receiver = Receiver(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, play, audio_bps,
-                        min_recording, classifier_params, channel_log_params, agc)
+                        min_recording, classifier_params, print_to_screen, agc)
 
     # Start the receiver and wait for samples to accumulate
     receiver.start()

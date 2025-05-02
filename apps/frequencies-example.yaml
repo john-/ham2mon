@@ -1,0 +1,27 @@
+frequencies:
+  - label: "Mobile UHF of interest"
+    lo: 450.0
+    hi: 470.0
+  - label: "Active mobile channel"
+    single: 460.15
+    priority: 1
+  - label: "data"
+    single: 151.675
+    lockout: true
+  - label: "FRS channels 1-7"
+    lo: 462.5625
+    hi: 462.7125
+    priority: 2
+  - label: "Some mobile"
+    lo: 460.0
+    hi: 460.5
+    lockout: False
+    priority: 2
+  - label: "A mobile"
+    single: 461.3
+    lockout: true
+  - label: "70cm FM Simplex Calling"
+    single: 446.0
+  - label: "FRS channels 8-14"
+    lo: 467.5625
+    hi: 467.9125

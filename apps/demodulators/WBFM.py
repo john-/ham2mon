@@ -10,6 +10,7 @@ from gnuradio.filter import pfb  # type: ignore
 from gnuradio import blocks
 import ctcss_tones as ct
 import logging
+from typing import Callable
 
 from demodulators.BaseTuner import BaseTuner
 from classification import Classifier
@@ -67,13 +68,13 @@ class TunerDemodWBFM(BaseTuner):
 
     def __init__(self, samp_rate: int, audio_rate: int, record: bool,
                  audio_bps: int, min_recording: float, classify: Classifier | None,
-                 channel_logger: ChannelLogger, ctcss_filter: bool=False, ctcss_tone_block: bool=False):
+                 notify_scanner: Callable, ctcss_filter: bool=False, ctcss_tone_block: bool=False):
 
         gr.hier_block2.__init__(self, "TunerDemodWBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, channel_logger)
+        super().__init__(classify, notify_scanner)
         
         # Default values
         self.center_freq = 0

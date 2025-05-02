@@ -13,7 +13,7 @@ This fork been tested with:
 - RTL-SDR v3 RTL2832 + R820T at 2 Msps (http://rtl-sdr.com)
 - RTL-SDR NOOELEC NESDR+ (RTL2838 DVB-T)
 
-Note: This fork is expected with the following SDRs:
+Note: This fork is expected to work with the following SDRs:
 
 - GNU Radio 3.8.2.0 (https://github.com/gnuradio/gnuradio)
 - GrOsmoSDR 0.1.4-29 (http://sdr.osmocom.org/trac/wiki/GrOsmoSDR)
@@ -87,15 +87,15 @@ madengr:
 ## Console Operation:
 The following is an example of the option switches for UHD with NBFM demodulation, although omission of any will use default values (shown below) that are optimal for the B200:
 
-./ham2mon.py -a "uhd" -n 8 -d 0 -f 146E6 -r 4E6 -g 30 -s -60 -v 0 -t 10 -w
+./ham2mon.py -a "uhd" -n 8 -d 0 -f 146 -r 4E6 -g 30 -s -60 -v 0 -t 10 -w
 
 The following is an example of the option switches for UHD with AM demodulation, primarily meant for VHF air band reception.  Note the squelch has been lowered 10 dB to aid with weak AM detection:
 
-./ham2mon.py -a "uhd" -n 8 -d 1 -f 135E6 -r 4E6 -g 30 -s -70 -v 0 -t 10 -w
+./ham2mon.py -a "uhd" -n 8 -d 1 -f 135 -r 4E6 -g 30 -s -70 -v 0 -t 10 -w
 
 The following is an example of the option switches for RTL2832U.  Note the sample rate, squelch, and threshold have changed to reflect the reduced (8-bit) dynamic range of the RTL dongles compared to Ettus SDRs.  In addition, these devices have poor IMD and image suppression, so strong signals may cause false demodulator locks:
 
-./ham2mon.py -a "rtl" -n 4 -f 145E6 -r 2E6 -g 20 -s -40 -v 0 -t 30 -w
+./ham2mon.py -a "rtl" -n 4 -f 145 -r 2E6 -g 20 -s -40 -v 0 -t 30 -w
 
 Note that sometimes default RTL kernel driver (for receiving dvb) must be disabled.  Google "rtl sdr blacklist" to read more about this issue, or just do this:
 
@@ -151,7 +151,7 @@ options:
   -d TYPE_DEMOD, --demodulator TYPE_DEMOD
                         Type of demodulator (0=NBFM, 1=AM and 2=WBFM)
   -f FREQ_SPEC [FREQ_SPEC ...], --freq FREQ_SPEC [FREQ_SPEC ...]
-                        Hardware RF center frequency or range in Hz
+                        Hardware RF center frequency or range in Mhz
   --quiet_timeout QUIET_TIMEOUT
                         Timeout when there is no activity
   --active_timeout ACTIVE_TIMEOUT
@@ -185,11 +185,10 @@ options:
   -t THRESHOLD_DB, --threshold THRESHOLD_DB
                         Threshold in dB
   -w, --write           Record (write) channels to disk
-  -l LOCKOUT_FILE_NAME, --lockout LOCKOUT_FILE_NAME
-                        YAML lockout file containing frequencies and ranges in Mhz
-  -p PRIORITY_FILE_NAME, --priority PRIORITY_FILE_NAME
-                        File of EOL delimited priority channels in Hz
-                        (descending priority order)
+  -F FREQUENCY_FILE_NAME, --frequencies FREQUENCY_FILE_NAME
+                        YAML file containing frequencies and ranges in Mhz
+  --disable-lockout     Disable locking out of channels
+  --disable-priority    Disable prioritization of channels
   -P, --auto-priority   Automatically add voice channels as priority channels
   -T CHANNEL_LOG_TYPE, --log_type CHANNEL_LOG_TYPE
                         Log file type for channel detection
@@ -245,7 +244,7 @@ The next iteration of this program will probably use gr-dsd to decode P25 public
 ## Frequency Specification and Range Scanning
 The simple case is to specify a single center frequency with the `-f` option.  With this the receiver will stay on this center frequency.
 
-It is also possible to specify multiple center frequencies or ranges of frequencies.  For example, `-f 150.0E6 460.0E6-480.0E6`.  In this case the scanner will divide the frequencies up based into a series of steps (based on the sample rate) and iterate through those steps.
+It is also possible to specify multiple center frequencies or ranges of frequencies.  For example, `-f 150.0 460.0-480.0`.  In this case the scanner will divide the frequencies up based into a series of steps (based on the sample rate) and iterate through those steps.
 
 How long the scanner waits on each step is dependent on the timeouts and the presence of activity of "interest" on that step.
 
@@ -254,13 +253,13 @@ Currently, whether ham2mon is configured to record or not will determine how the
 1.  If not recording, a *channel opening* will be considered activity.
 2.  If recording, the *completion of a recording* will be considered activity.
 
-The completion of the recording does not occur until after the channel is closed and an audio file is saved.  See option `-w` and Audio Classification for saving of audio files. 
+The completion of the recording does not occur until after the channel is closed and an audio file is saved.  See option `-w` and Audio Classification for saving of audio files.
 
 There are two timeouts.  If there is no activity on a channel the scanner will move to next step when `--quiet_timeout` is reached.  With activity, the scanner will hold until `--active_timeout` is reached.
 
 An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) classified as voice 2) at least 2 seconds long 3) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
 
-`./ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0E6-174E6 421.0E6-512.0E6 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60`
+`./ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60`
 
 When range scanning, the RECEIVER section will show current step, number of steps and the percent complete.
 
@@ -288,17 +287,37 @@ With AGC, not all gain elements are used by the SDR.  the ones not used will be 
 
 For example, if AGC is specified for the Airspy Mini, the IF gain will be the only working gain element.  The others will be controlled by the SDR using its algorithm.  The UI values for the other elements will be ignored by the SDR.
 
-## Priority File
-The Priority file contains a frequency (in Hz) in each line.  The frequencies are to be arranged in descending priority order.  Therefore, the highest priority frequency will be the one at the top.
+## Frequency File
+The frequency file contains metadata for individual frequencies and ranges of frequencies.  It is specified with the `-F/--frequencies` option. It is an optional file and needed only for the following features:
 
-When the scanner detects a priority frequency it will demodulate that frequency over any one that is lower priority.  Priority channels with be flagged with a 'P' in the CHANNELS section.  Without a priority file the scanner will only demodulate a frequency if there is a demodulator that is inactive.
+1. Priority frequencies
+2. Lockout frequencies
+3. Frequency labeling
 
-A use case for this is as follows: You want to hear something, anything, but want to hear certain things over other things if they're actually happening.  In this case there would be one demodulator being fed to the speakers. To do this, place local repeaters (in priority order) into the priority file.  If all of the repeaters are idle, other frequencies will be heard.  However, if a channel more important becomes active, those of lessor importance will be dropped in favor of the channel with more priority.
+For an exmaple, see the [example frequencies file](./apps/frequencies-example.yaml).
 
-## Lockout File
-The Lockout file is a YAML file that can contain individual frequencies to be locked out as well as ranges of frequencies.  All values are in Mhz (see the example for details).  Requires the `-l/--lockout` option.  
+### Priority Handling
+Priorities can be assigned to frequencies and frequency ranges in the frequency file.  Highest priority is 1.  Frequencies can have equal priority.  If no priority is assigned the default value is no priority.
 
-Although the user can add lockout frequencies to the active lockouts there currently is no save option to write these out to the lockout file.  However, those unsaved lockouts will be flagged with a 'U' in the LOCKOUT section.
+Individual priorities take precedence over any priority assigned to a range that the frequency is a part of.
+
+When the scanner detects a priority frequency it will demodulate that frequency over any one that is lower priority.  Priority channels with be flagged with a 'P' in the CHANNELS section.  Without a priority assigned the scanner will only demodulate a frequency if there is a demodulator that is inactive.
+
+A use case for this is as follows: You want to hear something, anything, but want to hear certain things over other things if they're actually happening.  In this case there would be one demodulator being fed to the speakers. To do this, assign a priority to local repeaters.  If all of the repeaters are idle, other frequencies will be heard.  However, if a channel more important becomes active, those of lessor importance will be dropped in favor of the channel with higher priority.
+
+Priority handling is enabled by default.  It can be disabled with the `--disable-priority` option.
+
+If priority frequencies are defined in the frequency YAML and auto priority is enabled (`-P`), then those frequencies can have their priority removed based on the [auto priority](#auto-priority) logic.
+
+### Lockout Handling
+Lockouts can be assigned to frequencies and frequency ranges in the frequency file.  Lockouts are enabled by default.  They can be disabled with the `--disable-lockout` option.
+
+Although the user can add lockout frequencies to the active lockouts there currently is no save option to write these out to the frequency file.  However, those unsaved lockouts will be flagged with a 'U' in the LOCKOUT section.
+
+### Frequency Labeling
+Labels can be assigned to frequencies and frequency ranges in the frequency file.  Labels will appear in the CHANNELS section next to the frequency.  Labels are not displayed in the LOCKOUT section.
+
+Labels are enabled by default and currently cannot be disabled.
 
 ## Channel Detection Log File
 Channel events can be written to file or other targets.  Events occur when channel activity is detected as well as for ongoing activity.
@@ -313,8 +332,12 @@ If `debug` is selected as logging type than channel events can be viewed when th
 
 See [json-server example](doc/json-server_example.md) for one way this can be used.
 
+For detail on what is logged including format see the source code for the [channel logger](./apps/channel_loggers.py).
+
 ## Auto Priority
 With the `-P` option, channels that meet specific conditions will automatically be added to the priority list.  Currently, only one algorithm is supported: Voice priority.  With this, those channels that have more voice transmissions than data/skip transmissions will be added to the priority list.
+
+If the number of voice transmissions is less than the number of data/skip transmissions, then the priority flag be reoved for that frequency.  This will override and priorities assigned in the [priority file](#priority-handling).
 
 Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.
 

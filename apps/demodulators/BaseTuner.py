@@ -8,11 +8,11 @@ import time
 import numpy as np
 import os
 import logging
+from typing import Callable
 
-from h2m_types import ChannelMessage
+from frequency_manager import ChannelMessage
 from utilities import baseband_to_frequency
 from classification import Classifier
-from channel_loggers import ChannelLogger
 
 class BaseTuner(gr.hier_block2):
     """Some base methods that are the same between the known tuner types.
@@ -22,12 +22,12 @@ class BaseTuner(gr.hier_block2):
 
     channel: int = 0  # incremented for each new demodulator
 
-    def __init__(self, classify: Classifier | None, channel_logger: ChannelLogger) -> None:
+    def __init__(self, classify: Classifier | None, notify_scanner: Callable) -> None:
         BaseTuner.channel += 1
 
         # Default values
         self.classify = classify
-        self.channel_logger = channel_logger
+        self.notify_scanner = notify_scanner
         self.channel = BaseTuner.channel
         self.last_heard: float = 0.0
         self.file_name: str | None = None
@@ -60,14 +60,15 @@ class BaseTuner(gr.hier_block2):
         elif self.center_freq != 0:
             # not recording files and center_freq has changed
             results = ChannelMessage(state='off',
-                                     frequency=baseband_to_frequency(
-                                         self.center_freq, rf_center_freq),
+                                     rf=baseband_to_frequency(
+                                        self.center_freq, rf_center_freq),
+                                     bb=self.center_freq,
                                      channel=self.channel)
         else:
             # center_freq is 0
             results = None
             
-        await self.channel_logger.log(results)  # off events or nothing to note
+        await self.notify_scanner(results)  # off events or nothing to note
 
         # Set the frequency of the tuner
         self.center_freq = center_freq
@@ -85,9 +86,10 @@ class BaseTuner(gr.hier_block2):
             self.blocks_wavfile_sink.open(self.file_name)
 
         if self.center_freq != 0:
-            await self.channel_logger.log(ChannelMessage(state='on',
-                                                         frequency=baseband_to_frequency(
-                                                             self.center_freq, rf_center_freq),
+            await self.notify_scanner(ChannelMessage(state='on',
+                                                         rf=baseband_to_frequency(
+                                                            self.center_freq, rf_center_freq),
+                                                         bb=self.center_freq,
                                                          channel=self.channel))
 
     def set_file_name(self, rf_center_freq: int) -> None:
@@ -109,8 +111,9 @@ class BaseTuner(gr.hier_block2):
 
         # base message used for channel log
         xmit_msg = ChannelMessage(state='off',
-                                  frequency=baseband_to_frequency(
+                                  rf=baseband_to_frequency(
                                       self.center_freq, rf_center_freq),
+                                  bb=self.center_freq,
                                   channel=self.channel)
 
         # Delete short wavfiles otherwise move ones that are long enough

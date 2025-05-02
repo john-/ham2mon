@@ -28,9 +28,9 @@ class MyDisplay():
         curs_set(0)
         self.stdscr.nodelay(True)
 
-        self.scanner = self.init_scanner()
+        self.scanner = await self.init_scanner()
 
-        self.make_display()
+        await self.make_display()
 
         while True:
             char = self.stdscr.getch()
@@ -40,15 +40,15 @@ class MyDisplay():
             if char == ERR:
                 await asyncio.sleep(0.1)
             elif char == KEY_RESIZE:
-                self.make_display()
+                await self.make_display()
             else:
-                self.handle_char(char)
+                await self.handle_char(char)
 
             await self.cycle()
 
         await self.scanner.clean_up()
 
-    def make_display(self) -> None:
+    async def make_display(self) -> None:
         """Start scanner with GUI interface
 
         Initialize and set up screen
@@ -76,8 +76,7 @@ class MyDisplay():
         self.rxwin.volume_db = self.scanner.volume_db
         self.rxwin.record = self.scanner.record
         self.rxwin.type_demod = PARSER.type_demod
-        self.rxwin.lockout_file_name = self.scanner.lockout_file_name
-        self.rxwin.priority_file_name = self.scanner.priority_file_name
+        self.rxwin.frequency_file_name = self.scanner.frequency_file_name
         self.rxwin.channel_log_type = self.scanner.channel_log_params.type
         # not all channel_log types use a target
         if self.scanner.channel_log_params.type == 'fixed-field':
@@ -91,6 +90,12 @@ class MyDisplay():
         self.rxwin.classifier_params = PARSER.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
 
+        self.chanwin.draw_frame()
+        self.lockoutwin.draw_frame()
+        self.rxwin.draw_frame()
+
+        self.stdscr.refresh()
+
     async def cycle(self) -> None:
         # Initiate a scan cycle
 
@@ -102,13 +107,13 @@ class MyDisplay():
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
         self.chanwin.draw_channels(self.scanner.channels)
-        self.lockoutwin.draw_channels(self.scanner.lockout_channels, self.scanner.channels)
+        self.lockoutwin.draw_channels(self.scanner.frequencies, self.scanner.channels)
         self.rxwin.draw_rx()
 
         # Update physical screen
         self.stdscr.refresh()
 
-    def init_scanner(self) -> scnr.Scanner:
+    async def init_scanner(self) -> scnr.Scanner:
         # Create scanner object
         ask_samp_rate = PARSER.ask_samp_rate
         num_demod = PARSER.num_demod
@@ -116,8 +121,7 @@ class MyDisplay():
         hw_args = PARSER.hw_args
         record = PARSER.record
         play = PARSER.play
-        lockout_file_name = PARSER.lockout_file_name
-        priority_file_name = PARSER.priority_file_name
+        frequency_configuration = PARSER.frequency_configuration
         channel_log_params = PARSER.channel_log_params
         freq_correction = PARSER.freq_correction
         audio_bps = PARSER.audio_bps
@@ -136,12 +140,13 @@ class MyDisplay():
         auto_priority = PARSER.auto_priority
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
-                               freq_correction, record, lockout_file_name,
-                               priority_file_name, channel_log_params,
+                               freq_correction, record, frequency_configuration,
+                               channel_log_params,
                                play, audio_bps, channel_spacing,
                                frequency_params, min_recording, max_recording,
                                classifier_params, auto_priority, agc)
 
+        await scanner.load_frequencies()
         # Set the parameters
         scanner.set_center_freq(scanner.center_freq)
         scanner.set_squelch(PARSER.squelch_db)
@@ -159,7 +164,7 @@ class MyDisplay():
         self.rxwin.step = self.scanner.step
         self.rxwin.steps = self.scanner.steps
 
-    def handle_char(self, keyb: int) -> None:
+    async def handle_char(self, keyb: int) -> None:
         # Send keystroke to spectrum window and update scanner if True
         if self.specwin.proc_keyb(keyb):
             self.scanner.set_threshold(self.specwin.threshold_db)
@@ -184,9 +189,9 @@ class MyDisplay():
         if self.lockoutwin.proc_keyb_set_lockout(keyb) and self.rxwin.freq_entry == 'None':
             # Subtract 48 from ascii keyb value to obtain 0 - 9
             idx = keyb - 48
-            self.scanner.add_lockout(idx)
+            await self.scanner.add_lockout(idx)
         if self.lockoutwin.proc_keyb_clear_lockout(keyb):
-            self.scanner.clear_lockout()
+            await self.scanner.clear_lockout()
 
 async def display_main(stdscr) -> None:
     display = MyDisplay(stdscr)

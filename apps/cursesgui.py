@@ -11,8 +11,7 @@ import time
 import numpy as np
 import logging
 from pathlib import PurePath
-from h2m_types import Channel
-from lockout_manager import RadioFreqRange, LockoutListRadioFreq
+from frequency_manager import ConfigFrequency, RadioFreqRange, ChannelFrequency, ChannelList, FrequencyList
 
 locale.setlocale(locale.LC_ALL, '')
 class SpectrumWindow(object):
@@ -90,17 +89,17 @@ class SpectrumWindow(object):
         pos_y = np.clip(pos_y, min_y, max_y)
         pos_y = pos_y.astype(int)
 
+        # Generate threshold line, clip to window, and convert to int
+        pos_yt = (self.threshold_db - self.max_db) * scale
+        pos_yt = np.clip(pos_yt, min_y, max_y-1)
+        pos_yt = pos_yt.astype(int)
+
          # Clear previous contents, draw border, and title
         self.win.erase()
         self.win.border(0)
         self.win.attron(curses.color_pair(6))
         self.win.addnstr(0, int(self.dims[1]/2-6), "SPECTRUM", 8,
                          curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
-
-        # Generate threshold line, clip to window, and convert to int
-        pos_yt = (self.threshold_db - self.max_db) * scale
-        pos_yt = np.clip(pos_yt, min_y, max_y-1)
-        pos_yt = pos_yt.astype(int)
 
         # Draw the bars
         for pos_x in range(len(pos_y)):
@@ -195,14 +194,59 @@ class ChannelWindow(object):
         self.win = curses.newwin(height, width, screen_dims[0] - height - 1, 1)
         self.dims = self.win.getmaxyx()
 
+        self.entries: list[ChannelWindow.ChannelEntry] = []
 
-    def draw_channels(self, channels: list[Channel]):
-        """Draws tuned channels list
+    class ChannelEntry(object):
+        def __init__(self):
+            self.width = ChannelWindow.ChannelEntry.width
+            self.prev_channel: ChannelFrequency | None = None
 
-        Args:
-            rf_channels [string]: List of strings in MHz
-        """
+            ChannelWindow.ChannelEntry.rows += 1
+            self.row = ChannelWindow.ChannelEntry.rows
 
+            self.attrs = { 'bold_freq': curses.color_pair(2) | curses.A_BOLD,
+                           'bold_icon': curses.color_pair(2),
+                           'normal_freq': curses.color_pair(6),
+                           'normal_icon': curses.color_pair(6) }
+
+        @classmethod
+        def set_window(cls, win: any, width: int):
+            ChannelWindow.ChannelEntry.win = win
+            ChannelWindow.ChannelEntry.rows = 0  # used to track the next index for each row
+            ChannelWindow.ChannelEntry.width = width
+
+        def set(self, channel: ChannelFrequency) -> None:
+            self.channel = channel
+
+            # draw if changing
+            if self.prev_channel != self.channel:
+                self.draw()
+
+            self.prev_channel = self.channel
+
+        def draw(self) -> None:
+
+            row = self.row
+            channel = self.channel
+            win = ChannelWindow.ChannelEntry.win
+
+            if channel is None:
+                text = ' ' * self.width
+                win.addnstr(row, 1, text, self.width)
+                return
+
+            text = f'{self.row-1:02d}: {channel.rf:.3f}'
+            icon = 'P' if channel.priority else ' '
+            label = channel.label or ' ' * self.width
+
+            attributes = (self.attrs['bold_freq'], self.attrs['bold_icon']) if channel.active else (
+                self.attrs['normal_freq'], self.attrs['normal_icon'])
+
+            win.addnstr(row, 1, text, self.width, attributes[0])
+            win.addnstr(row, 12, icon, 1, attributes[1])
+            win.addnstr(row, 14, label, self.width-14, attributes[0])
+
+    def draw_frame(self) -> None:
         # Clear previous contents, draw border, and title
         self.win.erase()
         self.win.border(0)
@@ -210,34 +254,35 @@ class ChannelWindow(object):
         self.win.addnstr(0, int(self.dims[1]/4), "CHANNELS", 8,
                          curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
-        # Limit the displayed channels to no more than two rows
-        max_length = 2*(self.dims[0]-2)
+        ChannelWindow.ChannelEntry.set_window(self.win, self.dims[1]-2)
 
+        # Limit the displayed channels to one column
+        max_length = self.dims[0]-2
+
+        # Add entries to the list if not already present
+        cur_length = len(self.entries)
+        if cur_length < max_length:
+            for _ in range(cur_length, max_length):
+                self.entries.append(ChannelWindow.ChannelEntry())
+
+        # limit the size to available space (the window got smaller)
+        self.entries = self.entries[:max_length]
+
+    def draw_channels(self, channels: list[ChannelFrequency]):
+        """Draws tuned channels list
+
+        Args:
+            rf_channels [string]: List of strings in MHz
+        """
         # Draw the tuned channels prefixed by index in list (demodulator index)
         # Use color if tuned channel is active during this scan_cycle
-        subset = channels[:max_length]
-        subset = [c for c in subset if c.active or c.hanging]  # needs to match Scanner.add_lockout
-        for idx, channel in enumerate(subset):
-            icon = 'P' if channel.priority else ''
-            text = f'{idx:02d}: {channel.frequency:.3f}'
-            if idx < self.dims[0]-2:
-                # Display in first column
-                # text color based on activity
-                if channel.active:
-                    self.win.addnstr(idx+1, 1, text, 12, curses.color_pair(2) | curses.A_BOLD)
-                    self.win.addnstr(idx+1, 12, icon, 1, curses.color_pair(2))
-                else:
-                    self.win.addnstr(idx+1, 1, text, 12, curses.color_pair(6))
-                    self.win.addnstr(idx+1, 12, icon, 1, curses.color_pair(6))
+        subset = [c for c in channels if c.active or c.hanging]  # needs to match Scanner.add_lockout
+
+        for idx, entry in enumerate(self.entries):
+            if idx >= len(subset):
+                entry.set(None)
             else:
-                # Display in second column
-                self.win.addnstr(idx-self.dims[0]+3, 13, text, 11)
-                if channel.active:
-                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11, curses.color_pair(2) | curses.A_BOLD)
-                    self.win.addnstr(idx-self.dims[0]+3, 24, icon, 1, curses.color_pair(2))
-                else:
-                    self.win.addnstr(idx-self.dims[0]+3, 13, text, 11, curses.color_pair(6))
-                    self.win.addnstr(idx-self.dims[0]+3, 24, icon, 1, curses.color_pair(6))
+                entry.set(subset[idx])
 
         # Hide cursor
         self.win.leaveok(1)
@@ -267,12 +312,71 @@ class LockoutWindow(object):
         self.win = curses.newwin(height, width, screen_dims[0] - height - 1, width+1)
         self.dims = self.win.getmaxyx()
 
-    def draw_channels(self, lockout_channels: LockoutListRadioFreq, channels: list[Channel]):
-        """Draws lockout channels list
+        self.lockouts: list[LockoutWindow.LockoutEntry] = []
 
-        Args:
-            rf_channels [string]: List of strings in MHz
-        """
+    class LockoutEntry(object):
+
+        def __init__(self):
+            self.width = LockoutWindow.LockoutEntry.width
+            self.prev_lockout: ConfigFrequency | None = None
+            self.prev_has_activity: bool | None = None
+
+            LockoutWindow.LockoutEntry.rows += 1
+            self.row = LockoutWindow.LockoutEntry.rows
+
+            self.attrs = { 'bold_lockout': curses.color_pair(5) | curses.A_BOLD,
+                           'normal_lockout': curses.color_pair(6) }
+
+        @classmethod
+        def set_window(cls, win: any, width: int):
+            LockoutWindow.LockoutEntry.win = win
+            LockoutWindow.LockoutEntry.rows = 0  # used to track the next index for each row
+            LockoutWindow.LockoutEntry.width = width
+
+        def set(self, lockout: ConfigFrequency, has_activity: bool) -> None:
+            self.lockout = lockout
+            self.has_activity = has_activity
+
+            # draw if changing
+            if self.prev_lockout != self.lockout or self.prev_has_activity != self.has_activity:
+                self.draw()
+
+            self.prev_lockout = self.lockout
+            self.prev_has_activity = self.has_activity
+
+        def draw(self) -> None:
+
+            row = self.row
+            lockout = self.lockout
+            has_activity = self.has_activity
+            win = LockoutWindow.LockoutEntry.win
+
+            if lockout is None:
+                text = ' ' * self.width
+                win.addnstr(row, 1, text, self.width)
+                return
+
+            if not lockout.saved:
+                icon = 'U'
+            else:
+                icon = None
+
+            attr = self.attrs['normal_lockout']
+
+            if isinstance(lockout.rf, RadioFreqRange):
+                text = f"{lockout.rf.lo:.3f}-{lockout.rf.hi:.3f}"
+                if has_activity:
+                    attr = self.attrs['bold_lockout']
+            else:  # handle this single frequency
+                text = f"{lockout.rf:.3f}"
+                if has_activity:
+                    attr = self.attrs['bold_lockout']
+
+            win.addnstr(row, 1, text, self.width, attr)
+            if icon:
+                win.addnstr(row, len(text)+1, icon, 1, attr & ~curses.A_BOLD)
+
+    def draw_frame(self) -> None:
         # Clear previous contents, draw border, and title
         self.win.erase()
         self.win.border(0)
@@ -280,32 +384,58 @@ class LockoutWindow(object):
         self.win.addnstr(0, int(self.dims[1]/2-3), "LOCKOUT", 7,
                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
+        LockoutWindow.LockoutEntry.set_window(self.win, self.dims[1]-2)
+
+        # Limit the displayed channels to one column
+        max_length = self.dims[0]-2
+
+        # Add entries to the list if not already present
+        cur_length = len(self.lockouts)
+        if cur_length < max_length:
+            for _ in range(cur_length, max_length):
+                self.lockouts.append(LockoutWindow.LockoutEntry())
+
+        # limit the size to available space (the window got smaller)
+        self.lockouts = self.lockouts[:max_length]
+
+    def lockout_has_activity(self, lockout: ConfigFrequency) -> bool:
+        """Checks if lockout has activity
+
+        Args:
+            lockout (RadioFreq): lockout to check
+        """
+        has_activity = False
+        for channel in self.locked_channels:
+            if isinstance(lockout.rf, RadioFreqRange):
+                if lockout.rf.lo <= channel.rf <= lockout.rf.hi:
+                    has_activity = True
+            else:  # handle this single frequency
+                if lockout.rf == channel.rf:
+                    has_activity = True
+
+        return has_activity
+
+    def draw_channels(self, frequencies: FrequencyList, channels: ChannelList):
+        """Draws lockout channels list
+
+        Args:
+            rf_channels [string]: List of strings in MHz
+        """
         # Draw the lockout channels
         # Use color if lockout channel is in active channel list during this scan_cycle
-        locked_channels = [c for c in channels if c.locked]
-        for idx, lockout in enumerate(lockout_channels):
-            # Don't draw past height of window
-            if idx <= self.dims[0]-3:
-                if not lockout.saved:
-                    icon = 'U'
-                else:
-                    icon = None
-                attr = curses.color_pair(6)
-                if isinstance(lockout, RadioFreqRange):
-                    text = f"{lockout.min:.3f}-{lockout.max:.3f}"
-                    for channel in locked_channels:
-                        if lockout.min <= channel.frequency <= lockout.max:
-                            attr = curses.color_pair(5) | curses.A_BOLD
-                else:  # handle this single frequency
-                    text = f"{lockout.freq:.3f}"
-                    for channel in locked_channels:
-                        if lockout.freq == channel.frequency:
-                                attr = curses.color_pair(5) | curses.A_BOLD
-                self.win.addnstr(idx+1, 1, text, 20, attr)
-                if icon:
-                    self.win.addnstr(idx+1, len(text)+1, icon, 1, attr & ~curses.A_BOLD)
+        self.locked_channels = [c for c in channels if c.locked]
+
+        # Extract the frequencues/ranges the user wants locked out
+        locked_frequencies = [freq for freq in frequencies if freq.locked]
+
+        # populate the gui list with the locked frequencies configured by the user
+        for idx, lockout in enumerate(self.lockouts):
+            if idx >= len(locked_frequencies):
+                lockout.set(None, None)
             else:
-                pass
+                lockout_freq = locked_frequencies[idx]
+                has_activity = self.lockout_has_activity(lockout_freq)
+                lockout.set(lockout_freq, has_activity)
 
         # Hide cursor
         self.win.leaveok(1)
@@ -362,8 +492,7 @@ class RxWindow(object):
         volume_dB (int): Volume in dB
         type_demod (int): Type of demodulation (0 = FM, 1 = AM)
         record (bool): Record audio to file if True
-        lockout_file_name (PurePath): Name of file with channels to lockout
-        priority_file_name (string): Name of file with channels for priority
+        frequency_file_name (PurePath): Name of file with frequencies
         channel_log_file_name (string): Name of file for channel activity logging
         channel_log_timeout (int): Timeout delay between logging active state of channel in seconds
         log_mode (string): Log system mode (file, database type)
@@ -384,8 +513,7 @@ class RxWindow(object):
         self.volume_db = 0
         self.type_demod = 0
         self.record = True
-        self.lockout_file_name: PurePath = None
-        self.priority_file_name = ""
+        self.frequency_file_name: PurePath = None
         self.channel_log_type = ""
         self.channel_log_target = ""
         self.gains = None
@@ -409,10 +537,79 @@ class RxWindow(object):
                                  int(screen_dims[1]-width-1))
         self.dims = self.win.getmaxyx()
 
-    def draw_rx(self) -> None:
-        """Draws receiver parameters
-        """
+    class RxEntry(object):
 
+        label_width = 14
+        value_width = 10
+        #rows = [0, 0]  # used to track the next index for each row
+
+        def __init__(self, label: str | None, column: int,
+                     justification: str, can_modify: bool):
+            self.label = label
+            RxWindow.RxEntry.rows[column-1] += 1
+            self.row = RxWindow.RxEntry.rows[column-1]
+            self.column = column
+            self.justification = justification
+            self.can_modify = can_modify
+            self.prev_value: str | None = None
+
+            win = RxWindow.RxEntry.win
+            label_width = RxWindow.RxEntry.label_width
+            value_width = RxWindow.RxEntry.value_width
+
+            self.attrs = { 'bold': curses.color_pair(5),
+                           'normal': curses.color_pair(6) }
+
+            if self.label is None:
+                return
+
+            if justification == 'left':
+                text = f'{self.label:<{label_width}}:'
+            else:
+                text = f'{self.label:>{label_width-1}} :'
+
+            start = (self.column - 1) * ( label_width + value_width + 3 ) + 1
+            win.addnstr(self.row, start, text, len(text)+1, self.attrs['normal'])
+
+        @classmethod
+        def set_window(cls, win: any):
+            RxWindow.RxEntry.win = win
+            RxWindow.RxEntry.rows = [0, 0]  # used to track the next index for each row
+
+        def set(self, value: str ) -> None:
+            self.value = value
+
+            # draw if changing
+            if self.prev_value != self.value:
+                self.draw()
+
+            self.prev_value = self.value
+
+        def draw(self) -> None:
+
+            row = self.row
+            value = self.value
+
+            label_width = RxWindow.RxEntry.label_width
+            value_width = RxWindow.RxEntry.value_width
+            win = RxWindow.RxEntry.win
+
+
+            if value is None:
+                text = ' ' * RxWindow.RxEntry.value_width
+                win.addnstr(row, 1, text, value_width)
+                return
+
+            attr = self.attrs['bold'] if self.can_modify else self.attrs['normal']
+
+            # -2 is a hack for getting the range counter shifted to the left
+            label_offset = -2 if self.label is None else label_width + 3
+
+            start = (self.column - 1) * ( label_width + value_width + 3 ) + label_offset
+
+            win.addnstr(row, start, value, len(value), attr)
+
+    def draw_frame(self) -> None:
         # Clear previous contents, draw border, and title
         self.win.erase()
         self.win.border(0)
@@ -420,140 +617,98 @@ class RxWindow(object):
         self.win.addnstr(0, int(self.dims[1]/2-4), "RECEIVER", 8,
                          curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
-        # Draw the receiver info prefix fields
-        index = 1
-        text = "RF Freq (MHz)  : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        RxWindow.RxEntry.set_window(self.win)
 
-        index = index+1
-        text = "         From  : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        self.rf_freq_field = RxWindow.RxEntry(
+            "RF Freq (MHz)", 1, 'left', True)
+        self.from_freq_field = RxWindow.RxEntry(
+            "From", 1, 'right', False)
+        self.to_freq_field = RxWindow.RxEntry(
+            "To", 1, 'right', False)
 
-        index = index+1
-        text = "           To  : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        self.gain_entries_field: list[RxWindow.RxEntry] = []
+        for gain in self.gains:
+            text = f'{gain["name"]} Gain (dB)'
+            self.gain_entries_field.append(RxWindow.RxEntry(
+                text, 1, 'left', True))
 
-        index3 = 1  # handle case where there are no gains (processing from file)
-        for index2, gain in enumerate(self.gains, 2):
-            text = "{} Gain (dB){} : ".format(gain["name"], (4-len(gain["name"]))*' ')
-            self.win.addnstr(index+index2-1, 1, text, 18)
-            index3 = index2
+        self.bb_rate_field = RxWindow.RxEntry(
+            "BB Rate (Msps)", 1, 'left', False)
 
-        index = index+index3
-        text = "BB Rate (Msps) : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        self.squelch_db_field = RxWindow.RxEntry(
+            "BB Sql  (dB)", 1, 'left', True)
 
-        index = index+1
-        text = "BB Sql  (dB)   : "
-        self.win.addnstr(index, 1, text, 18, curses.color_pair(6))
+        # status line when range scanning
+        num_steps: int = len(self.steps)
+        if num_steps > 1:
+            self.step_status_field = RxWindow.RxEntry(
+                None, 2, 'left', False)
 
-        index = 1
+        self.volume_db_field = RxWindow.RxEntry(
+            "AF Vol  (dB)", 2, 'left', True)
 
-        # skip a line when range scanning to insert the status
-        if len(self.steps) > 1:
-            index = index + 1
+        self.record_field = RxWindow.RxEntry(
+            "Record", 2, 'left', False)
 
-        text = "AF Vol  (dB) : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+        self.type_demod_field = RxWindow.RxEntry(
+            "Demod Type", 2, 'left', False)
 
-        index = index+1
-        text = "Record       : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+        self.frequency_file_name_field = RxWindow.RxEntry(
+            "Freq File", 2, 'left', False)
 
-        index = index+1
-        text = "Demod Type   : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
-
-        index = index+1
-        text = "Lockout File : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
-
-        index = index+1
-        text = "Priority File: "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
-
-        index = index+1
-        text = "Log Type     : "
-        self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+        self.channel_log_type_field = RxWindow.RxEntry(
+            "Log Type", 2, 'left', False)
 
         if self.channel_log_target is not None:
-            index = index+1
-            text = "Log Target   : "
-            self.win.addnstr(index, 29, text, 18, curses.color_pair(6))
+            self.channel_log_target_field = RxWindow.RxEntry(
+                "Log Target", 2, 'left', False)
 
-        # Draw the receiver info suffix fields
-        index = 1
+    def draw_rx(self) -> None:
+        """Draws receiver parameters
+        """
+
         if self.freq_entry != 'None':
-            text = self.freq_entry
+            freq = self.freq_entry
         else:
-            text = '{:.3f}'.format((self.center_freq)/1E6)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
+            freq = f'{self.center_freq/1E6:0.3f}'
+        self.rf_freq_field.set(freq)
 
-        index = index+1
-        text = '{:.3f}'.format((self.center_freq - self.samp_rate/2)/1E6)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+        self.from_freq_field.set(f'{(self.center_freq - self.samp_rate/2)/1E6:0.3f}')
+        self.to_freq_field.set(f'{(self.center_freq + self.samp_rate/2)/1E6:0.3f}')
 
-        index = index+1
-        text = '{:.3f}'.format((self.center_freq + self.samp_rate/2)/1E6)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(6))
+        for index, gain in enumerate(self.gains):
+            self.gain_entries_field[index].set(f'{gain["value"]:0.1f}')
 
-        index3 = 1  # handle case where there are no gains (processing from file)
-        for index2, gain in enumerate(self.gains, 2):
-            text = str(gain["value"])
-            self.win.addnstr(index+index2-1, 18, text, 8, curses.color_pair(5))
-            index3 = index2
-
-        index = index+index3
-        text = str(self.samp_rate/1E6)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
-
-        index = index+1
-        text = str(self.squelch_db)
-        self.win.addnstr(index, 18, text, 8, curses.color_pair(5))
-
-        index = 1
+        self.bb_rate_field.set(f'{self.samp_rate/1E6:0.1f}')
+        self.squelch_db_field.set(f'{self.squelch_db:d}')
 
         # status line when range scanning
         num_steps: int = len(self.steps)
         if num_steps > 1:
             step = self.step + 1  # start at 1 instead of 0
             percent = int((step/num_steps)*100)
-            text = f'-> Step {step} of {num_steps} ({percent}%)'
-            self.win.addnstr(index, 26, text, 22, curses.color_pair(6))
-            index = index + 1
+            text = f'-> Step {step} of {num_steps} ({percent}%)  '
+            self.step_status_field.set(text)
 
-        text = str(self.volume_db)
-        self.win.addnstr(index, 44, text, 8, curses.color_pair(5))
+        self.volume_db_field.set(f'{self.volume_db:d} ')
 
-        index = index+1
         text = ''
         for key in self.classifier_params.wanted.keys():
             if self.classifier_params.wanted[key]:
                 text = text + key
         if text == '':
             text = str(self.record)
-        self.win.addnstr(index, 44, text, 8)
+        self.record_field.set(text)
 
-        index = index+1
         text = self.demod_map[self.type_demod]
-        self.win.addnstr(index, 44, text, 8, curses.color_pair(6))
+        self.type_demod_field.set(text)
 
-        index = index+1
-        text = str(self.lockout_file_name.name)
-        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+        self.frequency_file_name_field.set(self.frequency_file_name.name)
 
-        index = index+1
-        text = str(self.priority_file_name)
-        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
-
-        index = index+1
-        text = str(self.channel_log_type)
-        self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+        self.channel_log_type_field.set(self.channel_log_type)
 
         if self.channel_log_target is not None:
-            index = index+1
-            text = str(self.channel_log_target)
-            self.win.addnstr(index, 44, text, 20, curses.color_pair(6))
+            self.channel_log_target_field.set(self.channel_log_target)
 
         # Hide cursor
         self.win.leaveok(1)
