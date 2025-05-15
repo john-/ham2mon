@@ -11,7 +11,7 @@ import time
 import numpy as np
 import logging
 from pathlib import PurePath
-from frequency_manager import ConfigFrequency, RadioFreqRange, ChannelFrequency, ChannelList, FrequencyList
+from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
 
 locale.setlocale(locale.LC_ALL, '')
 class SpectrumWindow(object):
@@ -363,12 +363,12 @@ class LockoutWindow(object):
 
             attr = self.attrs['normal_lockout']
 
-            if isinstance(lockout.rf, RadioFreqRange):
-                text = f"{lockout.rf.lo:.3f}-{lockout.rf.hi:.3f}"
+            if lockout.is_single:
+                text = f"{lockout.single:.3f}"
                 if has_activity:
                     attr = self.attrs['bold_lockout']
-            else:  # handle this single frequency
-                text = f"{lockout.rf:.3f}"
+            else:
+                text = f"{lockout.lo:.3f}-{lockout.hi:.3f}"
                 if has_activity:
                     attr = self.attrs['bold_lockout']
 
@@ -406,11 +406,11 @@ class LockoutWindow(object):
         """
         has_activity = False
         for channel in self.locked_channels:
-            if isinstance(lockout.rf, RadioFreqRange):
-                if lockout.rf.lo <= channel.rf <= lockout.rf.hi:
+            if lockout.is_single:
+                if lockout.single == channel.rf:
                     has_activity = True
-            else:  # handle this single frequency
-                if lockout.rf == channel.rf:
+            else:
+                if lockout.lo <= channel.rf <= lockout.hi:
                     has_activity = True
 
         return has_activity
@@ -703,7 +703,8 @@ class RxWindow(object):
         text = self.demod_map[self.type_demod]
         self.type_demod_field.set(text)
 
-        self.frequency_file_name_field.set(self.frequency_file_name.name)
+        file_name = self.frequency_file_name.name if self.frequency_file_name else ""
+        self.frequency_file_name_field.set(file_name)
 
         self.channel_log_type_field.set(self.channel_log_type)
 

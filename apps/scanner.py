@@ -272,7 +272,7 @@ class Scanner(object):
         # need the same subset here as in cursesgui.ChannelWindow so idx gets the right channel
         subset = [c for c in self.channels if c.active or c.hanging]
         try:
-            self.frequencies = await self.frequency_manager.add(subset[idx].rf, {'locked': True})
+            self.frequencies = await self.frequency_manager.change({'single': subset[idx].rf, 'locked': True, 'mode': 'add'})
         except IndexError:
             # user selected a digit but no channels in interface
             return
@@ -416,11 +416,11 @@ class Scanner(object):
         if metrics.V > metrics.D and metrics.V > metrics.S:  # Flag voice frequency as priority if not already set
             if self.frequency_manager.is_priority(bb_freq) is None:
                 logging.debug(f'adding {freq=} to priority list')
-                self.frequencies = await self.frequency_manager.add(freq, {'priority': 1})
+                self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': 1, 'mode': 'add'})
         else: # If not voice, remove from priority list if it currently a priority
             if self.frequency_manager.is_priority(bb_freq) is not None:
                 logging.debug(f'removing {freq=} from the priority list')
-                self.frequencies = await self.frequency_manager.add(freq, {'priority': None})
+                self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': None, 'mode': 'add'})
 
     async def clean_up(self) -> None:
         # cleanup terminating all demodulators

@@ -294,12 +294,14 @@ The frequency file contains metadata for individual frequencies and ranges of fr
 2. Lockout frequencies
 3. Frequency labeling
 
+If an individual frequency or frequency range is specfied more than once, an error will be generated and ham2mon will not load.
+
 For an exmaple, see the [example frequencies file](./apps/frequencies-example.yaml).
 
 ### Priority Handling
 Priorities can be assigned to frequencies and frequency ranges in the frequency file.  Highest priority is 1.  Frequencies can have equal priority.  If no priority is assigned the default value is no priority.
 
-Individual priorities take precedence over any priority assigned to a range that the frequency is a part of.
+Individual priorities take precedence over any priority assigned to a range that the frequency is a part of.  If a frequency is part of more than one range, the highest priority one will be used.
 
 When the scanner detects a priority frequency it will demodulate that frequency over any one that is lower priority.  Priority channels with be flagged with a 'P' in the CHANNELS section.  Without a priority assigned the scanner will only demodulate a frequency if there is a demodulator that is inactive.
 
@@ -356,6 +358,8 @@ The classification designator will be added after the frequency (e.g. 460.125_V_
 No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the provided model.
 
 ## Ham2mon Development
+
+### End-to-End Testing
 To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it im ham2mon.
 
 Example recording with airspy:
@@ -365,3 +369,21 @@ Example recording with airspy:
 This can then be replayed in ham2mon:
 
 `./ham2mon.py -a "file=case1.dump,rate=3E6,repeat=false,throttle=true,freq=460.4E6" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3`
+
+### Unit testing
+
+Example:
+```
+cd ham2mon/apps
+python -m pytest tests/test_frequency_manager.py
+coverage run -m pytest -s tests/test_frequency_manager.py
+coverage report frequency_manager.py
+coverage html
+```
+
+### Module testing
+Modules can be tested by executing the main module directly.  For example:
+```
+cd ham2mon/apps
+python scanner.py
+```

@@ -1,0 +1,4 @@
+frequencies:
+  - label: "Invalid float in single"
+    single: 460.15
+    priority: D

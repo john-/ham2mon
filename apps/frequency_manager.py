@@ -1,3 +1,9 @@
+"""
+Handle frequency data used for internal proccessing and the user interface.
+
+TODO: Save function
+"""
+
 
 from dataclasses import dataclass, field
 from typing import Optional, TypeAlias  # TypeAlias needed for python < 3.12
@@ -6,42 +12,149 @@ import yaml
 import logging
 from utilities import frequency_to_baseband
 
-@dataclass(kw_only=True)
-class BasebandFreqRange:
-    lo: int
-    hi: int
-
-    def __post_init__(self):
-        if self.lo >= self.hi:
-            raise ValueError('Upper frequency must be larger than lower frequency')
-
-@dataclass(kw_only=True)
-class RadioFreqRange:
-    lo: float
-    hi: float
-
-    def __post_init__(self):
-        if self.lo >= self.hi:
-            raise ValueError(
-                'Upper frequency must be larger than lower frequency')
 
 @dataclass(kw_only=True)
 class FrequencyInfo:
     '''
-    Metadata for frequencies specifcied in use configuration or as part of a channel
+    Metadata for frequencies specified in use configuration or as part of a channel
     '''
     label: str = field(default=None)
     locked: bool = field(default=False)
     priority: int | None = field(default=None)
 
-@dataclass(kw_only=True)
+    def __post_init__(self):
+        if not isinstance(self.locked, bool):
+            raise ValueError('Locked must be a boolean')
+
+        if self.priority is None:
+            return
+
+        if not isinstance(self.priority, int) or self.priority < 1:
+            raise ValueError('Priority must be an integer >= 1')
+
+
+@dataclass(kw_only=True, eq=False)
 class ConfigFrequency(FrequencyInfo):
     '''
-    A frequency specified in the configuration file
+    A frequency specified in the configuration file.
+
+    The baseband frequencies are not provided by the user.  They are
+    calculated at run time
     '''
-    rf: float | RadioFreqRange
-    bb: int | BasebandFreqRange | None = field(default=None)
-    saved: bool = field(default=True)
+    single: float | None = field(default=None)
+    lo: float | None = field(default=None)
+    hi: float | None = field(default=None)
+
+    bb_single: int | None = field(default=None)
+    bb_lo: int | None = field(default=None)
+    bb_hi: int | None = field(default=None)
+
+    # 'add' means added through scanning
+    mode: str | None = field(default=None)
+    saved: bool = field(default=False)
+    # if not a single it is a range
+    is_single: bool | None = field(default=None)
+
+    def calculate_baseband(self, center_freq: int, channel_spacing: int) -> None:
+        if self.is_single:
+            self.bb_single = frequency_to_baseband(
+                self.single, center_freq, channel_spacing)
+        else:
+            self.bb_lo = frequency_to_baseband(
+                self.lo, center_freq, channel_spacing)
+            self.bb_hi = frequency_to_baseband(
+                self.hi, center_freq, channel_spacing)
+
+    def locks_out(self, bb: int) -> bool:
+        if not self.locked:
+            return False
+
+        if self.is_single and self.bb_single == bb:
+            return True
+        elif not self.is_single and self.bb_lo <= bb <= self.bb_hi:
+            return True
+        else:
+            return False
+
+    def get_priority_at(self, bb: int) -> int | bool:
+
+        if self.priority is None:
+            return None
+
+        if self.is_single and self.bb_single == bb:
+            return self.priority
+        elif not self.is_single and self.bb_lo <= bb <= self.bb_hi:
+            return self.priority
+
+        return None
+
+    def __post_init__(self):
+        # Call parent validation first
+        super().__post_init__()
+
+        # Validate frequency types
+        self._validate_frequency_types()
+
+        # Validate frequency specification (single or range)
+        self._validate_frequency_specification()
+
+        # Validate frequency values
+        self._validate_frequency_values()
+
+        # Set state
+        self.is_single = self.single is not None
+
+    def _validate_frequency_types(self):
+        """Ensure all frequency values are floats if provided"""
+        for attr_name, attr_value in [
+            ('single', self.single),
+            ('lo', self.lo),
+            ('hi', self.hi)
+        ]:
+            if attr_value is not None and not isinstance(attr_value, float):
+                raise ValueError(f'{attr_name} frequency must be a float')
+
+    def _validate_frequency_specification(self):
+        """Ensure frequency is specified correctly as either single or range"""
+        has_single = self.single is not None
+        has_lo = self.lo is not None
+        has_hi = self.hi is not None
+
+        # Check if any frequency is specified
+        if not has_single and not has_lo and not has_hi:
+            raise ValueError('Frequency must be specified as single or range')
+
+        # Check for mixed single and range specifications
+        if has_single and (has_lo or has_hi):
+            raise ValueError(
+                'Frequency cannot be specified as both single and range')
+
+        # Check for incomplete range specification
+        if has_lo != has_hi:  # XOR operation - one is set but not the other
+            raise ValueError(
+                'Both lo and hi must be specified for a frequency range')
+
+    def _validate_frequency_values(self):
+        """Ensure frequency values are valid"""
+        # Check for negative frequencies
+        if (self.single is not None and self.single < 0.0) or (self.lo is not None and self.lo < 0.0):
+            raise ValueError('Frequencies must be positive numbers')
+
+        # Check range order
+        if self.lo is not None and self.hi is not None and self.lo >= self.hi:
+            raise ValueError(
+                'Upper frequency (hi) must be larger than lower frequency (lo)')
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, ConfigFrequency):
+            return NotImplemented
+
+        if self.single and other.single:
+            return self.single == other.single
+
+        if self.lo and other.lo:
+            return self.lo == other.lo and self.hi == other.hi
+
 
 @dataclass(kw_only=True)
 class ChannelFrequency(FrequencyInfo):
@@ -53,6 +166,7 @@ class ChannelFrequency(FrequencyInfo):
     bb: int
     active: bool
     hanging: bool
+
 
 @dataclass(kw_only=True)
 class ChannelMessage(FrequencyInfo):
@@ -71,17 +185,20 @@ class ChannelMessage(FrequencyInfo):
     classification: Optional[str] = None
     detail: Optional[str] = None
 
+
 FrequencyList: TypeAlias = list[ConfigFrequency]
 ChannelList: TypeAlias = list[ChannelFrequency]
+
 
 @dataclass(kw_only=True)
 class FrequencyConfiguration:
     '''
     Used to load the freqency configuration file.
     '''
-    file_name: Path
+    file_name: Optional[Path] = None
     disable_lockout: bool
     disable_priority: bool
+
 
 class FrequencyManager:
 
@@ -90,101 +207,129 @@ class FrequencyManager:
         self.channel_spacing = channel_spacing   # used for frequency conversions
         self.center_freq = None
         self.config = config
-
-    async def load(self) -> FrequencyList:
         self.frequencies: FrequencyList = []
-        file = self.config.file_name
 
-        if not file.name:
-            return []
-
-        if not file.exists():
-            raise FileNotFoundError(
-                f'Frequency file does not exist: {file}')
-
-        logging.debug(f'Loading frequencies from {file}')
-
-        # Process lockout file if it was provided
-        with file.open(mode='r') as file:
-            frequencies_config = yaml.safe_load(file)
+    async def process_frequencies_data(self, frequencies_config) -> FrequencyList:
+        """Process pre-loaded frentryequencies configuration data."""
 
         if 'frequencies' in frequencies_config:
             for freq in frequencies_config['frequencies']:
-                entry = {
-                    'label': freq['label'],
-                    'locked': freq['lockout'] if 'lockout' in freq and not self.config.disable_lockout else False,
-                    'priority': freq['priority'] if 'priority' in freq and not self.config.disable_priority else None,
-                }
-
-                if 'single' in freq:
-                    entry['rf'] = freq['single']
-                elif 'lo' and 'hi' in freq:
-                    entry['rf'] = RadioFreqRange(lo=freq['lo'], hi=freq['hi'])
-                else:
-                    raise ValueError(f'Invalid frequency entry: {freq}')
-
-                self.frequencies.append(
-                    ConfigFrequency(**entry)
-                )
+                freq['saved'] = True
+                await self.add(freq)
 
         return self.frequencies
 
-    async def add(self, rf: float, type: dict) -> FrequencyList:
+    async def load(self) -> FrequencyList:
+        """Load frequencies from the configured file."""
+
+        if not self.config.file_name:
+            self.frequencies = []
+            return []
+
+        file = self.config.file_name
+        if not file.exists():
+            raise FileNotFoundError(f'Frequency file does not exist: {file}')
+
+        logging.debug(f'Loading frequencies from {file}')
+        with file.open(mode='r') as file:
+            try:
+                frequencies_config = yaml.safe_load(file)
+            except yaml.YAMLError as e:
+                if hasattr(e, 'problem_mark'):
+                    logging.error(
+                        f'{e.problem_mark} {e.problem} {e.context if e.context else ""}')
+                else:
+                    logging.error(
+                        f'Something went wrong while parsing yaml file: {file}')
+                raise Exception(
+                    "Invalid yaml frequency file (enable debugging for more info)")
+
+            return await self.process_frequencies_data(frequencies_config)
+
+    async def add(self, entry: dict) -> FrequencyList:
         '''
-        Add frequency to channels if not already there.  Otherwise, modify existing
-        occurance.
+        Add frequency to channels if not already there.
 
         Args:
-            rf (float): Radio frequency of tuned channel
-            type (dict): Dictionary of frequency attributes
+            entry (dict): Dictionary of frequency attributes
+
+            example:
+                entry = {
+                    'lo': 145.0, 'hi': 148.0,
+                    'label':'Test range',
+                    'locked':True,
+                    'priority': 1
+                }
+
+        Returns:
+                FrequencyList: List of frequencies
         '''
+        wanted = ConfigFrequency(**entry)
 
-        if not isinstance(rf, float):
-            raise NotImplementedError('Frequency range not yet supported')
+        # use the dataclass __eq__ functions to look for matches
+        matching_frequencies = [existing for existing in self.frequencies
+                                if wanted == existing]
 
-        # Return the frequencies that match this frequency
-        matching_frequencies = [frequency for frequency in self.frequencies
-            if isinstance(frequency, ConfigFrequency) and rf == frequency.rf]
+        if len(matching_frequencies) > 0:  # Already one occurance so this is an error
+            raise ValueError(
+                f'Frequency {wanted} already occurs in list')
 
-        if len(matching_frequencies) > 0:  # if more than one occurance change them all
-            for frequency in matching_frequencies:
-                for field in ['label', 'locked', 'priority']:
-                    if field in type:
-                        frequency.__setattr__(field, type[field])
-                        frequency.saved = False
+        # add the basband if center frequency has been set
+        if self.center_freq:
+            wanted.calculate_baseband(self.center_freq, self.channel_spacing)
 
-        else:  # no occurances of this frequency in the list
-            label = type['label'] if 'label' in type else None
-            locked = type['locked'] if 'locked' in type else False
-            priority = type['priority'] if 'priority' in type else None
-
-            entry = {
-                'saved': False,
-                'label': label,
-                'locked': locked,
-                'priority': priority,
-            }
-
-            bb_freq = None if self.center_freq is None else frequency_to_baseband(rf, self.center_freq, self.channel_spacing)
-            entry['rf'] = rf
-            entry['bb'] = bb_freq
-            self.frequencies.append(ConfigFrequency(**entry))
+        self.frequencies.append(wanted)
 
         return self.frequencies
+
+    async def change(self, entry: dict) -> FrequencyList:
+        '''
+        Modify frequency or frequency range.
+
+        Args:
+            entry (dict): Dictionary of frequency attributes
+
+        Returns:
+            FrequencyList: List of frequencies
+
+        Raises:
+            ValueError: If the frequency is not found in the frequencies list
+        '''
+        # Create a temporary ConfigFrequency to use for comparison
+        new_values = ConfigFrequency(**entry)
+
+        # Find the matching frequency
+        for frequency in self.frequencies:
+            # Use the __eq__ method that's already defined in ConfigFrequency
+            if frequency == new_values:
+                # Update fields if they exist in the entry
+                for field in ['label', 'priority', 'locked']:
+                    if field in entry:
+                        setattr(frequency, field, entry[field])
+
+                return self.frequencies
+
+        if 'mode' in entry and entry['mode'] == 'add':
+            return await self.add(entry)
+
+        raise ValueError(
+            f'Frequency {entry} not found in frequencies list')
 
     def set_center(self, center_freq: int) -> FrequencyList:
         '''
         When the center frequency changes, we need to regenerate the baseband frequencies.
+
+        Args:
+            center_freq (int): Hardware RF center frequency in Hz
         '''
         self.center_freq = center_freq
         self.generate_baseband_frequencies()
 
         return self.frequencies
 
-
     def locked_out(self, bb: int) -> bool:
         '''
-        Compare the channel to frequency and range lockouts
+        Compare the channel to lockouts for each configured frequency.
 
         Args:
             bb (int): Baseband frequency of tuned channel
@@ -192,39 +337,39 @@ class FrequencyManager:
         TODO:  Maybe this should be a cached function
         TODO:  Maybe return what lockouts where found (for GUI)
         '''
-        locked = False
+        if self.config.disable_lockout:
+            return False
+
         for frequency in self.frequencies:
-            if not frequency.locked:
-                continue
-            if isinstance(frequency.bb, BasebandFreqRange):
-                if frequency.bb.lo <= bb <= frequency.bb.hi:
-                    locked = True
-            else:  # is this frequency locked out?
-                if bb == frequency.bb:
-                    locked = True
-        return locked
+            if frequency.locks_out(bb):
+                return True
+
+        return False
 
     def is_priority(self, bb: int) -> int | None:
         '''
         Compare the channel to frequency and range priorities
 
+        A frequency can occur in multiple places.  For example, as a single frequnecy as
+        well as in a range.  Therefore, we need to check all the frequency entries.
+
+        Individual priorities take precedence over any priority assigned to a range
+        that the frequency is a part of.
+
         Args:
             bb (int): Baseband frequency of tuned channel
         '''
-        priority: int | None = None
+        lowest: int | None = None
         for frequency in self.frequencies:
-            if frequency.priority is None:
-                continue
-            if isinstance(frequency.bb, BasebandFreqRange):
-                if frequency.bb.lo <= bb <= frequency.bb.hi:
-                    if priority is None or frequency.priority < priority:
-                        priority = frequency.priority
-            else:  # isingle channel
-                if bb == frequency.bb:
-                    if priority is None or frequency.priority < priority:
-                        priority = frequency.priority
+            priority = frequency.get_priority_at(bb)
+            if priority is not None:
+                if frequency.single:
+                    return priority
+                else:
+                    if lowest is None or priority < lowest:
+                        lowest = priority
 
-        return priority
+        return lowest
 
     def is_higher_priority(self, channel_bb: int, demod_freq: int) -> bool:
         '''
@@ -256,25 +401,16 @@ class FrequencyManager:
         else:
             return False
 
+
     def generate_baseband_frequencies(self) -> None:
         '''
         Generate frequencies in baseband.  The scanner
         uses this as it tracks channels in baseband frequencies.
         '''
         for frequency in self.frequencies:
-            if isinstance(frequency.rf, float):
-                frequency.bb = frequency_to_baseband(frequency.rf,
-                                                     self.center_freq,
-                                                     self.channel_spacing)
-            elif isinstance(frequency.rf, RadioFreqRange):
-                frequency.bb = BasebandFreqRange(lo=frequency_to_baseband(frequency.rf.lo,
-                                                                          self.center_freq,
-                                                                          self.channel_spacing),
-                                                 hi=frequency_to_baseband(frequency.rf.hi,
-                                                                          self.center_freq,
-                                                                          self.channel_spacing))
-            else:
-                logging.error(f'invalid frequency: {frequency}')
+            frequency.calculate_baseband(
+                self.center_freq, self.channel_spacing)
+
 
     def get_label(self, rf: float) -> str | None:
         '''
@@ -286,81 +422,22 @@ class FrequencyManager:
         '''
         range_label: str | None = None
         for freq_entry in self.frequencies:
-            if isinstance(freq_entry.rf, float):
-                if freq_entry.rf == rf and freq_entry.label is not None:
+            if freq_entry.is_single:
+                if freq_entry.single == rf:
                     return freq_entry.label
-            elif isinstance(freq_entry.rf, RadioFreqRange):
-                if freq_entry.rf.lo <= rf <= freq_entry.rf.hi:
+            else:
+                if freq_entry.lo <= rf <= freq_entry.hi:
                     range_label = freq_entry.label
 
         return range_label
 
-async def main() -> None:
 
-    file = Path('./frequencies-example.yaml')
-    channel_spacing = 5000
-    config = FrequencyConfiguration(file_name=file, disable_lockout=False, disable_priority=False)
-    frequency_manager = FrequencyManager(config, channel_spacing)
-    await frequency_manager.load()
+async def main() -> None:  # pragma: no cover
 
-    print(f'Frequencies added: {len(frequency_manager.frequencies)}')
+    print('For testing this module use pytest')
 
-    # invalid range
-    try:
-        RadioFreqRange(lo=500, hi=400)
-    except ValueError:
-        print('Got the expected error for upper frequency less than lower frequency')
 
-    # add a single frequency
-    frequency = 500.0
-    label = 'Test frequency'
-    await frequency_manager.add(frequency, {'label': label, 'locked': True})
-
-    added_frequency = frequency_manager.frequencies[-1]
-
-    print(added_frequency)
-
-    if added_frequency.rf == frequency:
-        print('Frequency was added as expected')
-    else:
-        print('Frequency was NOT added (unexpected result)')
-
-    if added_frequency.label == label:
-        print('Frequency label was added as expected')
-    else:
-        print('Frequency label was NOT added (unexpected result)')
-
-    frequency_manager.set_center(int(frequency*1E6))   # set the baseband frequencies
-    if frequency_manager.frequencies[-1].bb == 0:
-        print('Baseband frequency was set correctly')
-    else:
-        print('Baseband frequency was NOT set correctly (unexpected result)')
-
-    # check if locked out
-    if frequency_manager.locked_out(0):
-        print('Frequency was locked out as expected')
-    else:
-        print('Frequency was NOT locked out (unexpected result)')
-
-    # testing frequency range
-    lo = 400.0
-    hi = 500.0
-    frequency_range = RadioFreqRange(lo=lo, hi=hi)
-    try:
-        await frequency_manager.add(frequency_range, {'locked': True, 'priority': True})
-    except NotImplementedError:
-        print('Got the expected error for frequency range')
-    except:
-        print('Got an unexpected error for frequency range')
-
-    # frequency_manager.set_center(int(lo*1E6))   # set the baseband frequencies
-    # # check if locked out
-    # if frequency_manager.locked_out(0):
-    #     print('Frequency was locked out by a range as expected')
-    # else:
-    #     print('Frequency was NOT locked out by a range (unexpected result)')
-
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
 
     import asyncio
 

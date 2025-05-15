@@ -131,7 +131,7 @@ class CLParser(object):
 
         parser.add_argument("-F", "--frequencies", type=Path,
                           dest="frequency_file_name",
-                          default="",
+                          default=None,
                           help="YAML file containing frequencies and ranges in Mhz")
 
         parser.add_argument("--disable-lockout", action="store_true",
@@ -272,8 +272,9 @@ class CLParser(object):
         self.play = bool(options.play)
         self.auto_priority = bool(options.auto_priority)
 
+        file_name = Path(options.frequency_file_name) if options.frequency_file_name else None
         self.frequency_configuration = FrequencyConfiguration(
-            file_name=Path(options.frequency_file_name),
+            file_name=file_name,
             disable_lockout=bool(options.disable_lockout),
             disable_priority=bool(options.disable_priority)
         )

@@ -1,0 +1,6 @@
+frequencies:
+  - label: "lo needs to be smaller that hi"
+    lo: 450.0
+    hi: 430.0
+    locked: true
+    priority: true
