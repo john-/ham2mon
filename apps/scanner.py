@@ -168,6 +168,8 @@ class Scanner(object):
         await self._assign_channels_to_demodulators(self._channels)
 
         self.channels = self._channels
+        # logging.debug(f'{self._channels=}')
+
 
     def _get_raw_channels(self) -> NDArray:
         # Grab the FFT data, set threshold, and estimate baseband channels
