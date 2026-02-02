@@ -1,0 +1,6 @@
+frequencies:
+  -label: "Needs to have a space after the dash"
+    lo: 450.0
+    hi: 470.0
+    locked: true
+    priority: true

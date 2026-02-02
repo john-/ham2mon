@@ -1,0 +1,4 @@
+frequencies:
+  - label: "Invalid lockout"
+    single: 460.15
+    locked: e

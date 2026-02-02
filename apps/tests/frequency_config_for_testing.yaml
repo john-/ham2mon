@@ -1,0 +1,16 @@
+frequencies:
+  - label: "Frequency before range"
+    single: 454.0
+    priority: 3
+  - label: "A frequency range"
+    lo: 450.0
+    hi: 470.0
+    locked: true
+    priority: 2
+  - label: "Frequency after range"
+    single: 460.15
+    priority: 3
+  - label: "Priority range"
+    lo: 120.0
+    hi: 130.0
+    priority: 2

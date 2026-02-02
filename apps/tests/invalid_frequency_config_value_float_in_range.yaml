@@ -1,0 +1,5 @@
+frequencies:
+  - label: "Frequencies need to be floats"
+    lo: d450.0
+    hi: 470.0
+    locked: true

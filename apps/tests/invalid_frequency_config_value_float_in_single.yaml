@@ -1,0 +1,4 @@
+frequencies:
+  - label: "Invalid float in single"
+    single: s460.15
+    priority: 1
