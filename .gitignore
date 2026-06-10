@@ -1,2 +1,5 @@
 .vscode
 .coverage
+.antigravitycli
+.venv/
+wav/

@@ -190,10 +190,15 @@ class Receiver(gr.top_block):
                 self.connect(self.src, demodulator, (add_ff, idx))
 
             # Audio sink
-            audio_sink = audio.sink(audio_rate)
-
-            # Connect the summed outputs to the audio sink
-            self.connect(add_ff, audio_sink)
+            try:
+                audio_sink = audio.sink(audio_rate)
+                # Connect the summed outputs to the audio sink
+                self.connect(add_ff, audio_sink)
+            except RuntimeError as error:
+                logging.warning(f"Could not initialize audio sink (speaker output disabled): {error}")
+                # Fall back to null sink to prevent application crash
+                null_sink = blocks.null_sink(gr.sizeof_float)
+                self.connect(add_ff, null_sink)
         else:
             # Just connect each demodulator to the receiver source
             for demodulator in self.demodulators:

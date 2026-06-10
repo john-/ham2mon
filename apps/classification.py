@@ -16,10 +16,24 @@ from typing import Tuple, Dict, Literal, Optional
 
 from dataclasses import dataclass
 
+HAS_TENSORFLOW = True
+tensorflow_error = None
 try:
-    import tensorflow as tf
+    import tensorflow as tf  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 except ImportError as error:
-    raise Exception(f'tensorflow module did not load ({error})')
+    HAS_TENSORFLOW = False
+    tensorflow_error = error
+    class DummyTensor:
+        pass
+    class DummyIO:
+        pass
+    class DummyAudio:
+        pass
+    class Dummy:
+        Tensor = DummyTensor
+        io = DummyIO
+        audio = DummyAudio
+    tf = Dummy()
 
 # stops log spamming for a harmless debug message
 logging.getLogger("h5py").setLevel(logging.INFO)
@@ -44,7 +58,10 @@ class Classifier(object):
 
         if all(value is False for value in self.params.wanted.values()):
             raise ClassificationNotWanted()
-        
+
+        if not HAS_TENSORFLOW:
+            raise Exception(f'tensorflow module did not load ({tensorflow_error})')
+
         path = Path(f'{self.params.model_file_name}')
 
         try:
@@ -53,7 +70,7 @@ class Classifier(object):
             logging.info(f'Model loaded: {path.resolve()}')
         except:
             raise
-        
+
     def load_model(self, path: Path) -> None:
         self.model = tf.lite.Interpreter(model_path=path.absolute().as_posix())
         self.model.allocate_tensors()
@@ -67,7 +84,7 @@ class Classifier(object):
 
         wanted = detected_as if detected_as and self.params.wanted[detected_as] else None
         return wanted, detected_as
-        
+
     # convert the waveform into a spectrogram
     def get_spectrogram(self, file: str) -> tf.Tensor:
 
@@ -133,7 +150,7 @@ class Classifier(object):
         self.model.invoke()
 
         prediction = self.model.get_tensor(self.output_details[0]['index'])
-        
+
         types = ['V', 'D', 'S']
 
         # this will extract probsbilties for each of the labels
@@ -142,7 +159,7 @@ class Classifier(object):
         #     predictions[types[index[0]]] = round(float(a_pred), 3)
 
         return types[np.argmax(prediction[0])]
-    
+
 def main():
     """Test the classifier
 
