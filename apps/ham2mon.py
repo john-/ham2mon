@@ -6,6 +6,26 @@ Created on Fri Jul  3 13:38:36 2015
 @author: madengr
 """
 
+# ==============================================================================
+# ROOT CAUSE WORKAROUND:
+# TensorFlow (imported by classifier via h2m_parser/scanner) spawns C++ worker
+# threads. By default, these threads inherit the main thread's signal mask.
+# If SIGWINCH is unblocked, the OS kernel delivers window resize signals to
+# TensorFlow's C++ threads instead of Python's main thread. Because those C++
+# threads lack a Python interpreter state (PyThreadState) and do not run Python
+# bytecodes, the signal gets swallowed/lost, preventing curses from resizing.
+#
+# To address this, we block SIGWINCH on the main thread at startup. All spawned
+# background C++ threads will inherit this blocked mask and never receive SIGWINCH.
+# We then use a dedicated background Python thread running sigwait() to capture
+# the blocked SIGWINCH synchronously and forward it back to Python's asyncio loop.
+# ==============================================================================
+import signal
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGWINCH})
+
+import curses
+import shutil
+import threading
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper
 import cursesgui
@@ -23,30 +43,85 @@ class MyDisplay():
 
     def __init__(self, stdscr: "_curses._CursesWindow") -> None:
         self.stdscr = stdscr
+        self.resize_pending = False
 
     async def run(self) -> None:
         curs_set(0)
         self.stdscr.nodelay(True)
+        self.stdscr.keypad(True)
+
+        # Get the running event loop so the background signal listener can schedule callbacks on it
+        loop = asyncio.get_running_loop()
+
+        def signal_listener():
+            while True:
+                # Synchronously wait for SIGWINCH to be received by the process.
+                # Since SIGWINCH is blocked on all threads, the OS delivers it to sigwait.
+                signal.sigwait({signal.SIGWINCH})
+                # Safely post the resize event to the asyncio event loop thread
+                loop.call_soon_threadsafe(self.trigger_resize)
+
+        # Start the background signal listener thread
+        threading.Thread(target=signal_listener, daemon=True).start()
 
         self.scanner = await self.init_scanner()
 
         await self.make_display()
 
         while True:
-            char = self.stdscr.getch()
+            try:
+                char = self.stdscr.getch()
+            except curses.error:
+                char = ERR
 
             if char == ord('Q'):
                 break
-            if char == ERR:
-                await asyncio.sleep(0.1)
-            elif char == KEY_RESIZE:
-                await self.make_display()
-            else:
+
+            # Get actual terminal size
+            try:
+                size = shutil.get_terminal_size()
+                lines, cols = size.lines, size.columns
+            except Exception:
+                lines, cols = self.stdscr.getmaxyx()
+
+            curr_lines, curr_cols = self.stdscr.getmaxyx()
+            size_changed = (lines != curr_lines or cols != curr_cols)
+
+            # Handle resize event if caught by Python signal listener thread, native curses KEY_RESIZE, or size change
+            if self.resize_pending or char == KEY_RESIZE or size_changed:
+                self.resize_pending = False
+
+                if size_changed:
+                    try:
+                        curses.resizeterm(lines, cols)
+                    except Exception:
+                        pass
+
+                    # Clear stdscr to wipe old borders/layout (takes effect on the next refresh)
+                    self.stdscr.clear()
+
+                    # Explicitly release references to old window wrappers to allow garbage collection
+                    self.specwin = None
+                    self.chanwin = None
+                    self.lockoutwin = None
+                    self.rxwin = None
+
+                    # Force Python's GC to run immediately to trigger window deallocators (delwin)
+                    import gc
+                    gc.collect()
+
+                    await self.make_display()
+
+            elif char != ERR:
                 await self.handle_char(char)
 
             await self.cycle()
 
         await self.scanner.clean_up()
+
+    def trigger_resize(self):
+        """Called by the background thread to signal that the window was resized."""
+        self.resize_pending = True
 
     async def make_display(self) -> None:
         """Start scanner with GUI interface
@@ -91,10 +166,22 @@ class MyDisplay():
         self.specwin.threshold_db = self.scanner.threshold_db
 
         self.chanwin.draw_frame()
+        self.chanwin.win.noutrefresh()
         self.lockoutwin.draw_frame()
+        self.lockoutwin.win.noutrefresh()
         self.rxwin.draw_frame()
+        self.rxwin.win.noutrefresh()
+
+        # Touch all windows to force ncurses to completely redraw them, preventing graphic glitches
+        self.stdscr.touchwin()
+        self.specwin.win.touchwin()
+        self.chanwin.win.touchwin()
+        self.lockoutwin.win.touchwin()
+        self.rxwin.win.touchwin()
 
         self.stdscr.refresh()
+        self.stdscr.nodelay(True)
+        self.stdscr.keypad(True)
 
     async def cycle(self) -> None:
         # Initiate a scan cycle

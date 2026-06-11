@@ -703,7 +703,7 @@ class RxWindow(object):
         text = self.demod_map[self.type_demod]
         self.type_demod_field.set(text)
 
-        file_name = self.frequency_file_name.name if self.frequency_file_name else ""
+        file_name = self.frequency_file_name.name if self.frequency_file_name else "none"
         self.frequency_file_name_field.set(file_name)
 
         self.channel_log_type_field.set(self.channel_log_type)
