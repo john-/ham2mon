@@ -4,6 +4,8 @@ from frequency_manager import (
 )
 from pathlib import Path
 
+TEST_DIR = Path(__file__).parent
+
 # To enable debug log, see pytest.ini and uncomment the "log_cli = true" line
 
 CHANNEL_SPACING = 5000
@@ -27,8 +29,7 @@ async def fm_empty() -> FrequencyManager:
 @pytest.fixture
 async def fm_with_entries() -> FrequencyManager:
 
-    config = FrequencyConfiguration(file_name=Path(
-        "tests/frequency_config_for_testing.yaml"), disable_lockout=False, disable_priority=False)
+    config = FrequencyConfiguration(file_name=TEST_DIR / "frequency_config_for_testing.yaml", disable_lockout=False, disable_priority=False)
     channel_spacing = CHANNEL_SPACING
 
     frequency_manager = FrequencyManager(config, channel_spacing)
@@ -57,26 +58,25 @@ async def test_process_frequencies_data():
 
 
 @pytest.mark.parametrize("file, expected_exception, message", [
-    ("tests/frequency_config_not_found.yaml",
+    (TEST_DIR / "frequency_config_not_found.yaml",
      FileNotFoundError, 'Frequency file does not exist'),
-    ("tests/invalid_frequency_config_format.yaml",
+    (TEST_DIR / "invalid_frequency_config_format.yaml",
      Exception, 'Invalid yaml frequency file'),
-    ("tests/invalid_frequency_config_value_range.yaml",
+    (TEST_DIR / "invalid_frequency_config_value_range.yaml",
      ValueError, 'must be larger than'),
-    ("tests/invalid_frequency_config_invalid_priority.yaml",
+    (TEST_DIR / "invalid_frequency_config_invalid_priority.yaml",
      ValueError, 'Priority must be an integer >= 1'),
-    ("tests/invalid_frequency_config_invalid_lockout.yaml",
+    (TEST_DIR / "invalid_frequency_config_invalid_lockout.yaml",
      ValueError, 'Locked must be a boolean'),
-    ("tests/invalid_frequency_config_value_float_in_range.yaml",
+    (TEST_DIR / "invalid_frequency_config_value_float_in_range.yaml",
      ValueError, 'frequency must be a float'),
-    ("tests/invalid_frequency_config_value_float_in_single.yaml",
+    (TEST_DIR / "invalid_frequency_config_value_float_in_single.yaml",
      ValueError, 'frequency must be a float'),
-    ("tests/invalid_frequency_config_no_frequency.yaml",
+    (TEST_DIR / "invalid_frequency_config_no_frequency.yaml",
      ValueError, 'Frequency must be specified as single or range'),
 ])
 async def test_file_format_conditions(file, expected_exception, message):
-    config = FrequencyConfiguration(file_name=Path(
-        file), disable_lockout=False, disable_priority=False)
+    config = FrequencyConfiguration(file_name=file, disable_lockout=False, disable_priority=False)
     with pytest.raises(expected_exception, match=message):
         await FrequencyManager(config, CHANNEL_SPACING).load()
 

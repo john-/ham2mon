@@ -1,4 +1,4 @@
-﻿# HAM2MON
+# HAM2MON
 This is a GNU Radio (GR) based SDR scanner with a Curses interface, primarily meant for monitoring amateur radio narrow-band FM modulation and air-band AM modulation.  It should work with any GrOsmoSDR source capable of at least 1 Msps.  Unlike conventional radio scanners that lock and demodulate a single channel, this SDR scanner can demodulate and record audio from N channels in parallel within the digitizing bandwidth.  The N (number of) channels is basically just limited by processor speed.  A video detailing the project may be found here:
 
 http://youtu.be/BXptQFSV8E4
@@ -84,18 +84,77 @@ madengr:
 - AM demodulation
 - Priority channels
 
+## Installation and Setup (using uv)
+
+This application uses the [uv](https://github.com/astral-sh/uv) package manager to manage virtual environments and dependencies.
+
+> [!IMPORTANT]
+> **Requirement to use Host System Python Packages:**
+> Core hardware-interface libraries like `gnuradio` and `gr-osmosdr` are compiled C++ libraries bound to hardware drivers, and are **not** available on PyPI. As a result, they **must** be installed at the host system/OS level (via your system package manager), and the virtual environment must be configured to inherit them.
+>
+> To do this, you **must** tell `uv` to use the host system's Python interpreter (via the `--python /usr/bin/python3` flag). Otherwise, `uv` may download its own managed Python version which will cause binary ABI incompatibilities and fail to load your system-installed libraries.
+
+### Step-by-Step Setup
+
+1. **Install Core System Dependencies:**
+   Ensure the core GNU Radio and Osmocom SDR frameworks are installed on your host system:
+
+    ```bash
+    sudo apt install gnuradio gr-osmosdr
+    ```
+
+    _Note: `gr-osmosdr` is a mandatory dependency as it provides the unified source abstraction block used to capture and tune sample streams._
+
+2. **Install Hardware-Specific SDR Drivers (Required for physical SDRs):**
+   Install the driver backends matching your physical hardware to allow `gr-osmosdr` to communicate with your device (e.g., on Debian/Ubuntu):
+    - **RTL-SDR:** `sudo apt install rtl-sdr`
+    - **USRP / Ettus:** `sudo apt install uhd-host`
+    - **HackRF:** `sudo apt install hackrf`
+    - **Airspy:** `sudo apt install airspy`
+
+3. **Create a System-Aware Virtual Environment:**
+   Initialize a virtual environment that is allowed to access the system's global site-packages. **Crucial:** You must specify your system Python interpreter (e.g., `--python /usr/bin/python3`) so that `uv` targets the interpreter version matching your system-installed libraries:
+
+    ```bash
+    uv venv --system-site-packages --python /usr/bin/python3
+    ```
+
+4. **Install and Sync Python Dependencies:**
+   Install remaining Python-only dependencies (like `numpy`, `PyYAML`, and `requests`) defined in [pyproject.toml](file:///library/pub/dev/ham2mon/pyproject.toml):
+
+    ```bash
+    uv sync
+    ```
+
+    _(To use the optional audio classification features, install with the tensorflow extra: `uv sync --extra tensorflow`)_
+
+5. **Configure Volk for Performance Optimization (Recommended):**
+   GNU Radio uses the Volk (Vector Optimized Library of Kernels) library to perform accelerated SIMD calculations. You can profile your CPU to select the fastest mathematical kernels:
+    ```bash
+    volk_profile
+    ```
+    _Note: This benchmark runs for several minutes and generates a configuration file at `~/.volk/volk_config`. It is highly recommended to run this to reduce CPU utilization._
+
+### How to Run the Application
+
+Prefix all commands with `uv run apps/ham2mon.py` (which runs the script using the interpreter and libraries inside the system-aware virtual environment):
+
+```bash
+uv run apps/ham2mon.py [options]
+```
+
 ## Console Operation:
 The following is an example of the option switches for UHD with NBFM demodulation, although omission of any will use default values (shown below) that are optimal for the B200:
 
-./ham2mon.py -a "uhd" -n 8 -d 0 -f 146 -r 4E6 -g 30 -s -60 -v 0 -t 10 -w
+uv run apps/ham2mon.py -a "uhd" -n 8 -d 0 -f 146 -r 4E6 -g 30 -s -60 -v 0 -t 10 -w
 
 The following is an example of the option switches for UHD with AM demodulation, primarily meant for VHF air band reception.  Note the squelch has been lowered 10 dB to aid with weak AM detection:
 
-./ham2mon.py -a "uhd" -n 8 -d 1 -f 135 -r 4E6 -g 30 -s -70 -v 0 -t 10 -w
+uv run apps/ham2mon.py -a "uhd" -n 8 -d 1 -f 135 -r 4E6 -g 30 -s -70 -v 0 -t 10 -w
 
 The following is an example of the option switches for RTL2832U.  Note the sample rate, squelch, and threshold have changed to reflect the reduced (8-bit) dynamic range of the RTL dongles compared to Ettus SDRs.  In addition, these devices have poor IMD and image suppression, so strong signals may cause false demodulator locks:
 
-./ham2mon.py -a "rtl" -n 4 -f 145 -r 2E6 -g 20 -s -40 -v 0 -t 30 -w
+uv run apps/ham2mon.py -a "rtl" -n 4 -f 145 -r 2E6 -g 20 -s -40 -v 0 -t 30 -w
 
 Note that sometimes default RTL kernel driver (for receiving dvb) must be disabled.  Google "rtl sdr blacklist" to read more about this issue, or just do this:
 
@@ -103,7 +162,7 @@ sudo rmmod dvb_usb_rtl28xxu
 
 Example of reading from an IQ file:
 
-./ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,freq=466E6" -r 8E6 -w
+uv run apps/ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,freq=466E6" -r 8E6 -w
 
 ## GUI Controls:
 `t/r = Detection threshold +/- 5 dB. (T/R for +/- 1dB)`
@@ -259,7 +318,7 @@ There are two timeouts.  If there is no activity on a channel the scanner will m
 
 An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) classified as voice 2) at least 2 seconds long 3) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
 
-`./ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60`
+uv run apps/ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60
 
 When range scanning, the RECEIVER section will show current step, number of steps and the percent complete.
 
@@ -368,22 +427,29 @@ Example recording with airspy:
 
 This can then be replayed in ham2mon:
 
-`./ham2mon.py -a "file=case1.dump,rate=3E6,repeat=false,throttle=true,freq=460.4E6" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3`
+```bash
+uv run apps/ham2mon.py -a "file=case1.dump,rate=3E6,repeat=false,throttle=true,freq=460.4E6" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3
+```
 
 ### Unit testing
 
-Example:
-```
-cd ham2mon/apps
-python -m pytest tests/test_frequency_manager.py
-coverage run -m pytest -s tests/test_frequency_manager.py
-coverage report frequency_manager.py
-coverage html
+Unit tests can be executed from the root directory or by changing to the `apps` directory with `uv`:
+
+```bash
+# Run tests using the configured pythonpath from the root:
+uv run pytest apps/tests/test_frequency_manager.py
+
+# Run tests and coverage by targeting the apps directory:
+uv --directory apps run pytest tests/test_frequency_manager.py
+uv --directory apps run coverage run -m pytest -s tests/test_frequency_manager.py
+uv --directory apps run coverage report frequency_manager.py
+uv --directory apps run coverage html
 ```
 
 ### Module testing
-Modules can be tested by executing the main module directly.  For example:
-```
-cd ham2mon/apps
-python scanner.py
+
+Modules can be tested by executing the main module directly:
+
+```bash
+uv --directory apps run python scanner.py -a "rtl" -f 145
 ```

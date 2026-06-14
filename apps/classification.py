@@ -12,14 +12,10 @@ Code is copied from:
 from pathlib import Path
 import numpy as np
 import logging
-from typing import Tuple, Dict, Literal, Optional
+from typing import Dict, Literal, Any, Optional
 
 from dataclasses import dataclass
 
-try:
-    import tensorflow as tf
-except ImportError as error:
-    raise Exception(f'tensorflow module did not load ({error})')
 
 # stops log spamming for a harmless debug message
 logging.getLogger("h5py").setLevel(logging.INFO)
@@ -35,6 +31,13 @@ class ClassifierParams:
 class ClassificationNotWanted(Exception):
     pass
 
+def _load_tensorflow():
+    try:
+        import tensorflow as tf  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
+        return tf
+    except ImportError as error:
+        raise ImportError(f'tensorflow module did not load ({error})') from error
+
 class Classifier(object):
 
     def __init__(self, params: ClassifierParams, audio_rate: int):
@@ -44,36 +47,36 @@ class Classifier(object):
 
         if all(value is False for value in self.params.wanted.values()):
             raise ClassificationNotWanted()
-        
+
+        self.tf = _load_tensorflow()
+
         path = Path(f'{self.params.model_file_name}')
 
-        try:
-            path.resolve(strict=True)
-            self.load_model(path)
-            logging.info(f'Model loaded: {path.resolve()}')
-        except:
-            raise
-        
+        path.resolve(strict=True)
+        self.load_model(path)
+        logging.info(f'Model loaded: {path.resolve()}')
+
     def load_model(self, path: Path) -> None:
+        tf = self.tf
         self.model = tf.lite.Interpreter(model_path=path.absolute().as_posix())
         self.model.allocate_tensors()
         self.input_details = self.model.get_input_details()
         self.output_details = self.model.get_output_details()
 
-    def is_wanted(self, file: str) -> Tuple[bool, str]:
+    def is_wanted(self, file: str) -> tuple[bool, Optional[Literal['V', 'D', 'S']]]:
 
         spectrogram = self.get_spectrogram(file)
         detected_as = self.predict(spectrogram)
 
-        wanted = detected_as if detected_as and self.params.wanted[detected_as] else None
+        wanted = bool(detected_as and self.params.wanted[detected_as])
         return wanted, detected_as
-        
-    # convert the waveform into a spectrogram
-    def get_spectrogram(self, file: str) -> tf.Tensor:
 
-        audio_binary: tf.Tensor = tf.io.read_file(file)
+    # convert the waveform into a spectrogram
+    def get_spectrogram(self, file: str) -> Any:
+        tf = self.tf
+        audio_binary = tf.io.read_file(file)
         try:
-            waveform: tf.Tensor = self.decode_audio(audio_binary)
+            waveform = self.decode_audio(audio_binary)
         except Exception as error:
             logging.error(f'could not decode audio (try "-b 16" option or disable classification): {error}')
             raise
@@ -98,18 +101,18 @@ class Classifier(object):
         #logging.debug('length: %d [ start: %d middle: %d end: %d]', tf.size(waveform).numpy(), start, middle, end)
 
         # Padding for files with less than 16000 samples (2 seconds of 8 Khz sample rate)
-        zero_padding: tf.Tensor = tf.zeros([target_samples] - tf.shape(waveform), dtype=tf.float32)
+        zero_padding = tf.zeros([target_samples] - tf.shape(waveform), dtype=tf.float32)
 
         # Concatenate audio with padding so that all audio clips will be of the
         # same length
         waveform = tf.cast(waveform, tf.float32)
-        equal_length: tf.Tensor = tf.concat([waveform, zero_padding], 0)
+        equal_length = tf.concat([waveform, zero_padding], 0)
         spectrogram = tf.signal.stft(
             equal_length, frame_length=255, frame_step=128)
 
         spectrogram = tf.abs(spectrogram)
 
-        spectro: tf.Tensor = []
+        spectro = []
         spectro.append(spectrogram.numpy())
         # logging.debug(f'{spectro =}')
         spectro = np.expand_dims(spectro, axis=-1) # TODO:  what is this dimension for?
@@ -117,11 +120,12 @@ class Classifier(object):
 
         return spectro
 
-    def decode_audio(self, audio_binary: tf.Tensor) -> tf.Tensor:
+    def decode_audio(self, audio_binary: Any) -> Any:
+        tf = self.tf
         audio, _ = tf.audio.decode_wav(audio_binary)
         return tf.squeeze(audio, axis=-1)
 
-    def predict(self, spectrogram: tf.Tensor) -> str:
+    def predict(self, spectrogram: Any) -> Optional[Literal['V', 'D', 'S']]:
         if spectrogram is None:
             return None
 
@@ -133,8 +137,8 @@ class Classifier(object):
         self.model.invoke()
 
         prediction = self.model.get_tensor(self.output_details[0]['index'])
-        
-        types = ['V', 'D', 'S']
+
+        types: tuple[Literal['V', 'D', 'S'], ...] = ('V', 'D', 'S')
 
         # this will extract probsbilties for each of the labels
         # predictions = {}
@@ -142,7 +146,7 @@ class Classifier(object):
         #     predictions[types[index[0]]] = round(float(a_pred), 3)
 
         return types[np.argmax(prediction[0])]
-    
+
 def main():
     """Test the classifier
 
@@ -156,7 +160,7 @@ def main():
                 'D': True,
                 'S': True
         },
-        model_file_name='model/model_1.tflite'
+        model_file_name=Path('model/model_1.tflite')
     )
 
     try:
@@ -164,9 +168,9 @@ def main():
     except Exception as error:
         raise Exception(f'Could not create classifier ({error})')
 
-    print('should be voice (V) got ' + classifier.is_wanted("test/voice.wav")[1])
-    print('should be data (D) got ' + classifier.is_wanted("test/data.wav")[1])
-    print('should be skip (S) got ' + classifier.is_wanted("test/skip.wav")[1])
+    print(f'should be voice (V) got {classifier.is_wanted("test/voice.wav")[1]}')
+    print(f'should be data (D) got {classifier.is_wanted("test/data.wav")[1]}')
+    print(f'should be skip (S) got {classifier.is_wanted("test/skip.wav")[1]}')
 
 if __name__ == '__main__':
     try:
