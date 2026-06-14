@@ -168,11 +168,9 @@ class SpectrumWindow(object):
             self.min_db += 5
         elif keyb == ord('q'):
             self.min_db -= 5
+        else:
+            pass
         return False
-
-    def touch_and_refresh(self):
-        self.win.touchwin()
-        self.win.noutrefresh()
 
 
 class ChannelWindow(object):
@@ -290,10 +288,6 @@ class ChannelWindow(object):
         self.win.leaveok(1)
 
         # Update virtual window
-        self.win.noutrefresh()
-
-    def touch_and_refresh(self):
-        self.win.touchwin()
         self.win.noutrefresh()
 
 
@@ -482,10 +476,6 @@ class LockoutWindow(object):
             return True
         else:
             return False
-
-    def touch_and_refresh(self):
-        self.win.touchwin()
-        self.win.noutrefresh()
 
 
 class RxWindow(object):
@@ -713,7 +703,7 @@ class RxWindow(object):
         text = self.demod_map[self.type_demod]
         self.type_demod_field.set(text)
 
-        file_name = self.frequency_file_name.name if self.frequency_file_name else "none"
+        file_name = self.frequency_file_name.name if self.frequency_file_name else ""
         self.frequency_file_name_field.set(file_name)
 
         self.channel_log_type_field.set(self.channel_log_type)
@@ -878,10 +868,6 @@ class RxWindow(object):
             return True
         else:# pylint: disable=too-many-return-statements
             return False
-
-    def touch_and_refresh(self):
-        self.win.touchwin()
-        self.win.noutrefresh()
 
 def setup_screen(screen):
     """Sets up screen

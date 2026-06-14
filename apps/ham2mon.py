@@ -6,15 +6,6 @@ Created on Fri Jul  3 13:38:36 2015
 @author: madengr
 """
 
-# Workaround: TensorFlow's background threads swallow SIGWINCH because they lack a Python interpreter state.
-# We block SIGWINCH at startup so threads inherit the mask, and use sigwait() in a listener thread to forward it.
-import signal
-signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGWINCH})
-
-import gc
-import curses
-import shutil
-import threading
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper
 import cursesgui
@@ -32,85 +23,30 @@ class MyDisplay():
 
     def __init__(self, stdscr: "_curses._CursesWindow") -> None:
         self.stdscr = stdscr
-        self.resize_event = asyncio.Event()
-        self._listener_started = False
 
     async def run(self) -> None:
         curs_set(0)
         self.stdscr.nodelay(True)
-        self.stdscr.keypad(True)
-
-        if not self._listener_started:
-            self._listener_started = True
-            # Get the running event loop so the background signal listener can schedule callbacks on it
-            loop = asyncio.get_running_loop()
-
-            def signal_listener():
-                while True:
-                    # Synchronously wait for SIGWINCH to be received by the process.
-                    # Since SIGWINCH is blocked on all threads, the OS delivers it to sigwait.
-                    signal.sigwait({signal.SIGWINCH})
-                    # Safely notify the asyncio event loop thread-safely
-                    loop.call_soon_threadsafe(self.resize_event.set)
-
-            # Start the background signal listener thread
-            threading.Thread(target=signal_listener, daemon=True).start()
 
         self.scanner = await self.init_scanner()
 
         await self.make_display()
 
         while True:
-            try:
-                char = self.stdscr.getch()
-            except curses.error:
-                char = ERR
+            char = self.stdscr.getch()
 
             if char == ord('Q'):
                 break
-
-            # Get actual terminal size
-            try:
-                size = shutil.get_terminal_size()
-                lines, cols = size.lines, size.columns
-            except Exception:
-                lines, cols = self.stdscr.getmaxyx()
-
-            curr_lines, curr_cols = self.stdscr.getmaxyx()
-            size_changed = (lines != curr_lines or cols != curr_cols)
-
-            # Handle resize event if caught by Python signal listener thread, native curses KEY_RESIZE, or size change
-            if self.resize_event.is_set() or char == KEY_RESIZE or size_changed:
-                self.resize_event.clear()
-
-                if size_changed:
-                    try:
-                        curses.resizeterm(lines, cols)
-                    except Exception as e:
-                        logging.debug("curses.resizeterm failed: %s", e)
-
-                    # Clear stdscr to wipe old borders/layout (takes effect on the next refresh)
-                    self.stdscr.clear()
-
-                    # Explicitly release references to old window wrappers to allow garbage collection
-                    self.specwin = None
-                    self.chanwin = None
-                    self.lockoutwin = None
-                    self.rxwin = None
-
-                    # Force Python's GC to run immediately to trigger window deallocators (delwin)
-                    gc.collect()
-
-                    await self.make_display()
-
-            elif char != ERR:
+            if char == ERR:
+                await asyncio.sleep(0.1)
+            elif char == KEY_RESIZE:
+                await self.make_display()
+            else:
                 await self.handle_char(char)
 
             await self.cycle()
 
         await self.scanner.clean_up()
-
-
 
     async def make_display(self) -> None:
         """Start scanner with GUI interface
@@ -154,29 +90,11 @@ class MyDisplay():
         self.rxwin.classifier_params = PARSER.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
 
-        # Mark standard screen as dirty and refresh it to the virtual screen buffer first
-        self.stdscr.touchwin()
-        self.stdscr.noutrefresh()
-
-        # Touch and refresh the spectrum window. Note that SpectrumWindow draws its frame/border
-        # dynamically inside draw_spectrum during cycle(), so there is no draw_frame() to call here.
-        self.specwin.touch_and_refresh()
-
         self.chanwin.draw_frame()
-        self.chanwin.touch_and_refresh()
-
         self.lockoutwin.draw_frame()
-        self.lockoutwin.touch_and_refresh()
-
         self.rxwin.draw_frame()
-        self.rxwin.touch_and_refresh()
 
-        # Perform the actual physical screen update from the virtual buffer
-        curses.doupdate()
-
-        # Re-apply to stdscr to ensure input mode flags are preserved after screen setup/re-initialization
-        self.stdscr.nodelay(True)
-        self.stdscr.keypad(True)
+        self.stdscr.refresh()
 
     async def cycle(self) -> None:
         # Initiate a scan cycle
