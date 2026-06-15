@@ -13,6 +13,7 @@ import h2m_parser as h2m_parser
 import asyncio
 import errors as err
 import logging
+import logging.handlers
 import traceback
 #from pathlib import Path
 from os.path import realpath, dirname
@@ -208,17 +209,43 @@ if __name__ == '__main__':
         # Do this since curses wrapper won't let parser write to screen
         PARSER = h2m_parser.CLParser()
 
-        if PARSER.debug:
-            dir = realpath(dirname(__file__))
-            logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
-            level=logging.DEBUG, format='%(asctime)s %(message)s')
+        if PARSER.log_dest != 'none':
+            log_level_map = {
+                'debug': logging.DEBUG,
+                'info': logging.INFO,
+                'warn': logging.WARNING,
+                'error': logging.ERROR
+            }
+            level = log_level_map.get(PARSER.log_level, logging.WARNING)
+
+            logger = logging.getLogger()
+            logger.setLevel(level)
+
+            formatter = logging.Formatter('%(asctime)s %(message)s')
+
+            if PARSER.log_dest == 'syslog':
+                syslog_handler = logging.handlers.SysLogHandler(address='/dev/log')
+                syslog_handler.setFormatter(logging.Formatter('ham2mon[%(process)d]: %(message)s'))
+                logger.addHandler(syslog_handler)
+            elif PARSER.log_dest == 'stderr':
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                logger.addHandler(stream_handler)
+            elif PARSER.log_dest == 'file':
+                log_file_path = PARSER.log_file
+                if not log_file_path:
+                    script_dir = realpath(dirname(__file__))
+                    log_file_path = '%s/ham2mon.log' % (script_dir)
+                file_handler = logging.FileHandler(log_file_path, delay=True)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
 
         wrapper(main)
     except KeyboardInterrupt:
         pass
     except RuntimeError as error:
         print("")
-        print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root or with --debug option.")
+        print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root or with --log-level=debug option.")
         print("")
         print(f'RuntimeError: {error=}, {type(error)=}')
         logging.debug(traceback.format_exc())
