@@ -279,8 +279,14 @@ options:
   --file-metadata FILE_METADATA
                         Comma-separated list of metadata fields to include in
                         output filenames (e.g. priority,strength)
-  --debug               Enable debug file with additional information
-                        (ham2mon.log)
+  --log-level {debug,info,warn,error}
+                        Log verbosity level; only has effect if --log-dest is
+                        not 'none' (default: warn)
+  --log-dest {none,file,syslog,stderr}
+                        Log destination (default: none)
+  --log-file LOG_FILE
+                        Log file path when --log-dest is 'file' (default:
+                        script_dir/ham2mon.log)
 ```
 Note: The available gains are hardware specific.  The user interface will list the gains available based on hardware option supplied to ham2mon.
 
@@ -392,7 +398,7 @@ A type may support a target through the `--log_target` option.  In the case of t
 
 An activity log entry is written every 15 seconds (by default).  This can be changed with `--log_active_timeout`.  Set this to 0 to disable activity logging (channel on/off messages will still occur).
 
-If `debug` is selected as logging type than channel events can be viewed when the `--debug` option is also selected on the command line.
+If `debug` is selected as logging type then channel events can be viewed when the `--log-level=debug` option is also selected on the command line.
 
 See [json-server example](doc/json-server_example.md) for one way this can be used.
 
@@ -406,7 +412,7 @@ If the number of voice transmissions is less than the number of data/skip transm
 Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.  Therefore, `--model` must also be specified when using auto priority.
 
 ## Logging
-Application logging events are written to `ham2mon.log`.  These are separate from channel logging events (-L option) and are intended for application debugging.
+Application logging events can be configured using the `--log-level` and `--log-dest` options. These are separate from channel logging events (-L option) and are intended for application debugging. By default, logging is disabled (`--log-dest=none`). If enabled with `--log-dest=file`, logs are written to `ham2mon.log` (or a custom path specified with `--log-file`).
 
 ## Audio Classification
 *Note: The classification is not 100% accurate.  There will be both false positives and negatives.*

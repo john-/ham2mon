@@ -206,9 +206,19 @@ class CLParser(object):
                           dest="model_file_name",
                           default=None,
                           help="Classification model file in tflite format")
+        parser.add_argument("--log-level", dest="log_level",
+                          choices=["debug", "info", "warn", "error"],
+                          default="warn",
+                          help="Log verbosity level; only has effect if --log-dest is not 'none' (default: warn)")
 
-        parser.add_argument("--debug", dest="debug", action="store_true",
-                          help="Enable debug file with additional information (ham2mon.log)")
+        parser.add_argument("--log-dest", dest="log_dest",
+                          choices=["none", "file", "syslog", "stderr"],
+                          default="none",
+                          help="Log destination (default: none)")
+
+        parser.add_argument("--log-file", dest="log_file",
+                          type=str, default="",
+                          help="Log file path when --log-dest is 'file' (default: script_dir/ham2mon.log)")
 
         parser.add_argument("--file-metadata", type=str,
                           dest="file_metadata", default="",
@@ -321,7 +331,9 @@ class CLParser(object):
         if voice or data or skip:
             self.record = True
 
-        self.debug = bool(options.debug)
+        self.log_level = options.log_level
+        self.log_dest = options.log_dest
+        self.log_file = options.log_file
 
         self.file_metadata: list[str] = []
         if options.file_metadata:
@@ -375,7 +387,9 @@ def main():
     print("auto_priority:       " + str(parser.auto_priority))
     print("disable_lockout:     " + str(parser.frequency_configuration.disable_lockout))
     print("disable_priority:    " + str(parser.frequency_configuration.disable_priority))
-    print("debug:               " + str(parser.debug))
+    print("log_level:           " + str(parser.log_level))
+    print("log_dest:            " + str(parser.log_dest))
+    print("log_file:            " + str(parser.log_file))
 
 if __name__ == '__main__':
     try:
