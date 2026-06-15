@@ -276,6 +276,9 @@ options:
   --skip                Record voice
   --model MODEL_FILE_NAME
                         Classification model file in tflite format
+  --file-metadata FILE_METADATA
+                        Comma-separated list of metadata fields to include in
+                        output filenames (e.g. priority,strength)
   --debug               Enable debug file with additional information
                         (ham2mon.log)
 ```
@@ -414,9 +417,40 @@ The model file must be specified using the `--model <path>` option.
 
 At least one of the command line options (`--voice`, `--data`, and `--skip`) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode (`-w`) will be automatically enabled.
 
-The classification designator will be added after the frequency (e.g. 460.125_V_1698933610.wav for voice).  Only 16-bit audio is currently supported so enable it with `-b 16`.
+The classification designator will be added after the frequency (e.g. 460.1250_V_20231102_140010.123.wav for voice).  Only 16-bit audio is currently supported so enable it with `-b 16`.
 
 No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the available model.
+
+## Filename Metadata
+
+When writing transmissions to disk (using `-w` or audio classification options), you can customize the output filenames to include optional metadata by specifying the `--file-metadata` option. This option accepts a comma-separated list of metadata fields to include (e.g. `--file-metadata priority,strength`).
+
+Supported metadata fields:
+
+- `priority`: Appends the priority status of the channel.
+  - Manual priorities are formatted as `P1`, `P2`, etc.
+  - Automatic priorities (dynamically added from auto-priority) are formatted as `PA`.
+- `strength`: Appends the average signal strength (mean RSSI) recorded during the active transmission in dB (e.g., `-48dB`).
+  - Note: The raw FFT spectrum power values are automatically calibrated to a standard negative RSSI range (applying a `-70 dB` calibration offset) to align with standard receiver squelch scales.
+
+> [!NOTE]
+> If a requested metadata field is unavailable when the recording is persisted (e.g., if a channel's priority is not configured, or if signal strength data is `None` because the channel was stopped before any signal power stats could be accumulated), the corresponding segment is completely omitted from the output filename. No placeholders are used.
+
+### Filename Format
+
+The metadata fields are appended in a structured sequence using underscores (`_`) as delimiters:
+`<frequency>[_classification][_priority][_strength]_<timestamp>.wav`
+
+Examples:
+
+- Standard (no metadata): `460.1250_20231102_140010.123.wav`
+- With priority requested: `460.1250_P1_20231102_140010.123.wav`
+- With priority and strength requested: `460.1250_P1_-48dB_20231102_140010.123.wav`
+- With auto-priority and strength requested: `460.1250_PA_-45dB_20231102_140010.123.wav`
+- With strength requested but unavailable (e.g. no signal stats): `460.1250_20231102_140010.123.wav`
+
+If audio classification is enabled (e.g., via `--voice`, which adds a classification segment such as `V` or `D`), it will be inserted directly after the frequency:
+- With classification, priority, and strength: `460.1250_V_P1_-48dB_20231102_140010.123.wav`
 
 ## Ham2mon Development
 

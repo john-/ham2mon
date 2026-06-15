@@ -67,7 +67,7 @@ class CLParser(object):
         parser.add_argument("-f", "--freq", type=str, dest="freq_spec",
                           nargs='+', default=["146"],
                           help="Hardware RF center frequency or range in Mhz")
-        
+
         parser.add_argument("--quiet_timeout", type=int,
                           dest="quiet_timeout", default=12,
                           help="Timeout when there is no activity")
@@ -172,7 +172,7 @@ class CLParser(object):
         parser.add_argument("-b", "--bps", type=int, dest="audio_bps",
                           default=16,
                           help="Audio bit depth (bps)")
-        
+
         parser.add_argument("-M", "--max_db", type=float, dest="max_db",
                           default=50,
                           help="Spectrum window max dB for display")
@@ -195,12 +195,12 @@ class CLParser(object):
 
         parser.add_argument("--voice", dest="voice", action="store_true",
                           help="Record voice")
-        
+
         parser.add_argument("--data", dest="data", action="store_true",
                           help="Record voice")
 
         parser.add_argument("--skip", dest="skip", action="store_true",
-                          help="Record voice")  
+                          help="Record voice")
 
         parser.add_argument("--model", type=Path,
                           dest="model_file_name",
@@ -208,7 +208,11 @@ class CLParser(object):
                           help="Classification model file in tflite format")
 
         parser.add_argument("--debug", dest="debug", action="store_true",
-                          help="Enable debug file with additional information (ham2mon.log)")              
+                          help="Enable debug file with additional information (ham2mon.log)")
+
+        parser.add_argument("--file-metadata", type=str,
+                          dest="file_metadata", default="",
+                          help="Comma-separated list of metadata fields to include in output filenames (e.g. priority,strength)")
 
         options = parser.parse_args()
         self.print_help = parser.print_help
@@ -237,7 +241,7 @@ class CLParser(object):
                     if upper_freq:
                         upper_freq = int(float(upper_freq)*1E6)
                 except ValueError as err:
-                    raise Exception(f'Frequencies must be integers: {err}')
+                    parser.error(f'Frequencies must be integers: {err}')
                 range_params.append(FrequencyRangeParams(lower_freq=lower_freq, upper_freq=upper_freq))
             except ValueError:
                 # there is a single value provided
@@ -245,13 +249,13 @@ class CLParser(object):
                     single_freq = int(float(freq_entry)*1E6)
                     single_params.append(FrequencySingleParams(freq=single_freq))
                 except ValueError as err:
-                    raise Exception(f'Frequency must be integers: {err}')
+                    parser.error(f'Frequency must be integers: {err}')
 
         self.frequency_params =  FrequencyGroup(ranges=range_params, singles=single_params,
                                                 sample_rate=self.ask_samp_rate,
                                                 quiet_timeout=int(options.quiet_timeout),
                                                 active_timeout=int(options.active_timeout))
-        
+
         self.gains = [
             { "name": "RF", "value": float(options.rf_gain_db) },
             { "name": "LNA","value": float(options.lna_gain_db) },
@@ -292,7 +296,7 @@ class CLParser(object):
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
-        voice = bool(options.voice)        
+        voice = bool(options.voice)
         data = bool(options.data)
         skip = bool(options.skip)
 
@@ -318,6 +322,16 @@ class CLParser(object):
             self.record = True
 
         self.debug = bool(options.debug)
+
+        self.file_metadata: list[str] = []
+        if options.file_metadata:
+            fields = [f.strip().lower() for f in options.file_metadata.split(',')]
+            valid_fields = {'priority', 'strength'}
+            for field in fields:
+                if field not in valid_fields:
+                    parser.error(f"Unsupported metadata field: '{field}'. Supported fields: priority, strength")
+            self.file_metadata = fields
+
 
 def main():
     """Test the parser"""
@@ -368,4 +382,3 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         pass
-

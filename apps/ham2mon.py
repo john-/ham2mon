@@ -138,13 +138,15 @@ class MyDisplay():
         classifier_params = PARSER.classifier_params
 
         auto_priority = PARSER.auto_priority
+        file_metadata = PARSER.file_metadata
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                                freq_correction, record, frequency_configuration,
                                channel_log_params,
                                play, audio_bps, channel_spacing,
                                frequency_params, min_recording, max_recording,
-                               classifier_params, auto_priority, agc)
+                               classifier_params, auto_priority, agc,
+                               file_metadata=file_metadata)
 
         await scanner.load_frequencies()
         # Set the parameters
@@ -157,7 +159,7 @@ class MyDisplay():
 
     def center_freq_changed(self):
         '''
-        Callback that notifies when the scanner changed 
+        Callback that notifies when the scanner changed
         the center frequency.  This occurs when range scanning.
         '''
         self.rxwin.center_freq = self.scanner.center_freq

@@ -184,6 +184,7 @@ class ChannelMessage(FrequencyInfo):
     file: Optional[str] = None
     classification: Optional[str] = None
     detail: Optional[str] = None
+    signal_db: Optional[int] = None
 
 
 FrequencyList: TypeAlias = list[ConfigFrequency]
@@ -370,6 +371,31 @@ class FrequencyManager:
                         lowest = priority
 
         return lowest
+
+    def get_priority_info(self, bb: int) -> tuple[int | None, bool]:
+        '''
+        Compare the channel to frequency and range priorities and return both
+        the priority level and whether it was automatically assigned.
+
+        Args:
+            bb (int): Baseband frequency of tuned channel
+        '''
+        for frequency in self.frequencies:
+            priority = frequency.get_priority_at(bb)
+            if priority is not None and frequency.single:
+                return priority, frequency.mode == 'add'
+
+        lowest: int | None = None
+        is_auto = False
+        for frequency in self.frequencies:
+            priority = frequency.get_priority_at(bb)
+            if priority is not None and not frequency.single:
+                if lowest is None or priority < lowest:
+                    lowest = priority
+                    is_auto = frequency.mode == 'add'
+
+        return lowest, is_auto
+
 
     def is_higher_priority(self, channel_bb: int, demod_freq: int) -> bool:
         '''
