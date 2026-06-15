@@ -398,28 +398,30 @@ For detail on what is logged including format see the source code for the [chann
 ## Auto Priority
 With the `-P` option, channels that meet specific conditions will automatically be added to the priority list.  Currently, only one algorithm is supported: Voice priority.  With this, those channels that have more voice transmissions than data/skip transmissions will be added to the priority list.
 
-If the number of voice transmissions is less than the number of data/skip transmissions, then the priority flag be reoved for that frequency.  This will override and priorities assigned in the [priority file](#priority-handling).
+If the number of voice transmissions is less than the number of data/skip transmissions, then the priority flag will be removed for that frequency.  This will override any priorities assigned in the [priority file](#priority-handling).
 
-Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.
+Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.  Therefore, `--model` must also be specified when using auto priority.
 
 ## Logging
-Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.
+Application logging events are written to `ham2mon.log`.  These are separate from channel logging events (-L option) and are intended for application debugging.
 
 ## Audio Classification
 *Note: The classification is not 100% accurate.  There will be both false positives and negatives.*
 
-Recorded audio can be classified using a pre-trained model.  The model must be present and the tensorflow python module must be installed.  The model file can be specified with the `--model` and option.
+Recorded audio can be classified using a pre-trained model.  The model is an optional artifact not included in the repository when cloned (see releases).  You must separately download it and add it to your system. The optional tensorflow python module must also be installed (see installation instructions).
 
-The command line options (--voice, --data, and --skip) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode ("-w") will be automatically enabled.
+The model file must be specified using the `--model <path>` option.
 
-The classification designator will be added after the frequency (e.g. 460.125_V_1698933610.wav for voice).  Only 16bps audio is currently supported so enable it with "-b 16".
+At least one of the command line options (`--voice`, `--data`, and `--skip`) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode (`-w`) will be automatically enabled.
 
-No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the provided model.
+The classification designator will be added after the frequency (e.g. 460.125_V_1698933610.wav for voice).  Only 16-bit audio is currently supported so enable it with `-b 16`.
+
+No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the available model.
 
 ## Ham2mon Development
 
 ### End-to-End Testing
-To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it im ham2mon.
+To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it in ham2mon.
 
 Example recording with airspy:
 

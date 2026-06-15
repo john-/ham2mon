@@ -204,7 +204,7 @@ class CLParser(object):
 
         parser.add_argument("--model", type=Path,
                           dest="model_file_name",
-                          default="model/model_1.tflite",
+                          default=None,
                           help="Classification model file in tflite format")
 
         parser.add_argument("--debug", dest="debug", action="store_true",
@@ -299,13 +299,19 @@ class CLParser(object):
         if self.auto_priority:
             voice = True
 
-        self.model_file_name = Path(options.model_file_name)
+        if voice or data or skip:
+            if not options.model_file_name:
+                raise Exception("A model file must be specified (using --model) when classification or auto-priority is enabled.")
+            self.model_file_name = options.model_file_name
+        else:
+            self.model_file_name = None
+
         self.classifier_params = ClassifierParams(
             wanted={'V': voice,
                     'D': data,
                     'S': skip,
             },
-            model_file_name=self.model_file_name.resolve(),
+            model_file_name=self.model_file_name,
         )
 
         if voice or data or skip:
