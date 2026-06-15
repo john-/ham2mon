@@ -80,7 +80,8 @@ class Scanner(object):
                  frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
                  min_recording: float=0, max_recording: float=0,
                  classifier_params: ClassifierParams=None,
-                 auto_priority: bool=False, agc: bool=False):
+                 auto_priority: bool=False, agc: bool=False,
+                 file_metadata: list[str] | None=None):
 
         # Default values
         self.squelch_db = -60
@@ -104,14 +105,20 @@ class Scanner(object):
         self.max_recording = max_recording
         self.xmit_stats: dict[float, ClassificationCount] = {}
         self.auto_priority = auto_priority
+        self.file_metadata = file_metadata if file_metadata is not None else []
+        self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(num_demod)}
 
         self.channel_logger = ChannelLogger.get_logger(channel_log_params)
+
+        self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
 
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
                                        audio_bps, min_recording, classifier_params,
-                                       self.got_channel_activity, agc)
+                                       self.got_channel_activity, agc,
+                                       file_metadata=self.file_metadata,
+                                       get_priority_info=self.frequency_manager.get_priority_info)
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
@@ -130,7 +137,6 @@ class Scanner(object):
         self.step = self.frequency_provider.step
         self.steps = self.frequency_provider.steps
 
-        self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
         # self.frequencies = self.frequency_manager.frequencies
 
         # Start the receiver and wait for samples to accumulate
@@ -160,6 +166,14 @@ class Scanner(object):
         """
 
         raw_channels = self._get_raw_channels()
+
+        # Accumulate signal levels for active demodulators if requested
+        if 'strength' in self.file_metadata:
+            for idx, demodulator in enumerate(self.receiver.demodulators):
+                if demodulator.center_freq != 0:
+                    strength = self._get_signal_strength(demodulator.center_freq)
+                    curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                    self._demod_signal_stats[idx] = (curr_sum + strength, curr_count + 1)
 
         self._channels = self._add_metadata(raw_channels)
 
@@ -197,6 +211,19 @@ class Scanner(object):
 
         return channels
 
+    def _get_signal_strength(self, bb: int) -> float:
+        if self.spectrum is None or len(self.spectrum) == 0:
+            return -100.0
+
+        bin_idx = int(np.round((bb * len(self.spectrum) / self.samp_rate) + len(self.spectrum) / 2))
+        bin_idx = max(0, min(len(self.spectrum) - 1, bin_idx))
+
+        power = self.spectrum[bin_idx]
+        if power <= 0:
+            return -200.0
+
+        return 10.0 * np.log10(power) - 70.0
+
     async def _process_current_demodulators(self, channels: ChannelList) -> None:
 
         the_now = time.time()
@@ -207,13 +234,19 @@ class Scanner(object):
 
             # Stop locked out demodulator (lockout was just added via UI)
             if self.frequency_manager.locked_out(demodulator.center_freq):
-                await demodulator.set_center_freq(0, self.center_freq)
+                curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                self._demod_signal_stats[idx] = (0.0, 0)
+                await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
                 continue
 
             # Stop the demodulator if not being scanned and outside the hang time
             if any(channel.hanging and channel.bb == demodulator.center_freq for channel in channels):
                 if the_now - demodulator.last_heard > self.hang_time:
-                    await demodulator.set_center_freq(0, self.center_freq)
+                    curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                    avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                    self._demod_signal_stats[idx] = (0.0, 0)
+                    await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
             else:
                 demodulator.set_last_heard(the_now)
 
@@ -221,7 +254,10 @@ class Scanner(object):
             if self.max_recording > 0:
                 if time.time() - demodulator.time_stamp >= self.max_recording:
                     # clear the demodulator to reset file
-                    await demodulator.set_center_freq(0, self.center_freq)
+                    curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                    avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                    self._demod_signal_stats[idx] = (0.0, 0)
+                    await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
 
     async def _assign_channels_to_demodulators(self, channels: ChannelList) -> None:
 
@@ -235,9 +271,16 @@ class Scanner(object):
                     demodulator = self.receiver.demodulators[idx]
                     # If channel is higher priority than what is being demodulated
                     if self.frequency_manager.is_higher_priority(channel.bb, demodulator.center_freq):
+                        # Calculate avg_signal for the completed transmission if it was actively running
+                        avg_signal = None
+                        if demodulator.center_freq != 0:
+                            curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                            avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                        self._demod_signal_stats[idx] = (0.0, 0)
+
                         # Assigning channel to empty demodulator
                         await demodulator.set_center_freq(
-                            channel.bb, self.center_freq)
+                            channel.bb, self.center_freq, avg_signal=avg_signal)
                         break
                     else:
                         pass
@@ -426,8 +469,11 @@ class Scanner(object):
 
     async def clean_up(self) -> None:
         # cleanup terminating all demodulators
-        for demod in self.receiver.demodulators:
-            await demod.set_center_freq(0, self.center_freq)
+        for idx, demod in enumerate(self.receiver.demodulators):
+            curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+            avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+            self._demod_signal_stats[idx] = (0.0, 0)
+            await demod.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
 
 
 async def main() -> None:

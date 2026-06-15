@@ -793,3 +793,38 @@ async def test_fail_change_nonexistant_range(fm_empty):
 
     with pytest.raises(ValueError, match='not found in frequencies list'):
         await fm_empty.change(entry)
+
+
+@pytest.mark.asyncio
+async def test_get_priority_info(fm_empty):
+    CENTER_FREQ = 500e6  # 500 MHz
+    fm_empty.set_center(CENTER_FREQ)
+
+    # 1. Add a single frequency with priority 1, mode='add' (auto-priority)
+    await fm_empty.add({'single': 500.01, 'priority': 1, 'label': 'Auto Priority Single', 'mode': 'add'})
+
+    # 2. Add a single frequency with priority 1, normal (not auto)
+    await fm_empty.add({'single': 500.02, 'priority': 1, 'label': 'Priority Single'})
+
+    # 3. Add a range frequency with priority 3
+    await fm_empty.add({'lo': 500.03, 'hi': 500.05, 'priority': 3, 'label': 'Range Priority'})
+
+    # Test single auto-priority: +10 kHz (10000 Hz)
+    p, is_auto = fm_empty.get_priority_info(10000)
+    assert p == 1
+    assert is_auto is True
+
+    # Test single normal priority: +20 kHz (20000 Hz)
+    p, is_auto = fm_empty.get_priority_info(20000)
+    assert p == 1
+    assert is_auto is False
+
+    # Test range priority: +40 kHz (40000 Hz)
+    p, is_auto = fm_empty.get_priority_info(40000)
+    assert p == 3
+    assert is_auto is False
+
+    # Test non-priority channel: +60 kHz (60000 Hz)
+    p, is_auto = fm_empty.get_priority_info(60000)
+    assert p is None
+    assert is_auto is False

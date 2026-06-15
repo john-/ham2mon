@@ -55,7 +55,8 @@ class Receiver(gr.top_block):
                  hw_args: str, freq_correction: int, record: bool, play: bool,
                  audio_bps: int, min_recording: float,
                  classifier_params: ClassifierParams, notify_scanner: Callable,
-                 agc: bool):
+                 agc: bool, file_metadata: list[str] | None = None,
+                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None):
 
         # Call the initialization method from the parent class
         gr.top_block.__init__(self, "Receiver")
@@ -144,12 +145,14 @@ class Receiver(gr.top_block):
         try:
           classifier = Classifier(classifier_params, audio_rate)
         except ClassificationNotWanted:
-            classifier = None   
+            classifier = None
         except Exception as error:
             msg = f'Could not create classifier ({error})'
             logging.error(msg)
             raise Exception(msg)
 
+        self.file_metadata = file_metadata if file_metadata is not None else []
+        self.get_priority_info = get_priority_info
 
         # -----------Flow for Demod--------------
 
@@ -163,23 +166,30 @@ class Receiver(gr.top_block):
                                                         audio_bps,
                                                         min_recording,
                                                         classifier,
-                                                        notify_scanner))
+                                                        notify_scanner,
+                                                        file_metadata=self.file_metadata,
+                                                        get_priority_info=self.get_priority_info))
             elif type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
                                                       audio_bps,
                                                       min_recording,
                                                       classifier,
-                                                      notify_scanner))
+                                                      notify_scanner,
+                                                      file_metadata=self.file_metadata,
+                                                      get_priority_info=self.get_priority_info))
             elif type_demod == 2:
                 self.demodulators.append(TunerDemodWBFM(self.samp_rate,
                                                         audio_rate, record,
                                                         audio_bps,
                                                         min_recording,
                                                         classifier,
-                                                        notify_scanner))
+                                                        notify_scanner,
+                                                        file_metadata=self.file_metadata,
+                                                        get_priority_info=self.get_priority_info))
             else:
                 raise Exception(f'Invalid demodulator type: {type_demod}')
+
 
         if play:
             # Create an adder
@@ -337,7 +347,7 @@ async def main():
         if msg is None:
             return
         print(f'Opened channel {msg.channel-1}')  # channel is a 1 based representation of the demod
-    
+
     receiver = Receiver(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, play, audio_bps,
                         min_recording, classifier_params, print_to_screen, agc)
