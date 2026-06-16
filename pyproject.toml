@@ -13,6 +13,9 @@ dependencies = [
 tensorflow = [
     "tensorflow>=2.10",
 ]
+"ai-edge-litert" = [
+    "ai-edge-litert>=1.0.0",
+]
 
 [dependency-groups]
 dev = [

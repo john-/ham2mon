@@ -120,13 +120,22 @@ This application uses the [uv](https://github.com/astral-sh/uv) package manager 
     ```
 
 4. **Install and Sync Python Dependencies:**
-   Install remaining Python-only dependencies (like `numpy`, `PyYAML`, and `requests`) defined in [pyproject.toml](file:///library/pub/dev/ham2mon/pyproject.toml):
+   Install remaining Python-only dependencies (like `PyYAML`, and `requests`) defined in [pyproject.toml](file:///library/pub/dev/ham2mon/pyproject.toml):
 
     ```bash
     uv sync
     ```
 
-    _(To use the optional audio classification features, install with the tensorflow extra: `uv sync --extra tensorflow`)_
+    _(To use the optional audio classification features, you must install an interpreter runtime. The preferred order is:)_
+
+    * **LiteRT (Recommended):** The modern, lightweight runtime (~17MB). It starts up instantly and has minimal overhead:
+      ```bash
+      uv sync --extra ai-edge-litert
+      ```
+    * **TensorFlow:** The legacy heavyweight runtime (~500MB+). It has a much longer startup/import time:
+      ```bash
+      uv sync --extra tensorflow
+      ```
 
 5. **Configure Volk for Performance Optimization (Recommended):**
    GNU Radio uses the Volk (Vector Optimized Library of Kernels) library to perform accelerated SIMD calculations. You can profile your CPU to select the fastest mathematical kernels:
