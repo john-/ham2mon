@@ -24,7 +24,8 @@ class BaseTuner(gr.hier_block2):
 
     def __init__(self, classify: Classifier | None, notify_scanner: Callable,
                  file_metadata: list[str] | None = None,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None) -> None:
+                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+                 wav_dir: str = "wav") -> None:
         BaseTuner.channel += 1
 
         # Default values
@@ -38,6 +39,7 @@ class BaseTuner(gr.hier_block2):
 
         self.file_metadata: list[str] = file_metadata if file_metadata is not None else []
         self.get_priority_info = get_priority_info
+        self.wav_dir = wav_dir
 
 
     def set_last_heard(self, a_time: float) -> None:
@@ -103,7 +105,7 @@ class BaseTuner(gr.hier_block2):
         self.tstamp_str = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "{:.3f}".format(self.time_stamp % 1)[1:]
         file_freq = (rf_center_freq + self.center_freq) / 1E6
         self.freq_str = f"{np.round(file_freq, 4):.4f}"
-        self.file_name = f'wav/tmp/{self.freq_str}_{self.tstamp_str}.wav'
+        self.file_name = f'{self.wav_dir}/tmp/{self.freq_str}_{self.tstamp_str}.wav'
 
     def _persist_wavfile(self, rf_center_freq: int, avg_signal: int | None = None) -> ChannelMessage | None:
         if not self.file_name:
@@ -145,7 +147,7 @@ class BaseTuner(gr.hier_block2):
             name_parts.append(f"{avg_signal}dB")
         name_parts.append(self.tstamp_str)
 
-        new_name = f'wav/{"_".join(name_parts)}.wav'
+        new_name = f'{self.wav_dir}/{"_".join(name_parts)}.wav'
         os.rename(self.file_name, new_name)
         xmit_msg.file = new_name
         return xmit_msg

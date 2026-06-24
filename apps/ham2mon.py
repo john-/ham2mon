@@ -24,6 +24,7 @@ class MyDisplay():
 
     def __init__(self, stdscr: "_curses._CursesWindow") -> None:
         self.stdscr = stdscr
+        self.scanner = None
 
     async def run(self) -> None:
         curs_set(0)
@@ -36,7 +37,7 @@ class MyDisplay():
         while True:
             char = self.stdscr.getch()
 
-            if char == ord('Q'):
+            if char == ord('Q') or (self.scanner and self.scanner.eof):
                 break
             if char == ERR:
                 await asyncio.sleep(0.1)
@@ -47,6 +48,7 @@ class MyDisplay():
 
             await self.cycle()
 
+        self.scanner.stop()
         await self.scanner.clean_up()
 
     async def make_display(self) -> None:

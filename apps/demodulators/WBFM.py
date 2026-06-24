@@ -70,13 +70,14 @@ class TunerDemodWBFM(BaseTuner):
                  audio_bps: int, min_recording: float, classify: Classifier | None,
                  notify_scanner: Callable, ctcss_filter: bool=False, ctcss_tone_block: bool=False,
                  file_metadata: list[str] | None = None,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None):
+                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+                 wav_dir: str = "wav"):
 
         gr.hier_block2.__init__(self, "TunerDemodWBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, notify_scanner, file_metadata=file_metadata, get_priority_info=get_priority_info)
+        super().__init__(classify, notify_scanner, file_metadata=file_metadata, get_priority_info=get_priority_info, wav_dir=wav_dir)
 
         
         # Default values

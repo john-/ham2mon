@@ -7,7 +7,6 @@ Created on Fri Jul  3 13:38:36 2015
 """
 
 from gnuradio import gr  # type: ignore
-import osmosdr  # type: ignore
 from gnuradio import blocks
 from gnuradio import fft
 from gnuradio.fft import window  # type: ignore
@@ -56,51 +55,49 @@ class Receiver(gr.top_block):
                  audio_bps: int, min_recording: float,
                  classifier_params: ClassifierParams, notify_scanner: Callable,
                  agc: bool, file_metadata: list[str] | None = None,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None):
+                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+                 source_type: str = "hardware", source_file: str | None = None,
+                 wav_dir: str = "wav", center_freq: int = int(144E6)):
 
         # Call the initialization method from the parent class
         gr.top_block.__init__(self, "Receiver")
 
+        self._source_type = source_type
+        self._wav_dir = wav_dir
+
         # Make sure the 'wav' directory exists
         try:
-            os.makedirs('wav/tmp')
+            os.makedirs(os.path.join(self._wav_dir, 'tmp'), exist_ok=True)
         except OSError as error:  # will need to add something here for Win support
-            if error.errno == errno.EEXIST:
-                # remove any existing wav files
-                for f in glob.glob('wav/tmp/*.wav'):
-                    os.unlink(f)
-            else:
-                raise
+            logging.error(f"Could not create wav/tmp directory: {error}")
+            raise
+
+        # Clean up existing files without breaking makedirs or masking permission errors
+        for f in glob.glob(os.path.join(self._wav_dir, 'tmp', '*.wav')):
+            try:
+                os.unlink(f)
+            except OSError as error:
+                logging.warning(f"Could not remove stale wav file: {f} ({error})")
 
         # Default values
-        self.center_freq: int = int(144E6)
+        self.center_freq: int = center_freq
         self.samp_rate: int
         self.squelch_db = -60
         self.volume_db = 0
+        self.gains: list[dict] = []
         audio_rate = 8000
 
         # Setup the USRP source, or use the USRP sim
-        self.src = osmosdr.source(args="numchan=" + str(1) + " " + hw_args)
-        self.src.set_sample_rate(ask_samp_rate)
-        self.src.set_center_freq(self.center_freq)
-        self.src.set_freq_corr(freq_correction)
-
-        # Set AGC if the user wants it
-        if agc:
-            try:
-                agc_is_set = self.src.set_gain_mode(agc, 0)
-                assert agc == agc_is_set, f'set_gain_mode returned "{agc_is_set}"'
-            except Exception as error:
-                msg = f'Could not set AGC mode ({error})'
-                logging.error(msg)
-                raise Exception(msg)
-
-        # Get the sample rate and center frequency from the hardware
-        self.samp_rate = self.src.get_sample_rate()
-        self.center_freq = self.src.get_center_freq()
-
-        # Set the I/Q bandwidth to 80 % of sample rate
-        self.src.set_bandwidth(0.8 * self.samp_rate)
+        if self._source_type == "file":
+            if not source_file:
+                raise ValueError("source_file must be specified when source_type is 'file'")
+            self.src, self.samp_rate, self.center_freq = self._init_file_source(
+                source_file, ask_samp_rate, self.center_freq
+            )
+        else:
+            self.src, self.samp_rate, self.center_freq = self._init_hardware_source(
+                hw_args, ask_samp_rate, freq_correction, agc, self.center_freq
+            )
 
         # NBFM channel is about 10 KHz wide
         # Want  about 3 FFT bins to span a channel
@@ -110,7 +107,12 @@ class Receiver(gr.top_block):
         # Also keeps bin size constant for power of two sampling rates
         # Use of 256 sets 3906.25 Hz/bin; increase to reduce bin size
         samp_ratio = self.samp_rate / 1E6
-        fft_length = 256 * int(pow(2, np.ceil(np.log(samp_ratio)/np.log(2))))
+        # At exactly 1.0 Msps, np.ceil(np.log(1.0)/np.log(2)) = 0, giving 256 * 2^0 = 256.
+        # For rates below 1.0 Msps, we floor the length to a minimum of 256.
+        if samp_ratio <= 1.0:
+            fft_length = 256
+        else:
+            fft_length = 256 * int(pow(2, np.ceil(np.log(samp_ratio)/np.log(2))))
 
         # -----------Flow for FFT--------------
 
@@ -119,7 +121,7 @@ class Receiver(gr.top_block):
                                                    fft_length)
 
         # Want about 1000 vector/sec
-        amount = int(round(self.samp_rate/fft_length/1000))
+        amount = max(1, int(round(self.samp_rate/fft_length/1000)))
         keep_one_in_n = blocks.keep_one_in_n(gr.sizeof_gr_complex*
                                              fft_length, amount)
 
@@ -168,7 +170,8 @@ class Receiver(gr.top_block):
                                                         classifier,
                                                         notify_scanner,
                                                         file_metadata=self.file_metadata,
-                                                        get_priority_info=self.get_priority_info))
+                                                        get_priority_info=self.get_priority_info,
+                                                        wav_dir=self._wav_dir))
             elif type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
@@ -177,7 +180,8 @@ class Receiver(gr.top_block):
                                                       classifier,
                                                       notify_scanner,
                                                       file_metadata=self.file_metadata,
-                                                      get_priority_info=self.get_priority_info))
+                                                      get_priority_info=self.get_priority_info,
+                                                      wav_dir=self._wav_dir))
             elif type_demod == 2:
                 self.demodulators.append(TunerDemodWBFM(self.samp_rate,
                                                         audio_rate, record,
@@ -186,7 +190,8 @@ class Receiver(gr.top_block):
                                                         classifier,
                                                         notify_scanner,
                                                         file_metadata=self.file_metadata,
-                                                        get_priority_info=self.get_priority_info))
+                                                        get_priority_info=self.get_priority_info,
+                                                        wav_dir=self._wav_dir))
             else:
                 raise Exception(f'Invalid demodulator type: {type_demod}')
 
@@ -214,6 +219,30 @@ class Receiver(gr.top_block):
             for demodulator in self.demodulators:
                 self.connect(self.src, demodulator)
 
+    def _init_hardware_source(self, hw_args: str, ask_samp_rate: int, freq_correction: int, agc: bool, center_freq: int):
+        import osmosdr  # type: ignore
+        src = osmosdr.source(args="numchan=" + str(1) + " " + hw_args)
+        src.set_sample_rate(ask_samp_rate)
+        src.set_center_freq(center_freq)
+        src.set_freq_corr(freq_correction)
+
+        if agc:
+            try:
+                agc_is_set = src.set_gain_mode(agc, 0)
+                assert agc == agc_is_set, f'set_gain_mode returned "{agc_is_set}"'
+            except Exception as error:
+                msg = f'Could not set AGC mode ({error})'
+                logging.error(msg)
+                raise Exception(msg)
+
+        samp_rate = src.get_sample_rate()
+        actual_center_freq = src.get_center_freq()
+        src.set_bandwidth(0.8 * samp_rate)
+        return src, samp_rate, actual_center_freq
+
+    def _init_file_source(self, source_file: str, ask_samp_rate: int, center_freq: int):
+        src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        return src, ask_samp_rate, center_freq
 
     def set_center_freq(self, center_freq: int) -> None:
         """Sets RF center frequency of hardware
@@ -221,6 +250,10 @@ class Receiver(gr.top_block):
         Args:
             center_freq (int): Hardware RF center frequency in Hz
         """
+        if self._source_type == "file":
+            self.center_freq = center_freq
+            return
+
         # Tune the hardware
         self.src.set_center_freq(center_freq)
 
@@ -231,6 +264,8 @@ class Receiver(gr.top_block):
     def get_gain_names(self) -> list[dict]:
         """Get the list of supported gain elements
         """
+        if self._source_type == "file":
+            return []
         return self.src.get_gain_names()
 
     def filter_and_set_gains(self, all_gains: list[dict]) -> list[dict]:
@@ -238,6 +273,8 @@ class Receiver(gr.top_block):
         Args:
             all_gains (list of dictionary): Supported gains in dB
         """
+        if self._source_type == "file":
+            return []
         # TODO: If using AGC remove the uneeded gain. (e.g. Airspy Mini only uses
         #       IF gain so remove LNA and MIX)
         gains: list[dict] = []
@@ -252,6 +289,9 @@ class Receiver(gr.top_block):
         Args:
             gains (list of dictionary): Supported gains in dB
         """
+        if self._source_type == "file":
+            self.gains = gains
+            return self.gains
         for gain in gains:
             self.src.set_gain(gain["value"], gain["name"])
             gain["value"] = self.src.get_gain(gain["name"])
@@ -293,9 +333,10 @@ class Receiver(gr.top_block):
         """Called when the object is destroyed."""
         # Make a best effort attempt to clean up our wavfile if it's empty
         try:
-            for f in glob.glob('wav/tmp/*.wav'):
-                os.unlink(f)
-            os.rmdir('wav/tmp')
+            if hasattr(self, '_wav_dir'):
+                for f in glob.glob(os.path.join(self._wav_dir, 'tmp', '*.wav')):
+                    os.unlink(f)
+                os.rmdir(os.path.join(self._wav_dir, 'tmp'))
         except Exception:
             pass  # oh well, we're dying anyway
 
