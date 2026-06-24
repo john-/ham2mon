@@ -11,6 +11,7 @@ import h2m_parser as prsr
 import time
 import numpy as np
 import sys
+import threading
 # import yaml
 import logging
 from numpy.typing import NDArray
@@ -19,7 +20,6 @@ from classification import ClassifierParams
 from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
 from utilities import baseband_to_frequency, frequency_to_baseband
-#import asyncio
 from dataclasses import dataclass, field
 
 @dataclass(kw_only=True)
@@ -143,6 +143,19 @@ class Scanner(object):
         self.receiver.start()
         time.sleep(1)
 
+        self.eof = False
+        self._watch_thread = threading.Thread(target=self._wait_for_receiver_thread, daemon=True)
+        self._watch_thread.start()
+
+    def _wait_for_receiver_thread(self) -> None:
+        try:
+            self.receiver.wait()
+            logging.info("Receiver flowgraph terminated (EOF reached)")
+        except Exception as error:
+            logging.error(f"Error waiting for receiver: {error}")
+        finally:
+            self.eof = True
+
     def center_freq_changed(self):
         '''
         Callback used to propagate provider value with self.  Also,
@@ -151,7 +164,7 @@ class Scanner(object):
         self.set_center_freq(self.frequency_provider.center_freq)
 
         self.frequency_params.notify_interface()
-    
+
     async def scan_cycle(self) -> None:
         """Execute one scan cycle
 
@@ -321,7 +334,7 @@ class Scanner(object):
         except IndexError:
             # user selected a digit but no channels in interface
             return
-    
+
     async def clear_lockout(self) -> None:
         """
         Clears lockout channels and rebuilds based on config.  Usually called
@@ -397,7 +410,7 @@ class Scanner(object):
         '''
         This callback is to let the demodulators inform us about a
         transmission.
-    
+
         1. Log the activity via the currently configured channel logger
         2. If the channel is interesting, let the frequency provider know
             - It will hold the current center frequency open a bit longer
