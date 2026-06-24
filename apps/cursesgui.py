@@ -85,7 +85,9 @@ class SpectrumWindow(object):
         scale = (min_y-max_y)/(self.max_db-self.min_db)
 
         # Generate y position, clip to window, and convert to int
+        # Use nan_to_num to prevent OverflowError when log10(0) yields -inf/nan
         pos_y = (win_bin_max_db - self.max_db) * scale
+        pos_y = np.nan_to_num(pos_y, nan=max_y, posinf=max_y, neginf=max_y)
         pos_y = np.clip(pos_y, min_y, max_y)
         pos_y = pos_y.astype(int)
 
