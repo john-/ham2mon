@@ -124,7 +124,10 @@ class Classifier(object):
                 for line in pipe:
                     stripped = line.strip()
                     if stripped:
-                        logging.warning(f"TensorFlow Service: {stripped}")
+                        if stripped.startswith("INFO:"):
+                            logging.info(f"TensorFlow Service: {stripped}")
+                        else:
+                            logging.warning(f"TensorFlow Service: {stripped}")
             except Exception as e:
                 try:
                     logging.debug(f"TensorFlow Service stderr drain thread exception: {e}")
