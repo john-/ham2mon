@@ -56,6 +56,7 @@ class Receiver(gr.top_block):
                  classifier_params: ClassifierParams, notify_scanner: Callable,
                  agc: bool, file_metadata: list[str] | None = None,
                  get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+                 get_ctcss_info: Callable[[int], float | None] | None = None,
                  source_type: str = "hardware", source_file: str | None = None,
                  wav_dir: str = "wav", center_freq: int = int(144E6)):
 
@@ -155,6 +156,7 @@ class Receiver(gr.top_block):
 
         self.file_metadata = file_metadata if file_metadata is not None else []
         self.get_priority_info = get_priority_info
+        self.get_ctcss_info = get_ctcss_info
 
         # -----------Flow for Demod--------------
 
@@ -171,6 +173,7 @@ class Receiver(gr.top_block):
                                                         notify_scanner,
                                                         file_metadata=self.file_metadata,
                                                         get_priority_info=self.get_priority_info,
+                                                        get_ctcss_info=self.get_ctcss_info,
                                                         wav_dir=self._wav_dir))
             elif type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
@@ -181,6 +184,7 @@ class Receiver(gr.top_block):
                                                       notify_scanner,
                                                       file_metadata=self.file_metadata,
                                                       get_priority_info=self.get_priority_info,
+                                                      get_ctcss_info=self.get_ctcss_info,
                                                       wav_dir=self._wav_dir))
             elif type_demod == 2:
                 self.demodulators.append(TunerDemodWBFM(self.samp_rate,
@@ -191,6 +195,7 @@ class Receiver(gr.top_block):
                                                         notify_scanner,
                                                         file_metadata=self.file_metadata,
                                                         get_priority_info=self.get_priority_info,
+                                                        get_ctcss_info=self.get_ctcss_info,
                                                         wav_dir=self._wav_dir))
             else:
                 raise Exception(f'Invalid demodulator type: {type_demod}')
@@ -260,6 +265,16 @@ class Receiver(gr.top_block):
         # Update center frequency with hardware center frequency
         # Do this to account for slight hardware offsets
         self.center_freq = self.src.get_center_freq()
+
+    def start(self, max_noutput_items: int = 10000000) -> None:
+        """Starts the top block and configures CTCSS selectors once topology is validated.
+
+        Note: selectors are configured immediately after start(); demodulators begin
+        at center_freq=0 so no meaningful audio flows before routing is applied.
+        """
+        super().start(max_noutput_items)
+        for demod in self.demodulators:
+            demod.configure_selectors()
 
     def get_gain_names(self) -> list[dict]:
         """Get the list of supported gain elements
@@ -339,4 +354,3 @@ class Receiver(gr.top_block):
                 os.rmdir(os.path.join(self._wav_dir, 'tmp'))
         except Exception:
             pass  # oh well, we're dying anyway
-

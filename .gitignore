@@ -5,3 +5,4 @@
 .venv/
 wav/
 test_signals/
+model/
