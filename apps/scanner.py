@@ -107,6 +107,7 @@ class Scanner(object):
         self.auto_priority = auto_priority
         self.file_metadata = file_metadata if file_metadata is not None else []
         self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(num_demod)}
+        self.mismatched_freqs: dict[float, float] = {}
 
         self.channel_logger = ChannelLogger.get_logger(channel_log_params)
 
@@ -118,7 +119,8 @@ class Scanner(object):
                                        audio_bps, min_recording, classifier_params,
                                        self.got_channel_activity, agc,
                                        file_metadata=self.file_metadata,
-                                       get_priority_info=self.frequency_manager.get_priority_info)
+                                       get_priority_info=self.frequency_manager.get_priority_info,
+                                       get_ctcss_info=self.frequency_manager.get_ctcss_info)
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
@@ -179,6 +181,16 @@ class Scanner(object):
         """
 
         raw_channels = self._get_raw_channels()
+
+        # Remove suppressed frequencies whose carrier is gone and minimum hold time has elapsed.
+        # Note: If a carrier stays active continuously (e.g. repeater with incorrect tone), it will
+        # remain suppressed forever. This is desired. If tones are reloaded or lockouts cleared,
+        # mismatched_freqs is cleared entirely.
+        raw_rf_channels = [baseband_to_frequency(bb, self.center_freq) for bb in raw_channels]
+        the_now = time.time()
+        for rf_freq in list(self.mismatched_freqs.keys()):
+            if rf_freq not in raw_rf_channels and (the_now - self.mismatched_freqs[rf_freq] >= 3.0):
+                del self.mismatched_freqs[rf_freq]
 
         # Accumulate signal levels for active demodulators if requested
         if 'strength' in self.file_metadata:
@@ -253,6 +265,22 @@ class Scanner(object):
                 await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
                 continue
 
+            # Stop demodulator if CTCSS tone is mismatched
+            if demodulator.is_ctcss_mismatched():
+                rf_freq = baseband_to_frequency(demodulator.center_freq, self.center_freq)
+                if rf_freq not in self.mismatched_freqs:
+                    self.mismatched_freqs[rf_freq] = the_now
+                curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                # Mark the current transmission for discard. While is_ctcss_mismatched() already
+                # sets discard_current = True internally, setting it here explicitly is the
+                # primary/canonical way of signaling that the scanner loop has rejected the
+                # active transmission.
+                self._demod_signal_stats[idx] = (0.0, 0)
+                demodulator.discard_current = True
+                await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
+                continue
+
             # Stop the demodulator if not being scanned and outside the hang time
             if any(channel.hanging and channel.bb == demodulator.center_freq for channel in channels):
                 if the_now - demodulator.last_heard > self.hang_time:
@@ -277,6 +305,10 @@ class Scanner(object):
         # assign channels to available demodulators
         for channel in [channel for channel in channels if not channel.hanging]:
         #for channel in channels:
+            # Skip if the channel is currently suppressed due to CTCSS mismatch
+            if channel.rf in self.mismatched_freqs:
+                continue
+
             # If channel not in demodulators
             if channel.bb not in self.receiver.get_demod_freqs() and not channel.locked:
                 # Sequence through each demodulator
@@ -315,13 +347,18 @@ class Scanner(object):
         for channel in all_channels:
             frequency = baseband_to_frequency(channel, self.receiver.center_freq)
             priority = self.frequency_manager.is_priority(channel)
+            
+            is_active = channel in demod_freqs and channel in active_channels
+            is_hanging = channel in demod_freqs and channel not in active_channels
+
             idx = 0 if priority is not None else len(sweep)  # priority channels up front
             sweep.insert(idx, ChannelFrequency(bb=channel,
                                       rf=frequency,
                                       locked=self.frequency_manager.locked_out(channel),
-                                      active=channel in demod_freqs and channel in active_channels,
+                                      active=is_active,
                                       priority=priority,
-                                      hanging=channel in demod_freqs and channel not in active_channels,
+                                      hanging=is_hanging,
+                                      ctcss=self.frequency_manager.get_ctcss_info(frequency),
                                       label=self.frequency_manager.get_label(frequency)))
 
         return sweep
@@ -340,9 +377,11 @@ class Scanner(object):
         Clears lockout channels and rebuilds based on config.  Usually called
         by the user interface ('l' key).
         """
+        self.mismatched_freqs.clear()
         self.frequencies = await self.frequency_manager.load()
 
     async def load_frequencies(self) -> None:
+        self.mismatched_freqs.clear()
         self.frequencies = await self.frequency_manager.load()
 
     def set_center_freq(self, center_freq: int) -> None:

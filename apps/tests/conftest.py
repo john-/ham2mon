@@ -4,8 +4,10 @@ import shutil
 import glob
 import re
 import numpy as np
+from typing import Callable
 from classification import ClassifierParams
 from receiver import Receiver
+
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -187,7 +189,8 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
         record: bool = True,
         play: bool = False,
         agc: bool = False,
-        file_metadata: list[str] | None = None
+        file_metadata: list[str] | None = None,
+        get_ctcss_info: Callable[[int], float | None] | None = None
     ) -> Receiver:
         classifier_params = ClassifierParams(
             wanted={'V': False, 'D': False, 'S': False},
@@ -209,6 +212,7 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
             agc=agc,
             file_metadata=file_metadata,
             get_priority_info=mock_get_priority_info,
+            get_ctcss_info=get_ctcss_info,
             source_type="file",
             source_file=source_file,
             wav_dir=test_wav_dir,
@@ -216,6 +220,7 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
         )
         created_receivers.append(rx)
         return rx
+
 
     yield _create_receiver
 

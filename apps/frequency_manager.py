@@ -21,16 +21,24 @@ class FrequencyInfo:
     label: str = field(default=None)
     locked: bool = field(default=False)
     priority: int | None = field(default=None)
+    ctcss: float | None = field(default=None)
 
     def __post_init__(self):
         if not isinstance(self.locked, bool):
             raise ValueError('Locked must be a boolean')
 
-        if self.priority is None:
-            return
+        if self.priority is not None:
+            if not isinstance(self.priority, int) or self.priority < 1:
+                raise ValueError('Priority must be an integer >= 1')
 
-        if not isinstance(self.priority, int) or self.priority < 1:
-            raise ValueError('Priority must be an integer >= 1')
+        if self.ctcss is not None:
+            try:
+                self.ctcss = float(self.ctcss)
+            except (ValueError, TypeError):
+                raise ValueError('CTCSS must be a float or integer representing frequency in Hz')
+            if self.ctcss <= 0:
+                raise ValueError('CTCSS must be a positive number')
+
 
 
 @dataclass(kw_only=True, eq=False)
@@ -54,6 +62,14 @@ class ConfigFrequency(FrequencyInfo):
     saved: bool = field(default=False)
     # if not a single it is a range
     is_single: bool | None = field(default=None)
+
+    # All CTCSS tones considered valid for this frequency/range. Populated from
+    # `ctcss` on construction, and may be extended later via FrequencyManager.add()
+    # when the same frequency/range is declared again in config with a different
+    # `ctcss` value (e.g. a repeater with a primary and a backup PL tone). `ctcss`
+    # itself remains the first/primary tone, kept for backward compatibility with
+    # code that only expects a single value (e.g. get_ctcss_info()).
+    ctcss_tones: list[float] = field(default_factory=list, init=False, repr=False)
 
     def calculate_baseband(self, center_freq: int, channel_spacing: int) -> None:
         if self.is_single:
@@ -103,6 +119,7 @@ class ConfigFrequency(FrequencyInfo):
 
         # Set state
         self.is_single = self.single is not None
+        self.ctcss_tones = [self.ctcss] if self.ctcss is not None else []
 
     def _validate_frequency_types(self):
         """Ensure all frequency values are floats if provided"""
@@ -222,9 +239,9 @@ class FrequencyManager:
 
     async def load(self) -> FrequencyList:
         """Load frequencies from the configured file."""
+        self.frequencies = []
 
         if not self.config.file_name:
-            self.frequencies = []
             return []
 
         file = self.config.file_name
@@ -251,6 +268,13 @@ class FrequencyManager:
         '''
         Add frequency to channels if not already there.
 
+        A frequency/range may legitimately be declared more than once in config
+        when the only difference is the `ctcss` tone (e.g. a repeater that
+        answers to a primary and a backup PL tone). In that case, the new tone
+        is merged into the existing entry's `ctcss_tones` list rather than
+        raising. Any other kind of duplicate (an identical entry, or a repeat
+        that doesn't add a new tone) is still an error.
+
         Args:
             entry (dict): Dictionary of frequency attributes
 
@@ -264,6 +288,10 @@ class FrequencyManager:
 
         Returns:
                 FrequencyList: List of frequencies
+
+        Raises:
+            ValueError: If the frequency already occurs in the list and is not
+                a mergeable CTCSS-only variant of an existing entry.
         '''
         wanted = ConfigFrequency(**entry)
 
@@ -271,7 +299,14 @@ class FrequencyManager:
         matching_frequencies = [existing for existing in self.frequencies
                                 if wanted == existing]
 
-        if len(matching_frequencies) > 0:  # Already one occurance so this is an error
+        if len(matching_frequencies) > 0:
+            existing = matching_frequencies[0]
+
+            if wanted.ctcss is not None and wanted.ctcss not in existing.ctcss_tones:
+                self._merge_ctcss_tone(existing, wanted, entry)
+                return self.frequencies
+
+            # Already one occurance, and no new tone to merge, so this is an error
             raise ValueError(
                 f'Frequency {wanted} already occurs in list')
 
@@ -282,6 +317,33 @@ class FrequencyManager:
         self.frequencies.append(wanted)
 
         return self.frequencies
+
+    def _merge_ctcss_tone(self, existing: ConfigFrequency, wanted: ConfigFrequency, entry: dict) -> None:
+        '''
+        Merge an additional CTCSS tone into an already-loaded frequency/range.
+
+        The first-seen entry's label/priority/locked remain authoritative for
+        the merged entry. A conflicting, explicitly-specified priority on the
+        duplicate entry is treated as a config error, since it's ambiguous
+        which one should apply. (locked/label conflicts are intentionally not
+        validated in this phase.)
+
+        Args:
+            existing (ConfigFrequency): The already-loaded entry to merge into
+            wanted (ConfigFrequency): The newly parsed duplicate entry
+            entry (dict): The raw dict passed to add(), used to distinguish
+                "not specified" from "explicitly set" for conflict checks
+        '''
+        if 'priority' in entry and existing.priority is not None and wanted.priority != existing.priority:
+            raise ValueError(
+                f"Cannot merge CTCSS tone {wanted.ctcss} into "
+                f"{existing.label!r}: priority {wanted.priority} conflicts "
+                f"with existing priority {existing.priority}")
+
+        existing.ctcss_tones.append(wanted.ctcss)
+        logging.debug(
+            f'Merged CTCSS tone {wanted.ctcss} into existing frequency '
+            f'{existing.label!r} (tones now {existing.ctcss_tones})')
 
     async def change(self, entry: dict) -> FrequencyList:
         '''
@@ -397,14 +459,57 @@ class FrequencyManager:
         return lowest, is_auto
 
 
+    def get_ctcss_info(self, rf_freq: float) -> float | None:
+        """Get the primary CTCSS tone frequency (in Hz) for the given absolute RF frequency.
+
+        NOTE: if multiple tones are configured for this frequency (see
+        get_ctcss_tones), this returns only the first/primary one. Kept for
+        backward compatibility with callers that only support a single tone
+        (currently: the single-tone squelch in BaseTuner). Callers that want to
+        validate against all configured tones should use get_ctcss_tones().
+        """
+        # Check single frequencies first
+        for frequency in self.frequencies:
+            if frequency.is_single and abs(frequency.single - rf_freq) < 1e-4:
+                if frequency.ctcss is not None:
+                    return frequency.ctcss
+
+        # Then check ranges
+        for frequency in self.frequencies:
+            if not frequency.is_single and frequency.lo <= rf_freq <= frequency.hi:
+                if frequency.ctcss is not None:
+                    return frequency.ctcss
+
+        return None
+
+    def get_ctcss_tones(self, rf_freq: float) -> list[float]:
+        """Get all CTCSS tone frequencies (in Hz) configured for the given absolute RF frequency.
+
+        Returns an empty list if the frequency isn't configured, or is
+        configured without any CTCSS tone.
+        """
+        # Check single frequencies first
+        for frequency in self.frequencies:
+            if frequency.is_single and abs(frequency.single - rf_freq) < 1e-4:
+                if frequency.ctcss_tones:
+                    return list(frequency.ctcss_tones)
+
+        # Then check ranges
+        for frequency in self.frequencies:
+            if not frequency.is_single and frequency.lo <= rf_freq <= frequency.hi:
+                if frequency.ctcss_tones:
+                    return list(frequency.ctcss_tones)
+
+        return []
+
     def is_higher_priority(self, channel_bb: int, demod_freq: int) -> bool:
         '''
         Compare priorities of the frequency of the channel at point in sweep to
-        what is currently being demodulated
+        what is currently being demodulated.
 
         Args:
             channel_bb (int): Baseband frequency of the tuned channel
-            demod_freq (int): Baseband frequency of the demod frequency
+            demod_freq (int): Baseband frequency of the current demodulator
         '''
         if demod_freq == 0:
             return True
@@ -426,6 +531,7 @@ class FrequencyManager:
             return True
         else:
             return False
+
 
 
     def generate_baseband_frequencies(self) -> None:

@@ -57,13 +57,15 @@ class TunerDemodNBFM(BaseTuner):
                  notify_scanner: Callable,
                  file_metadata: list[str] | None = None,
                  get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+                 get_ctcss_info: Callable[[int], float | None] | None = None,
                  wav_dir: str = "wav"):
         gr.hier_block2.__init__(self, "TunerDemodNBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, notify_scanner, file_metadata=file_metadata, get_priority_info=get_priority_info, wav_dir=wav_dir)
-
+        super().__init__(classify, notify_scanner, file_metadata=file_metadata,
+                         get_priority_info=get_priority_info, get_ctcss_info=get_ctcss_info,
+                         wav_dir=wav_dir, audio_rate=audio_rate)
 
         # Default values
         self.center_freq = 0
@@ -135,14 +137,16 @@ class TunerDemodNBFM(BaseTuner):
                      self.analog_quadrature_demod_cf)
         self.connect(self.analog_quadrature_demod_cf, fir_filter_fff_0)
         self.connect(fir_filter_fff_0, pfb_arb_resampler_fff)
-        self.connect(pfb_arb_resampler_fff, self)
+        self.connect(pfb_arb_resampler_fff, self.ctcss_in)
+        self.connect(self.ctcss_out, self)
 
         # Need to set this to a very low value of -200 since it is after demod
         # Only want it to gate when the previous squelch has gone to zero
         analog_pwr_squelch_ff = analog.pwr_squelch_ff(-200, 1e-1, 0, True)
 
         # Connect the blocks for recording
-        self.connect(pfb_arb_resampler_fff, analog_pwr_squelch_ff)
+        self.connect(self.ctcss_out, analog_pwr_squelch_ff)
+
 
         # File sink with single channel and bits/sample
         if (self.record):
@@ -151,10 +155,7 @@ class TunerDemodNBFM(BaseTuner):
                                                        blocks.FORMAT_WAV,
                                                        blocks.FORMAT_PCM_16,
                                                        False)
-            self.connect(analog_pwr_squelch_ff, self.blocks_wavfile_sink)
-        else:
-            null_sink1 = blocks.null_sink(gr.sizeof_float)
-            self.connect(analog_pwr_squelch_ff, null_sink1)
+        self.connect_wav_sink(analog_pwr_squelch_ff)
 
     def set_volume(self, volume_db: int) -> None:
         """Sets the volume
