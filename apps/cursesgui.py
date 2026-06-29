@@ -14,6 +14,62 @@ from pathlib import PurePath
 from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
 
 locale.setlocale(locale.LC_ALL, '')
+
+
+def compute_panel_widths(total_width, min_widths, weights):
+    """Splits total_width among named panels, giving each its minimum first
+    and distributing any remaining width by weight.
+
+    This lets panels with open-ended content (e.g. user-supplied labels)
+    claim more of the extra space as the terminal widens, while a panel
+    with fixed-format content (e.g. columns of numbers) stops growing once
+    it has enough room, instead of all panels growing at the same fixed
+    proportion of the terminal width.
+
+    Args:
+        total_width (int): total width available to split among panels
+        min_widths (dict): name -> minimum width for that panel
+        weights (dict): name -> relative share of leftover width; a panel
+            with weight 2 grows twice as fast as one with weight 1 once
+            all minimums are satisfied
+
+    Returns:
+        dict: name -> allocated width, keys matching min_widths, values
+            summing to total_width (or to sum(min_widths) if total_width
+            is too small to satisfy every minimum)
+    """
+    names = list(min_widths.keys())
+    base_sum = sum(min_widths.values())
+
+    if total_width < base_sum:
+        # Not enough room to satisfy every minimum; fall back to splitting
+        # total_width proportionally by minimum size, floored at 1 each.
+        widths = {}
+        allocated = 0
+        for i, name in enumerate(names):
+            if i == len(names) - 1:
+                widths[name] = max(1, total_width - allocated)
+            else:
+                share = max(1, int(total_width * min_widths[name] / base_sum))
+                widths[name] = share
+                allocated += share
+        return widths
+
+    extra = total_width - base_sum
+    total_weight = sum(weights[name] for name in names) or 1
+    widths = {}
+    allocated_extra = 0
+    for i, name in enumerate(names):
+        if i == len(names) - 1:
+            # Last panel absorbs any leftover from integer rounding.
+            share = extra - allocated_extra
+        else:
+            share = int(extra * weights[name] / total_weight)
+            allocated_extra += share
+        widths[name] = min_widths[name] + share
+    return widths
+
+
 class SpectrumWindow(object):
     """Curses spectrum display window
 
@@ -37,11 +93,26 @@ class SpectrumWindow(object):
         screen_dims = screen.getmaxyx()
         height = int(screen_dims[0]/2.0)
         width = screen_dims[1]-2
-        self.win = curses.newwin(height, width, 1, 1)
+        self.outer_win = curses.newwin(height, width, 1, 1)
+        self.win = self.outer_win.derwin(height - 2, width - 2, 1, 1)
         self.dims = self.win.getmaxyx()
 
-        # Right end of window resreved for string of N charachters
-        self.chars = 7
+        # Right end of window reserved for string of N characters
+        self.chars = 5
+
+    def cleanup(self) -> None:
+        if hasattr(self, 'win') and self.win:
+            try:
+                self.win.erase()
+                del self.win
+            except Exception:
+                pass
+        if hasattr(self, 'outer_win') and self.outer_win:
+            try:
+                self.outer_win.erase()
+                del self.outer_win
+            except Exception:
+                pass
 
     def draw_spectrum(self, data):
         """Scales input spectral data to window dimensions and draws bar graph
@@ -62,9 +133,7 @@ class SpectrumWindow(object):
             self.min_db = self.max_db - 10
 
         # Split the data into N window bins
-        # N is window width between border (i.e. self.dims[1]-2 )
-        # Data must be at least as long as the window width or crash
-        # Use the maximum value from each input data bin for the window bin
+        # N is window width of the inner window
         win_bins = np.array_split(data, self.dims[1]-self.chars)
         win_bin_max = []
         for win_bin in win_bins:
@@ -73,12 +142,8 @@ class SpectrumWindow(object):
         # Convert to dB
         win_bin_max_db = 10*np.log10(win_bin_max)
 
-        # The plot windows starts from max_db at the top
-        # and draws DOWNWARD to min_db (remember this is a curses window).
-        # Thus linear scaling goes from min_y=1 at the top
-        # and draws DOWNWARD to max_y=dims[0]-1 at the bottom
-        # The "1" and "-1" is to account for the border at top and bottom
-        min_y = 1
+        # Since self.win is the inner window, it has no borders.
+        min_y = 0
         max_y = self.dims[0]-1
 
         # Scaling factor for plot
@@ -93,47 +158,52 @@ class SpectrumWindow(object):
 
         # Generate threshold line, clip to window, and convert to int
         pos_yt = (self.threshold_db - self.max_db) * scale
-        pos_yt = np.clip(pos_yt, min_y, max_y-1)
-        pos_yt = pos_yt.astype(int)
+        pos_yt = np.clip(pos_yt, min_y, max_y)
+        pos_yt = np.round(pos_yt).astype(int)
 
-         # Clear previous contents, draw border, and title
+        # Clear outer window, draw border and title on the outer frame
+        self.outer_win.erase()
+        self.outer_win.border(0)
+        self.outer_win.attron(curses.color_pair(6))
+        outer_width = self.dims[1] + 2
+        self.outer_win.addnstr(0, (outer_width - 8) // 2, "SPECTRUM", 8,
+                               curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+        self.outer_win.leaveok(1)
+        self.outer_win.noutrefresh()
+
+        # Clear the inner drawing area
         self.win.erase()
-        self.win.border(0)
-        self.win.attron(curses.color_pair(6))
-        self.win.addnstr(0, int(self.dims[1]/2-6), "SPECTRUM", 8,
-                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
         # Draw the bars
         for pos_x in range(len(pos_y)):
             # Invert the y fill since we want bars
-            # Offset x (column) by 1 so it does not start on the border
+            # Since we have no borders on inner window, we write exactly at pos_x
             if pos_y[pos_x] > pos_yt:
                 # bar is below threshold, use low value color
-                self.win.vline(pos_y[pos_x], pos_x+1, "-", max_y-pos_y[pos_x],curses.color_pair(3) | curses.A_BOLD)
+                self.win.vline(pos_y[pos_x], pos_x, "-", max_y-pos_y[pos_x]+1, curses.color_pair(3) | curses.A_BOLD)
             elif pos_y[pos_x] <= min_y:
                 # bar is above max (clipped to min y), use max value color
-                self.win.vline(pos_y[pos_x], pos_x+1, "+", max_y-pos_y[pos_x],curses.color_pair(1) | curses.A_BOLD)
+                self.win.vline(pos_y[pos_x], pos_x, "+", max_y-pos_y[pos_x]+1, curses.color_pair(1) | curses.A_BOLD)
             else:
                 # bar is between max value and threshold, use threshold color
-                self.win.vline(pos_y[pos_x], pos_x+1, "*", max_y-pos_y[pos_x],curses.color_pair(2) | curses.A_BOLD)
+                self.win.vline(pos_y[pos_x], pos_x, "*", max_y-pos_y[pos_x]+1, curses.color_pair(2) | curses.A_BOLD)
 
         # Draw the max_db and min_db strings
         string = ">" + "%+03d" % self.max_db
-        self.win.addnstr(0, 1 + self.dims[1] - self.chars, string, self.chars,
+        self.win.addnstr(0, self.dims[1] - self.chars, string, self.chars,
                          curses.color_pair(1))
         string = ">" + "%+03d" % self.min_db
-        self.win.addnstr(max_y, 1 + self.dims[1] - self.chars, string,
+        self.win.addnstr(max_y, self.dims[1] - self.chars, string,
                          self.chars, curses.color_pair(3))
 
-        # Draw the theshold line
-        # x=1 start to account for left border
-        self.win.hline(pos_yt, 1, "-", len(pos_y), curses.color_pair(2))
+        # Draw the threshold line
+        self.win.hline(pos_yt, 0, "-", len(pos_y), curses.color_pair(2))
 
-        # Draw the theshold string
+        # Draw the threshold string on the same row as the threshold line.
+        # The inner window has no border, so addnstr at pos_yt == max_y is safe.
         string = ">" + "%+03d" % self.threshold_db
-        self.win.addnstr(pos_yt, (1 + self.dims[1] - self.chars), string,
+        self.win.addnstr(pos_yt, (self.dims[1] - self.chars), string,
                          self.chars, curses.color_pair(2))
-
         # Hide cursor
         self.win.leaveok(1)
 
@@ -183,92 +253,127 @@ class ChannelWindow(object):
     """
     # pylint: disable=too-few-public-methods
 
-    def __init__(self, screen):
+    def __init__(self, screen, width=None):
         self.screen = screen
 
         # Create a window object in the bottom half of the screen
-        # Make it about 1/4 the screen width
         # Place on left side and to the right of the border
+        # width defaults to 1/4 the screen width if not given explicitly
+        # (e.g. by a caller coordinating widths across the bottom-row panels)
         screen_dims = screen.getmaxyx()
         spectrum_height = int(screen_dims[0]/2.0)
         height = screen_dims[0] - spectrum_height - 2
-        width = int(screen_dims[1]/4.0)
-        self.win = curses.newwin(height, width, screen_dims[0] - height - 1, 1)
+        if width is None:
+            width = int(screen_dims[1]/4.0)
+        self.outer_win = curses.newwin(height, width, screen_dims[0] - height - 1, 1)
+        self.win = self.outer_win.derwin(height - 2, width - 2, 1, 1)
         self.dims = self.win.getmaxyx()
 
         self.entries: list[ChannelWindow.ChannelEntry] = []
 
     class ChannelEntry(object):
-        def __init__(self):
-            self.width = ChannelWindow.ChannelEntry.width
-            self.prev_channel: ChannelFrequency | None = None
+        win = None
 
-            ChannelWindow.ChannelEntry.rows += 1
-            self.row = ChannelWindow.ChannelEntry.rows
+        def __init__(self, row: int, col_offset: int, width: int):
+            self.row = row
+            self.col_offset = col_offset
+            self.width = width
+            self.prev_channel: ChannelFrequency | None = None
+            self.prev_idx: int | None = None
 
             self.attrs = { 'bold_freq': curses.color_pair(2) | curses.A_BOLD,
                            'bold_icon': curses.color_pair(2),
                            'normal_freq': curses.color_pair(6),
                            'normal_icon': curses.color_pair(6) }
 
-        @classmethod
-        def set_window(cls, win: any, width: int):
-            ChannelWindow.ChannelEntry.win = win
-            ChannelWindow.ChannelEntry.rows = 0  # used to track the next index for each row
-            ChannelWindow.ChannelEntry.width = width
+        def reset_cache(self) -> None:
+            self.prev_channel = None
+            self.prev_idx = None
 
-        def set(self, channel: ChannelFrequency) -> None:
-            self.channel = channel
-
-            # draw if changing
-            if self.prev_channel != self.channel:
+        def set(self, channel: ChannelFrequency, idx: int = 0) -> None:
+            if self.prev_channel != channel or self.prev_idx != idx:
+                self.channel = channel
+                self.idx = idx
                 self.draw()
 
-            self.prev_channel = self.channel
+            self.prev_channel = channel
+            self.prev_idx = idx
 
         def draw(self) -> None:
-
             row = self.row
+            col = self.col_offset
             channel = self.channel
             win = ChannelWindow.ChannelEntry.win
 
-            if channel is None:
-                text = ' ' * self.width
-                win.addnstr(row, 1, text, self.width)
+            if win is None:
                 return
 
-            text = f'{self.row-1:02d}: {channel.rf:.3f}'
+            if channel is None:
+                text = ' ' * self.width
+                win.addnstr(row, col, text, self.width)
+                return
+
+            idx_str = f'{self.idx:02d}:'
+            freq_str = f'{channel.rf:>9.4f}'
+            if freq_str.endswith('0'):
+                freq_str = freq_str[:-1] + ' '
+
             icon = 'P' if channel.priority else ' '
-            label = channel.label or ' ' * self.width
+            label = channel.label or ''
 
             attributes = (self.attrs['bold_freq'], self.attrs['bold_icon']) if channel.active else (
                 self.attrs['normal_freq'], self.attrs['normal_icon'])
 
-            win.addnstr(row, 1, text, self.width, attributes[0])
-            win.addnstr(row, 12, icon, 1, attributes[1])
-            win.addnstr(row, 14, label, self.width-14, attributes[0])
+            win.addnstr(row, col, idx_str, len(idx_str), attributes[0])
+            win.addnstr(row, col + 3, freq_str, len(freq_str), attributes[0])
+            win.addnstr(row, col + 12, icon, 1, attributes[1])
+
+            label_start = 14
+
+            has_ctcss = getattr(channel, 'ctcss', None) is not None
+
+            if has_ctcss:
+                ctcss_str = f'{channel.ctcss:>5.1f}'
+                win.addnstr(row, col + self.width - 5, ctcss_str , 5, attributes[1] | curses.A_ITALIC)
+                win.addnstr(row, col + self.width - 6, ' ', 1, attributes[0])
+                label_end = self.width - 6
+            else:
+                label_end = self.width
+
+            if label_end > label_start:
+                remainder = label_end - label_start
+                win.addnstr(row, col + label_start, label.ljust(remainder), remainder, attributes[0])
 
     def draw_frame(self) -> None:
-        # Clear previous contents, draw border, and title
+        self.outer_win.erase()
+        self.outer_win.border(0)
+        self.outer_win.attron(curses.color_pair(6))
+        outer_width = self.dims[1] + 2
+        self.outer_win.addnstr(0, (outer_width - 8) // 2, "CHANNELS", 8,
+                               curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+        self.outer_win.leaveok(1)
+        self.outer_win.noutrefresh()
+
         self.win.erase()
-        self.win.border(0)
-        self.win.attron(curses.color_pair(6))
-        self.win.addnstr(0, int(self.dims[1]/4), "CHANNELS", 8,
-                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
 
-        ChannelWindow.ChannelEntry.set_window(self.win, self.dims[1]-2)
+        ChannelWindow.ChannelEntry.win = self.win
 
-        # Limit the displayed channels to one column
-        max_length = self.dims[0]-2
+        # Force a single column layout to maximize label width
+        usable_height = self.dims[0] - 1
+        actual_col_width = self.dims[1]
 
-        # Add entries to the list if not already present
-        cur_length = len(self.entries)
-        if cur_length < max_length:
-            for _ in range(cur_length, max_length):
-                self.entries.append(ChannelWindow.ChannelEntry())
-
-        # limit the size to available space (the window got smaller)
-        self.entries = self.entries[:max_length]
+        # Only rebuild the entry list when the window geometry changes so that
+        # per-entry dirty-tracking caches (prev_channel, prev_idx) are preserved
+        # across normal draw cycles.
+        if len(self.entries) != usable_height or (
+                self.entries and self.entries[0].width != actual_col_width):
+            self.entries = [
+                ChannelWindow.ChannelEntry(i, 0, actual_col_width)
+                for i in range(usable_height)
+            ]
+            # Reset caches after a geometry-driven rebuild to force a full redraw
+            for entry in self.entries:
+                entry.reset_cache()
 
     def draw_channels(self, channels: list[ChannelFrequency]):
         """Draws tuned channels list
@@ -284,13 +389,27 @@ class ChannelWindow(object):
             if idx >= len(subset):
                 entry.set(None)
             else:
-                entry.set(subset[idx])
+                entry.set(subset[idx], idx)
 
         # Hide cursor
         self.win.leaveok(1)
 
         # Update virtual window
         self.win.noutrefresh()
+
+    def cleanup(self) -> None:
+        if hasattr(self, 'win') and self.win:
+            try:
+                self.win.erase()
+                del self.win
+            except Exception:
+                pass
+        if hasattr(self, 'outer_win') and self.outer_win:
+            try:
+                self.outer_win.erase()
+                del self.outer_win
+            except Exception:
+                pass
 
 
 class LockoutWindow(object):
@@ -301,39 +420,43 @@ class LockoutWindow(object):
     """
     # pylint: disable=too-few-public-methods
 
-    def __init__(self, screen):
+    def __init__(self, screen, width=None, x_offset=None):
         self.screen = screen
 
         # Create a window object in the bottom half of the screen
-        # Make it about 1/4 the screen width
-        # Place on left side and to the right of the border
+        # Place to the right of the Channel window
+        # width/x_offset default to the old 1/4-screen-each formula if not
+        # given explicitly (e.g. by a caller coordinating widths across the
+        # bottom-row panels)
         screen_dims = screen.getmaxyx()
         spectrum_height = int(screen_dims[0]/2.0)
         height = screen_dims[0] - spectrum_height - 2
-        width = int(screen_dims[1]/4.0)
-        self.win = curses.newwin(height, width, screen_dims[0] - height - 1, width+1)
+        if width is None:
+            width = int(screen_dims[1]/4.0)
+        if x_offset is None:
+            x_offset = width + 1
+        self.outer_win = curses.newwin(height, width, screen_dims[0] - height - 1, x_offset)
+        self.win = self.outer_win.derwin(height - 2, width - 2, 1, 1)
         self.dims = self.win.getmaxyx()
 
         self.lockouts: list[LockoutWindow.LockoutEntry] = []
 
     class LockoutEntry(object):
+        win = None
 
-        def __init__(self):
-            self.width = LockoutWindow.LockoutEntry.width
+        def __init__(self, row: int, col_offset: int, width: int):
+            self.row = row
+            self.col_offset = col_offset
+            self.width = width
             self.prev_lockout: ConfigFrequency | None = None
             self.prev_has_activity: bool | None = None
-
-            LockoutWindow.LockoutEntry.rows += 1
-            self.row = LockoutWindow.LockoutEntry.rows
 
             self.attrs = { 'bold_lockout': curses.color_pair(5) | curses.A_BOLD,
                            'normal_lockout': curses.color_pair(6) }
 
-        @classmethod
-        def set_window(cls, win: any, width: int):
-            LockoutWindow.LockoutEntry.win = win
-            LockoutWindow.LockoutEntry.rows = 0  # used to track the next index for each row
-            LockoutWindow.LockoutEntry.width = width
+        def reset_cache(self) -> None:
+            self.prev_lockout = None
+            self.prev_has_activity = None
 
         def set(self, lockout: ConfigFrequency, has_activity: bool) -> None:
             self.lockout = lockout
@@ -347,26 +470,31 @@ class LockoutWindow(object):
             self.prev_has_activity = self.has_activity
 
         def draw(self) -> None:
-
             row = self.row
+            col = self.col_offset
             lockout = self.lockout
             has_activity = self.has_activity
             win = LockoutWindow.LockoutEntry.win
 
+            if win is None:
+                return
+
             if lockout is None:
                 text = ' ' * self.width
-                win.addnstr(row, 1, text, self.width)
+                win.addnstr(row, col, text, self.width)
                 return
 
             if not lockout.saved:
                 icon = 'U'
             else:
-                icon = None
+                icon = ' '
 
             attr = self.attrs['normal_lockout']
 
             if lockout.is_single:
-                text = f"{lockout.single:.3f}"
+                text = f"{lockout.single:.4f}"
+                if text.endswith('0'):
+                    text = text[:-1] + ' '
                 if has_activity:
                     attr = self.attrs['bold_lockout']
             else:
@@ -374,31 +502,50 @@ class LockoutWindow(object):
                 if has_activity:
                     attr = self.attrs['bold_lockout']
 
-            win.addnstr(row, 1, text, self.width, attr)
-            if icon:
-                win.addnstr(row, len(text)+1, icon, 1, attr & ~curses.A_BOLD)
+            # Make sure we don't write out of column bounds
+            win.addnstr(row, col, text, self.width, attr)
+
+            icon_pos = len(text)
+            if self.width > icon_pos:
+                win.addnstr(row, col + icon_pos, icon, 1, attr & ~curses.A_BOLD)
+
+            label = lockout.label or ''
+            label_start = icon_pos + 2  # leave 1 space separator after the icon
+
+            if self.width > label_start:
+                remainder = self.width - label_start
+                win.addnstr(row, col + label_start, label.ljust(remainder), remainder, attr & ~curses.A_BOLD)
 
     def draw_frame(self) -> None:
-        # Clear previous contents, draw border, and title
-        self.win.erase()
-        self.win.border(0)
-        self.win.attron(curses.color_pair(6))
-        self.win.addnstr(0, int(self.dims[1]/2-3), "LOCKOUT", 7,
+        self.outer_win.erase()
+        self.outer_win.border(0)
+        self.outer_win.attron(curses.color_pair(6))
+        outer_width = self.dims[1] + 2
+        self.outer_win.addnstr(0, (outer_width - 7) // 2, "LOCKOUT", 7,
                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+        self.outer_win.leaveok(1)
+        self.outer_win.noutrefresh()
 
-        LockoutWindow.LockoutEntry.set_window(self.win, self.dims[1]-2)
+        self.win.erase()
 
-        # Limit the displayed channels to one column
-        max_length = self.dims[0]-2
+        LockoutWindow.LockoutEntry.win = self.win
 
-        # Add entries to the list if not already present
-        cur_length = len(self.lockouts)
-        if cur_length < max_length:
-            for _ in range(cur_length, max_length):
-                self.lockouts.append(LockoutWindow.LockoutEntry())
+        # Force a single column layout to maximize label/range space
+        usable_height = self.dims[0] - 1
+        actual_col_width = self.dims[1]
 
-        # limit the size to available space (the window got smaller)
-        self.lockouts = self.lockouts[:max_length]
+        # Only rebuild the lockout list when the window geometry changes so that
+        # per-entry dirty-tracking caches (prev_lockout, prev_has_activity) are
+        # preserved across normal draw cycles.
+        if len(self.lockouts) != usable_height or (
+                self.lockouts and self.lockouts[0].width != actual_col_width):
+            self.lockouts = [
+                LockoutWindow.LockoutEntry(i, 0, actual_col_width)
+                for i in range(usable_height)
+            ]
+            # Reset caches after a geometry-driven rebuild to force a full redraw
+            for lockout in self.lockouts:
+                lockout.reset_cache()
 
     def lockout_has_activity(self, lockout: ConfigFrequency) -> bool:
         """Checks if lockout has activity
@@ -427,7 +574,7 @@ class LockoutWindow(object):
         # Use color if lockout channel is in active channel list during this scan_cycle
         self.locked_channels = [c for c in channels if c.locked]
 
-        # Extract the frequencues/ranges the user wants locked out
+        # Extract the frequencies/ranges the user wants locked out
         locked_frequencies = [freq for freq in frequencies if freq.locked]
 
         # populate the gui list with the locked frequencies configured by the user
@@ -444,6 +591,20 @@ class LockoutWindow(object):
 
         # Update virtual window
         self.win.noutrefresh()
+
+    def cleanup(self) -> None:
+        if hasattr(self, 'win') and self.win:
+            try:
+                self.win.erase()
+                del self.win
+            except Exception:
+                pass
+        if hasattr(self, 'outer_win') and self.outer_win:
+            try:
+                self.outer_win.erase()
+                del self.outer_win
+            except Exception:
+                pass
 
     def proc_keyb_set_lockout(self, keyb: int):
         """Process keystrokes to lock out channels 0 - 9
@@ -501,7 +662,7 @@ class RxWindow(object):
     """
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, screen):
+    def __init__(self, screen, width=None):
         self.screen = screen
 
         # Set default values
@@ -528,28 +689,33 @@ class RxWindow(object):
         }
 
         # Create a window object in the bottom half of the screen
-        # Make it about 1/2 the screen width
         # Place on right side and to the left of the border
+        # width defaults to the old screen-remainder formula if not given
+        # explicitly (e.g. by a caller coordinating widths across the
+        # bottom-row panels)
         screen_dims = screen.getmaxyx()
         spectrum_height = int(screen_dims[0]/2.0)
         height = screen_dims[0] - spectrum_height - 2
-        # subtract the channel and lockout widths
-        width = screen_dims[1] - 2 * int(screen_dims[1]/4.0) - 2
-        self.win = curses.newwin(height, width, screen_dims[0] - height - 1,
+        if width is None:
+            # subtract the channel and lockout widths
+            width = screen_dims[1] - 2 * int(screen_dims[1]/4.0) - 2
+        self.outer_win = curses.newwin(height, width, screen_dims[0] - height - 1,
                                  int(screen_dims[1]-width-1))
+        self.win = self.outer_win.derwin(height - 2, width - 2, 1, 1)
         self.dims = self.win.getmaxyx()
 
     class RxEntry(object):
 
         label_width = 14
         value_width = 10
+        column_width = 27 # label_width + value_width + 3
         #rows = [0, 0]  # used to track the next index for each row
 
         def __init__(self, label: str | None, column: int,
                      justification: str, can_modify: bool):
             self.label = label
-            RxWindow.RxEntry.rows[column-1] += 1
             self.row = RxWindow.RxEntry.rows[column-1]
+            RxWindow.RxEntry.rows[column-1] += 1
             self.column = column
             self.justification = justification
             self.can_modify = can_modify
@@ -557,7 +723,6 @@ class RxWindow(object):
 
             win = RxWindow.RxEntry.win
             label_width = RxWindow.RxEntry.label_width
-            value_width = RxWindow.RxEntry.value_width
 
             self.attrs = { 'bold': curses.color_pair(5),
                            'normal': curses.color_pair(6) }
@@ -570,8 +735,8 @@ class RxWindow(object):
             else:
                 text = f'{self.label:>{label_width-1}} :'
 
-            start = (self.column - 1) * ( label_width + value_width + 3 ) + 1
-            win.addnstr(self.row, start, text, len(text)+1, self.attrs['normal'])
+            col_start = (self.column - 1) * RxWindow.RxEntry.column_width
+            win.addnstr(self.row, col_start, text, len(text), self.attrs['normal'])
 
         @classmethod
         def set_window(cls, win: any):
@@ -593,31 +758,62 @@ class RxWindow(object):
             value = self.value
 
             label_width = RxWindow.RxEntry.label_width
-            value_width = RxWindow.RxEntry.value_width
             win = RxWindow.RxEntry.win
 
-
-            if value is None:
-                text = ' ' * RxWindow.RxEntry.value_width
-                win.addnstr(row, 1, text, value_width)
+            if win is None:
                 return
 
+            # Dynamically calculate the maximum allowed width for this value to avoid wrapping and ERR
+            win_width = win.getmaxyx()[1]
+            col_start = (self.column - 1) * RxWindow.RxEntry.column_width
+            val_start = col_start + (RxWindow.RxEntry.label_width + 2 if self.label is not None else 0)
+
+            if self.column == 1:
+                # Column 1 values must not overlap Column 2
+                max_len = RxWindow.RxEntry.column_width - (val_start - col_start) - 1
+            else:
+                # Column 2 (or last column) values can utilize all remaining space to the right border
+                max_len = win_width - val_start - 1
+
+            max_len = max(0, max_len)
+
+            # None check must come before truncation so the blank-clear path is reachable
+            if value is None:
+                try:
+                    win.addnstr(row, val_start, ' ' * max_len, max_len)
+                except curses.error:
+                    pass
+                return
+
+            if len(value) > max_len:
+                value = value[:max_len]
+
             attr = self.attrs['bold'] if self.can_modify else self.attrs['normal']
-
-            # -2 is a hack for getting the range counter shifted to the left
-            label_offset = -2 if self.label is None else label_width + 3
-
-            start = (self.column - 1) * ( label_width + value_width + 3 ) + label_offset
-
-            win.addnstr(row, start, value, len(value), attr)
+            try:
+                win.addnstr(row, val_start, value, len(value), attr)
+            except curses.error:
+                pass
 
     def draw_frame(self) -> None:
-        # Clear previous contents, draw border, and title
-        self.win.erase()
-        self.win.border(0)
-        self.win.attron(curses.color_pair(6))
-        self.win.addnstr(0, int(self.dims[1]/2-4), "RECEIVER", 8,
+        self.outer_win.erase()
+        self.outer_win.border(0)
+        self.outer_win.attron(curses.color_pair(6))
+        outer_width = self.dims[1] + 2
+        self.outer_win.addnstr(0, (outer_width - 8) // 2, "RECEIVER", 8,
                          curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+        self.outer_win.leaveok(1)
+        self.outer_win.noutrefresh()
+
+        self.win.erase()
+
+        # Warn when the inner window is too narrow for the two-column layout.
+        # column_width * 2 columns are needed; narrower terminals will silently
+        # drop column-2 values (max_len clamps to 0) without this notice.
+        min_two_col_width = RxWindow.RxEntry.column_width * 2
+        if self.dims[1] < min_two_col_width:
+            logging.warning(
+                "RxWindow inner width %d < %d; column-2 fields will not be drawn",
+                self.dims[1], min_two_col_width)
 
         RxWindow.RxEntry.set_window(self.win)
 
@@ -719,6 +915,20 @@ class RxWindow(object):
         # Update virtual window
         self.win.noutrefresh()
 
+    def cleanup(self) -> None:
+        if hasattr(self, 'win') and self.win:
+            try:
+                self.win.erase()
+                del self.win
+            except Exception:
+                pass
+        if hasattr(self, 'outer_win') and self.outer_win:
+            try:
+                self.outer_win.erase()
+                del self.outer_win
+            except Exception:
+                pass
+
     def proc_keyb_hard(self, keyb: int):
         """Process keystrokes to adjust hard receiver settings
 
@@ -790,6 +1000,12 @@ class RxWindow(object):
         else:
             return False
 
+    def _adjust_gain_stage(self, index: int, delta: float) -> bool:
+        if index < len(self.gains):
+            self.gains[index]["value"] += delta
+            return True
+        return False
+
     def proc_keyb_soft(self, keyb: int):
         """Process keystrokes to adjust soft receiver settings
 
@@ -808,54 +1024,42 @@ class RxWindow(object):
 
         # Tune 1st gain element in 10 dB steps with 'g' and 'f'
         if keyb == ord('g'):
-            self.gains[0]["value"] += 10
-            return True
+            return self._adjust_gain_stage(0, 10)
         elif keyb == ord('f'):
-            self.gains[0]["value"] -= 10
-            return True
+            return self._adjust_gain_stage(0, -10)
 
         # Tune 1st gain element in 1 dB steps with 'G' and 'F'
         if keyb == ord('G'):
-            self.gains[0]["value"] += 1
-            return True
+            return self._adjust_gain_stage(0, 1)
         elif keyb == ord('F'):
-            self.gains[0]["value"] -= 1
-            return True
+            return self._adjust_gain_stage(0, -1)
 
         # Tune 2nd gain element in 10 dB steps with 'u' and 'y'
         if keyb == ord('u'):
-            self.gains[1]["value"] += 10
-            return True
+            return self._adjust_gain_stage(1, 10)
         elif keyb == ord('y'):
-            self.gains[1]["value"] -= 10
-            return True
+            return self._adjust_gain_stage(1, -10)
 
         # Tune 2nd gain element in 1 dB steps with 'U' and 'Y'
         if keyb == ord('U'):
-            self.gains[1]["value"] += 1
-            return True
+            return self._adjust_gain_stage(1, 1)
         elif keyb == ord('Y'):
-            self.gains[1]["value"] -= 1
-            return True
+            return self._adjust_gain_stage(1, -1)
 
         # Tune 3rd gain element in 10 dB steps with ']' and '['
         if keyb == ord(']'):
-            self.gains[2]["value"] += 10
-            return True
+            return self._adjust_gain_stage(2, 10)
         elif keyb == ord('['):
-            self.gains[2]["value"] -= 10
-            return True
+            return self._adjust_gain_stage(2, -10)
 
         # Tune 3rd gain element in 1 dB steps with '}' and '{'
         if keyb == ord('}'):
-            self.gains[2]["value"] += 1
-            return True
+            return self._adjust_gain_stage(2, 1)
         elif keyb == ord('{'):
-            self.gains[2]["value"] -= 1
-            return True
+            return self._adjust_gain_stage(2, -1)
 
         # Tune self.squelch_db in 1 dB steps with 's' and 'a'
-        elif keyb == ord('s'):
+        if keyb == ord('s'):
             self.squelch_db += 1
             return True
         elif keyb == ord('a'):
@@ -870,6 +1074,50 @@ class RxWindow(object):
             return True
         else:# pylint: disable=too-many-return-statements
             return False
+
+
+def create_bottom_row_windows(screen, chan_min_width=20, lock_min_width=20,
+                               weights=None):
+    """Creates and positions the Channel, Lockout, and Receiver windows.
+
+    Channel and Lockout display open-ended, user-supplied label text, so
+    they benefit from extra terminal width more than Receiver does, whose
+    content is fixed-format label:value columns that stop needing more
+    room once the columns fit. As the terminal widens, this gives
+    Channel/Lockout a larger share of the new space instead of all three
+    panels growing at the same fixed proportion of the terminal width.
+
+    Args:
+        screen (object): a curses screen object
+        chan_min_width (int): minimum width to reserve for the Channel panel
+        lock_min_width (int): minimum width to reserve for the Lockout panel
+        weights (dict): optional override of {'chan', 'lock', 'rx'} growth
+            weights; defaults to Channel/Lockout growing twice as fast as
+            Receiver once minimums are satisfied
+
+    Returns:
+        tuple: (ChannelWindow, LockoutWindow, RxWindow) instances
+    """
+    if weights is None:
+        weights = {'chan': 2, 'lock': 2, 'rx': 1}
+
+    screen_dims = screen.getmaxyx()
+    # Matches the original layout math: 1 border column reserved on each
+    # side of the screen, with no gap between the three panels themselves.
+    total_usable_width = screen_dims[1] - 2
+
+    # Receiver's minimum is its actual content requirement: two columns of
+    # label:value pairs plus its own left/right border.
+    rx_min_width = RxWindow.RxEntry.column_width * 2 + 2
+
+    min_widths = {'chan': chan_min_width, 'lock': lock_min_width, 'rx': rx_min_width}
+    widths = compute_panel_widths(total_usable_width, min_widths, weights)
+
+    chanwin = ChannelWindow(screen, width=widths['chan'])
+    lockoutwin = LockoutWindow(screen, width=widths['lock'], x_offset=widths['chan'] + 1)
+    rxwin = RxWindow(screen, width=widths['rx'])
+    return chanwin, lockoutwin, rxwin
+
 
 def setup_screen(screen):
     """Sets up screen
@@ -918,9 +1166,7 @@ def main():
 
     # Create windows
     specwin = SpectrumWindow(screen)
-    chanwin = ChannelWindow(screen)
-    lockoutwin = LockoutWindow(screen)
-    rxwin = RxWindow(screen)
+    chanwin, lockoutwin, rxwin = create_bottom_row_windows(screen)
 
     while 1:
         # Generate some random spectrum data from -dyanmic_range to 0 dB
