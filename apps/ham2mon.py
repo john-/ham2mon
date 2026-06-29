@@ -8,6 +8,7 @@ Created on Fri Jul  3 13:38:36 2015
 
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper
+import curses
 import cursesgui
 import h2m_parser as h2m_parser
 import asyncio
@@ -25,6 +26,7 @@ class MyDisplay():
     def __init__(self, stdscr: "_curses._CursesWindow") -> None:
         self.stdscr = stdscr
         self.scanner = None
+        self.too_small = False
 
     async def run(self) -> None:
         curs_set(0)
@@ -60,14 +62,34 @@ class MyDisplay():
         # pylint: disable=too-many-statements
         # pylint: disable-msg=R0914
 
-        # Setup the screen
+        # Clean up existing sub-windows to prevent C-level resource memory leaks
+        for win_name in ('specwin', 'chanwin', 'lockoutwin', 'rxwin'):
+            if hasattr(self, win_name):
+                win_obj = getattr(self, win_name)
+                if win_obj and hasattr(win_obj, 'cleanup'):
+                    win_obj.cleanup()
+
+        # Erase the full screen and reset ncurses parameters
+        self.stdscr.clear()
         cursesgui.setup_screen(self.stdscr)
+
+        # Enforce minimum terminal dimensions to prevent negative window sizing crash
+        screen_dims = self.stdscr.getmaxyx()
+        if screen_dims[0] < 24 or screen_dims[1] < 80:
+            self.too_small = True
+            self.stdscr.erase()
+            self.stdscr.border(0)
+            self.stdscr.addstr(1, 2, "Terminal too small!", curses.A_BOLD | curses.color_pair(1))
+            self.stdscr.addstr(2, 2, f"Current: {screen_dims[1]}x{screen_dims[0]}", curses.A_DIM)
+            self.stdscr.addstr(3, 2, "Required minimum: 80x24", curses.A_DIM)
+            self.stdscr.noutrefresh()
+            return
+        else:
+            self.too_small = False
 
         # Create windows
         self.specwin = cursesgui.SpectrumWindow(self.stdscr)
-        self.chanwin = cursesgui.ChannelWindow(self.stdscr)
-        self.lockoutwin = cursesgui.LockoutWindow(self.stdscr)
-        self.rxwin = cursesgui.RxWindow(self.stdscr)
+        self.chanwin, self.lockoutwin, self.rxwin = cursesgui.create_bottom_row_windows(self.stdscr)
 
         # Get the initial settings for GUI
         self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
@@ -93,11 +115,12 @@ class MyDisplay():
         self.rxwin.classifier_params = PARSER.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
 
+        # Update virtual representation of root screen first
+        self.stdscr.noutrefresh()
+
         self.chanwin.draw_frame()
         self.lockoutwin.draw_frame()
         self.rxwin.draw_frame()
-
-        self.stdscr.refresh()
 
     async def cycle(self) -> None:
         # Initiate a scan cycle
@@ -107,14 +130,19 @@ class MyDisplay():
 
         await self.scanner.scan_cycle()
 
+        if getattr(self, 'too_small', False):
+            # Double-buffer refresh only the resized root window holding the warning
+            curses.doupdate()
+            return
+
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
         self.chanwin.draw_channels(self.scanner.channels)
         self.lockoutwin.draw_channels(self.scanner.frequencies, self.scanner.channels)
         self.rxwin.draw_rx()
 
-        # Update physical screen
-        self.stdscr.refresh()
+        # Update physical screen via optimized double buffering
+        curses.doupdate()
 
     async def init_scanner(self) -> scnr.Scanner:
         # Create scanner object
