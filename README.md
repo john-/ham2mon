@@ -3,7 +3,8 @@ This is a GNU Radio (GR) based SDR scanner with a Curses interface, primarily me
 
 http://youtu.be/BXptQFSV8E4
 
-![GUI screenshot](doc/ham2mon.png)
+![This ham2mon animation is the playback of a simulation](doc/video.gif)
+This animation is the playback of a [simulation](doc/simulate-radio-tranmissions.md).
 
 ## Tested with:
 

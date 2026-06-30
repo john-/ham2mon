@@ -1,0 +1,52 @@
+# Example frequency configuration file for ham2mon.
+#
+# Specify this file with the -F/--frequencies command line option to enable:
+#   1. Priority frequencies   (priority: <int>, lower number = higher priority)
+#   2. Lockout frequencies    (locked: true)
+#   3. Frequency labeling     (label: "...")
+#   4. CTCSS tone squelch     (ctcss: <Hz>)
+#
+# Each entry is either a single frequency (single: <MHz>) or a frequency
+# range (lo: <MHz>, hi: <MHz>), but never both. All frequencies are in MHz.
+#
+# CTCSS:
+#   If a "ctcss" tone (in Hz) is given, the channel uses Tone Squelch mode:
+#   the demodulator only opens when the carrier includes that sub-audible tone.
+#   Channels without "ctcss" operate in Carrier Squelch (CSQ) mode.
+#   See the "CTCSS Squelch and Tone Filtering" section of the README for the
+#   full list of valid tone frequencies.
+
+frequencies:
+
+  # Actively monitored channels
+
+  - label: "Local repeater output"
+    single: 462.730
+    priority: 2
+    # No ctcss -- this channel uses Carrier Squelch (CSQ)
+
+  - label: "Some dispatch"
+    single: 462.400
+    priority: 1
+    ctcss: 100.0
+
+  - label: "General talkaround"
+    single: 462.610
+    ctcss: 167.9
+
+  # The scanner will detect and record any active channel in these ranges.
+
+  - label: "UHF business band low segment"
+    lo: 462.200
+    hi: 462.350
+
+  - label: "UHF business band high segment"
+    lo: 462.800
+    hi: 463.200
+
+  # Thw entry below is locked: the scanner will never tune a
+  # demodulator to them regardless of activity.
+
+  - label: "Data telemetry burst link"
+    single: 462.150
+    locked: true
