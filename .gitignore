@@ -1,6 +1,7 @@
 .vscode
 .coverage
 .zed/
+.agents
 .antigravitycli/
 .venv/
 wav/
