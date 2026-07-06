@@ -67,7 +67,7 @@ class CLParser(object):
         parser.add_argument("-f", "--freq", type=str, dest="freq_spec",
                           nargs='+', default=["146"],
                           help="Hardware RF center frequency or range in Mhz")
-        
+
         parser.add_argument("--quiet_timeout", type=int,
                           dest="quiet_timeout", default=12,
                           help="Timeout when there is no activity")
@@ -172,7 +172,7 @@ class CLParser(object):
         parser.add_argument("-b", "--bps", type=int, dest="audio_bps",
                           default=16,
                           help="Audio bit depth (bps)")
-        
+
         parser.add_argument("-M", "--max_db", type=float, dest="max_db",
                           default=50,
                           help="Spectrum window max dB for display")
@@ -195,20 +195,34 @@ class CLParser(object):
 
         parser.add_argument("--voice", dest="voice", action="store_true",
                           help="Record voice")
-        
+
         parser.add_argument("--data", dest="data", action="store_true",
                           help="Record voice")
 
         parser.add_argument("--skip", dest="skip", action="store_true",
-                          help="Record voice")  
+                          help="Record voice")
 
         parser.add_argument("--model", type=Path,
                           dest="model_file_name",
-                          default="model/model_1.tflite",
+                          default=None,
                           help="Classification model file in tflite format")
+        parser.add_argument("--log-level", dest="log_level",
+                          choices=["debug", "info", "warn", "error"],
+                          default="warn",
+                          help="Log verbosity level; only has effect if --log-dest is not 'none' (default: warn)")
 
-        parser.add_argument("--debug", dest="debug", action="store_true",
-                          help="Enable debug file with additional information (ham2mon.log)")              
+        parser.add_argument("--log-dest", dest="log_dest",
+                          choices=["none", "file", "syslog", "stderr"],
+                          default="none",
+                          help="Log destination (default: none)")
+
+        parser.add_argument("--log-file", dest="log_file",
+                          type=str, default="",
+                          help="Log file path when --log-dest is 'file' (default: script_dir/ham2mon.log)")
+
+        parser.add_argument("--file-metadata", type=str,
+                          dest="file_metadata", default="",
+                          help="Comma-separated list of metadata fields to include in output filenames (e.g. priority,strength)")
 
         options = parser.parse_args()
         self.print_help = parser.print_help
@@ -237,7 +251,7 @@ class CLParser(object):
                     if upper_freq:
                         upper_freq = int(float(upper_freq)*1E6)
                 except ValueError as err:
-                    raise Exception(f'Frequencies must be integers: {err}')
+                    parser.error(f'Frequencies must be integers: {err}')
                 range_params.append(FrequencyRangeParams(lower_freq=lower_freq, upper_freq=upper_freq))
             except ValueError:
                 # there is a single value provided
@@ -245,13 +259,13 @@ class CLParser(object):
                     single_freq = int(float(freq_entry)*1E6)
                     single_params.append(FrequencySingleParams(freq=single_freq))
                 except ValueError as err:
-                    raise Exception(f'Frequency must be integers: {err}')
+                    parser.error(f'Frequency must be integers: {err}')
 
         self.frequency_params =  FrequencyGroup(ranges=range_params, singles=single_params,
                                                 sample_rate=self.ask_samp_rate,
                                                 quiet_timeout=int(options.quiet_timeout),
                                                 active_timeout=int(options.active_timeout))
-        
+
         self.gains = [
             { "name": "RF", "value": float(options.rf_gain_db) },
             { "name": "LNA","value": float(options.lna_gain_db) },
@@ -292,26 +306,44 @@ class CLParser(object):
         self.min_recording = float(options.min_recording)
         self.max_recording = float(options.max_recording)
 
-        voice = bool(options.voice)        
+        voice = bool(options.voice)
         data = bool(options.data)
         skip = bool(options.skip)
 
         if self.auto_priority:
             voice = True
 
-        self.model_file_name = Path(options.model_file_name)
+        if voice or data or skip:
+            if not options.model_file_name:
+                raise Exception("A model file must be specified (using --model) when classification or auto-priority is enabled.")
+            self.model_file_name = options.model_file_name
+        else:
+            self.model_file_name = None
+
         self.classifier_params = ClassifierParams(
             wanted={'V': voice,
                     'D': data,
                     'S': skip,
             },
-            model_file_name=self.model_file_name.resolve(),
+            model_file_name=self.model_file_name,
         )
 
         if voice or data or skip:
             self.record = True
 
-        self.debug = bool(options.debug)
+        self.log_level = options.log_level
+        self.log_dest = options.log_dest
+        self.log_file = options.log_file
+
+        self.file_metadata: list[str] = []
+        if options.file_metadata:
+            fields = [f.strip().lower() for f in options.file_metadata.split(',')]
+            valid_fields = {'priority', 'strength'}
+            for field in fields:
+                if field not in valid_fields:
+                    parser.error(f"Unsupported metadata field: '{field}'. Supported fields: priority, strength")
+            self.file_metadata = fields
+
 
 def main():
     """Test the parser"""
@@ -355,11 +387,12 @@ def main():
     print("auto_priority:       " + str(parser.auto_priority))
     print("disable_lockout:     " + str(parser.frequency_configuration.disable_lockout))
     print("disable_priority:    " + str(parser.frequency_configuration.disable_priority))
-    print("debug:               " + str(parser.debug))
+    print("log_level:           " + str(parser.log_level))
+    print("log_dest:            " + str(parser.log_dest))
+    print("log_file:            " + str(parser.log_file))
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
         pass
-

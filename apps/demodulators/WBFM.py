@@ -8,13 +8,11 @@ from gnuradio.fft import window  # type: ignore
 from gnuradio import analog
 from gnuradio.filter import pfb  # type: ignore
 from gnuradio import blocks
-import ctcss_tones as ct
 import logging
 from typing import Callable
 
 from demodulators.BaseTuner import BaseTuner
 from classification import Classifier
-from channel_loggers import ChannelLogger
 
 class TunerDemodWBFM(BaseTuner):
     """Tuner, demodulator, and recorder chain for wide band FM demodulation
@@ -68,14 +66,21 @@ class TunerDemodWBFM(BaseTuner):
 
     def __init__(self, samp_rate: int, audio_rate: int, record: bool,
                  audio_bps: int, min_recording: float, classify: Classifier | None,
-                 notify_scanner: Callable, ctcss_filter: bool=False, ctcss_tone_block: bool=False):
+                 notify_scanner: Callable,
+                 file_metadata: list[str] | None = None,
+                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+                 get_ctcss_info: Callable[[int], float | None] | None = None,
+                 wav_dir: str = "wav"):
 
         gr.hier_block2.__init__(self, "TunerDemodWBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, notify_scanner)
-        
+        super().__init__(classify, notify_scanner, file_metadata=file_metadata,
+                         get_priority_info=get_priority_info, get_ctcss_info=get_ctcss_info,
+                         wav_dir=wav_dir, audio_rate=audio_rate)
+
+
         # Default values
         self.center_freq = 0
         self.time_stamp = 0
@@ -85,9 +90,7 @@ class TunerDemodWBFM(BaseTuner):
         self.record = record
         self.audio_bps = audio_bps
         self.min_recording = min_recording
-        self.ctcss_filter = ctcss_filter
-        self.ctcss_tone_block = ctcss_tone_block
-        self.ctcss_level = 0.001 # little value in configuring this from testing so far
+
 
         # Decimation values for four stages of decimation
         decims = (4, int(samp_rate/1E6))
@@ -145,46 +148,6 @@ class TunerDemodWBFM(BaseTuner):
         # Only want it to gate when the previous squelch has gone to zero
         analog_pwr_squelch_ff = analog.pwr_squelch_ff(-200, 1e-1, 0, True)
 
-        # Connect CTCSS related blocks
-        if (self.ctcss_filter):
-            # create CTCSS squelch block for float audio values at audio rate
-            self.analog_ctcss_squelch_ff_0 = analog.ctcss_squelch_ff(audio_rate, self.ctcss_tone, self.ctcss_level, 1000, 0, True)
-
-        if (self.ctcss_tone_block):
-            # create CTCSS tone filtering high-pass filter for float audio
-            self.high_pass_filter_0 = filter.fir_filter_fff(
-            1,
-            firdes.high_pass(
-                1,
-                16000,
-                300,
-                10,
-                window.WIN_HAMMING,
-                6.76))
-
-#        if (self.ctcss_tone_detect):
-#            # create tone detector via band-pass filter into pll freq det and moving avg
-#            self.band_pass_filter_0 = filter.fir_filter_fcc(
-#            1,
-#            firdes.complex_band_pass(
-#                1,
-#                audio_rate,
-#                55,
-#                265,
-#                100,
-#                window.WIN_HAMMING,
-#                6.76))
-#            self.analog_pll_freqdet_cf_0 = analog.pll_freqdet_cf(100*2.0*pi, pi, -pi)
-#            self.blocks_keep_one_in_n_0_0 = blocks.keep_one_in_n(gr.sizeof_float*1, 5)
-#            self.blocks_complex_to_mag_squared_0 = blocks.complex_to_mag_squared(fft_length)
-#            self.blocks_moving_average_xx_0 = blocks.moving_average_ff(3200, 1/3200, 30, 1)
-#            self.blocks_multiply_const_vxx_0_0 = blocks.multiply_const_ff(audio_rate)
-#            self.blocks_multiply_const_vxx_0 = blocks.multiply_const_ff(1/(2*pi))
-
-        # Need to set this to a very low value of -200 since it is after demod
-        # Only want it to gate when the previous squelch has gone to zero
-        analog_pwr_squelch_ff = analog.pwr_squelch_ff(-200, 1e-1, 0, True)
-
         # Connect the blocks for the demod
         self.connect(self, self.freq_xlating_fir_filter_ccc)
         self.connect(self.freq_xlating_fir_filter_ccc, fir_filter_ccc_0)
@@ -194,29 +157,12 @@ class TunerDemodWBFM(BaseTuner):
                      self.analog_quadrature_demod_cf)
         self.connect(self.analog_quadrature_demod_cf, fir_filter_fff_0)
         self.connect(fir_filter_fff_0, pfb_arb_resampler_fff)
-        self.connect(pfb_arb_resampler_fff, self)
-
-        if (self.ctcss_filter and ~self.ctcss_tone_block):
-            # Connect the blocks for CTCSS squelch filtering, keeping tone in audio
-            self.connect(pfb_arb_resampler_fff, self.analog_ctcss_squelch_ff_0)
-            self.connect(self.analog_ctcss_squelch_ff_0, analog_pwr_squelch_ff)
-        elif (self.ctcss_filter and self.ctcss_tone_block):
-            # Connect the blocks for CTCSS squelch filtering, removing tone in audio
-            self.connect(pfb_arb_resampler_fff, self.analog_ctcss_squelch_ff_0)
-            self.connect(self.analog_ctcss_squelch_ff_0, self.high_pass_filter_0)
-            self.connect(self.high_pass_filter_0, analog_pwr_squelch_ff)
-        elif (self.ctcss_tone_block):
-            # Connect the blocks for removing CTCSS tones from audio
-            self.connect(pfb_arb_resampler_fff, self.high_pass_filter_0)
-            self.connect(self.high_pass_filter_0, analog_pwr_squelch_ff)
-#        elif (self.ctcss_tone_detect):
-#            # Connect tone detection PLL
-#            self.connect(pfb_arb_resampler_fff,
-        else:
-            # Connect without CTCSS
-            self.connect(pfb_arb_resampler_fff, analog_pwr_squelch_ff)
+        self.connect(pfb_arb_resampler_fff, self.ctcss_in)
+        self.connect(self.ctcss_out, self)
 
         # Connect the blocks for recording
+        self.connect(self.ctcss_out, analog_pwr_squelch_ff)
+
         # File sink with single channel and bits/sample
         if (self.record):
             self.blocks_wavfile_sink = blocks.wavfile_sink('/dev/null', 1,
@@ -224,10 +170,8 @@ class TunerDemodWBFM(BaseTuner):
                                                        blocks.FORMAT_WAV,
                                                        blocks.FORMAT_PCM_16,
                                                        False)
-            self.connect(analog_pwr_squelch_ff, self.blocks_wavfile_sink)
-        else:
-            null_sink1 = blocks.null_sink(gr.sizeof_float)
-            self.connect(analog_pwr_squelch_ff, null_sink1)
+        self.connect_wav_sink(analog_pwr_squelch_ff)
+
 
     def set_volume(self, volume_db):
         """Sets the volume
@@ -237,15 +181,3 @@ class TunerDemodWBFM(BaseTuner):
         """
         gain = self.quad_demod_gain * 10**(volume_db/20.0)
         self.analog_quadrature_demod_cf.set_gain(gain)
-
-    def set_ctcss_tone(self, ctcss_tone):
-        """Sets the CTCSS tone frequency by selecting the index from tone list that matches the input value
-
-        Args:
-            ctcss_tone (float): CTCSS tone frequency in Hz
-        """
-        self.ctcss_index = ct.ctcss_tones.index(ctcss_tone)
-        if (~self.ctcss_index):
-            self.ctcss_index = 0
-        self.ctcss_tone = ct.ctcss_tones[self.ctcss_index]
-        return self.ctcss_tone

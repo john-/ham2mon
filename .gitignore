@@ -1,5 +1,8 @@
 .vscode
 .coverage
-.antigravitycli
+.zed/
+.antigravitycli/
 .venv/
 wav/
+test_signals/
+model/

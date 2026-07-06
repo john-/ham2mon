@@ -39,6 +39,28 @@ async def fm_with_entries() -> FrequencyManager:
     return frequency_manager
 
 
+async def load_inline_config(frequency_manager: FrequencyManager, *entries: dict):
+    """
+    Feed frequency entries through the same process_frequencies_data() path used
+    for real config files, without touching disk. Each positional dict is exactly
+    what a `- label: ...` block under `frequencies:` would parse to, so a test's
+    config can be written inline in the .py in a form that reads like the YAML
+    it's meant to represent, e.g.:
+
+        await load_inline_config(fm,
+            {'label': 'Security Patrol dispatch', 'single': 462.400, 'ctcss': 100.0},
+            {'label': 'Security Patrol dispatch (Backup)', 'single': 462.400, 'ctcss': 67.0},
+        )
+
+    Prefer this over calling frequency_manager.add() directly when the test's
+    intent is "how does a config file with these entries behave" (e.g. loading,
+    merging, duplicate handling) rather than "how does add() itself behave" in
+    isolation (for the latter, calling add() directly, as most tests in this file
+    do, is more direct).
+    """
+    return await frequency_manager.process_frequencies_data({'frequencies': list(entries)})
+
+
 @pytest.mark.asyncio
 async def test_process_frequencies_data():
     """Test the process_frequencies_data method directly with various inputs"""
@@ -47,13 +69,11 @@ async def test_process_frequencies_data():
     frequency_manager = FrequencyManager(config, CHANNEL_SPACING)
 
     # Test with valid data
-    valid_config = {
-        'frequencies': [
-            {'label': 'Test', 'single': 450.0},
-            {'label': 'Range', 'lo': 460.0, 'hi': 470.0}
-        ]
-    }
-    frequencies = await frequency_manager.process_frequencies_data(valid_config)
+    frequencies = await load_inline_config(
+        frequency_manager,
+        {'label': 'Test', 'single': 450.0},
+        {'label': 'Range', 'lo': 460.0, 'hi': 470.0},
+    )
     assert len(frequencies) == 2
 
 
@@ -83,8 +103,12 @@ async def test_file_format_conditions(file, expected_exception, message):
 
 @pytest.mark.asyncio
 async def test_file_load_no_errors(fm_with_entries):
-
     await fm_with_entries.load()
+    initial_len = len(fm_with_entries.frequencies)
+    # Loading twice should not raise any duplicate/already exists errors
+    # and should be idempotent (i.e. length shouldn't change / no duplicates added)
+    await fm_with_entries.load()
+    assert len(fm_with_entries.frequencies) == initial_len
 
 
 @pytest.mark.asyncio
@@ -229,6 +253,150 @@ async def test_fail_duplicate_add_single_frequency(fm_empty):
 
     with pytest.raises(ValueError, match='already occurs in list'):
         await fm_empty.add(entry)
+
+
+"""
+Multiple CTCSS tones per frequency
+
+Real-world config sometimes needs more than one CTCSS tone valid for the same
+physical frequency (e.g. a repeater that answers to a primary and a backup PL
+tone). Rather than requiring a new YAML shape, this is expressed by declaring
+the same frequency/range twice, differing only by `ctcss` -- mirroring how
+users already tend to write these configs:
+
+    - label: "Security Patrol dispatch"
+      single: 462.400
+      priority: 1
+      ctcss: 100.0
+    - label: "Security Patrol dispatch (Backup)"
+      single: 462.400
+      priority: 1
+      ctcss: 67.0
+"""
+
+
+@pytest.mark.asyncio
+async def test_add_merges_second_ctcss_tone_for_same_frequency(fm_empty):
+
+    FREQ = 462.400
+
+    await fm_empty.add({'label': 'Security Patrol dispatch',
+                        'single': FREQ, 'priority': 1, 'ctcss': 100.0})
+    frequencies = await fm_empty.add({'label': 'Security Patrol dispatch (Backup)',
+                                      'single': FREQ, 'priority': 1, 'ctcss': 67.0})
+
+    # No new entry was added -- the second declaration was merged into the first
+    assert len(frequencies) == 1
+
+    merged = frequencies[LAST_ENTRY]
+    assert merged.label == 'Security Patrol dispatch'  # first entry's label wins
+    assert merged.ctcss == 100.0                        # primary tone, back-compat
+    assert merged.ctcss_tones == [100.0, 67.0]
+
+
+@pytest.mark.asyncio
+async def test_add_merges_third_ctcss_tone_for_same_frequency(fm_empty):
+
+    FREQ = 462.400
+
+    await fm_empty.add({'label': 'Primary', 'single': FREQ, 'ctcss': 100.0})
+    await fm_empty.add({'label': 'Backup 1', 'single': FREQ, 'ctcss': 67.0})
+    frequencies = await fm_empty.add({'label': 'Backup 2', 'single': FREQ, 'ctcss': 82.5})
+
+    assert len(frequencies) == 1
+    assert frequencies[LAST_ENTRY].ctcss_tones == [100.0, 67.0, 82.5]
+
+
+@pytest.mark.asyncio
+async def test_add_merges_ctcss_tone_for_same_range(fm_empty):
+
+    FREQ = 450.0
+
+    await fm_empty.add({'label': 'Primary', 'lo': FREQ, 'hi': FREQ+1, 'ctcss': 100.0})
+    frequencies = await fm_empty.add({'label': 'Backup', 'lo': FREQ, 'hi': FREQ+1, 'ctcss': 67.0})
+
+    assert len(frequencies) == 1
+    assert frequencies[LAST_ENTRY].ctcss_tones == [100.0, 67.0]
+
+
+@pytest.mark.asyncio
+async def test_fail_duplicate_ctcss_tone_same_value(fm_empty):
+    """Repeating the exact same tone for the same frequency is a real duplicate, not a merge."""
+
+    FREQ = 462.400
+
+    entry = {'label': 'Security Patrol dispatch', 'single': FREQ, 'ctcss': 100.0}
+
+    await fm_empty.add(entry)
+
+    with pytest.raises(ValueError, match='already occurs in list'):
+        await fm_empty.add(entry)
+
+
+@pytest.mark.asyncio
+async def test_fail_merge_ctcss_conflicting_priority(fm_empty):
+    """A duplicate-frequency entry with a different explicit priority is ambiguous config."""
+
+    FREQ = 462.400
+
+    await fm_empty.add({'label': 'Security Patrol dispatch',
+                        'single': FREQ, 'priority': 1, 'ctcss': 100.0})
+
+    with pytest.raises(ValueError, match='conflicts with existing priority'):
+        await fm_empty.add({'label': 'Security Patrol dispatch (Backup)',
+                            'single': FREQ, 'priority': 2, 'ctcss': 67.0})
+
+
+@pytest.mark.asyncio
+async def test_get_ctcss_tones_returns_all_configured_tones(fm_empty):
+
+    FREQ = 462.400
+
+    await fm_empty.add({'label': 'Primary', 'single': FREQ, 'ctcss': 100.0})
+    await fm_empty.add({'label': 'Backup', 'single': FREQ, 'ctcss': 67.0})
+
+    fm_empty.set_center(FREQ*1e6)
+
+    assert fm_empty.get_ctcss_tones(FREQ) == [100.0, 67.0]
+
+
+@pytest.mark.asyncio
+async def test_get_ctcss_tones_empty_when_not_configured(fm_empty):
+
+    await fm_empty.add({'label': 'No tone', 'single': 462.400})
+
+    assert fm_empty.get_ctcss_tones(462.400) == []
+    assert fm_empty.get_ctcss_tones(999.0) == []
+
+
+@pytest.mark.asyncio
+async def test_get_ctcss_info_still_returns_only_primary_tone(fm_empty):
+    """
+    get_ctcss_info() is kept single-valued on purpose for callers (e.g. the
+    current single-tone squelch) that don't yet support multiple tones.
+    """
+    FREQ = 462.400
+
+    await fm_empty.add({'label': 'Primary', 'single': FREQ, 'ctcss': 100.0})
+    await fm_empty.add({'label': 'Backup', 'single': FREQ, 'ctcss': 67.0})
+
+    assert fm_empty.get_ctcss_info(FREQ) == 100.0
+
+
+@pytest.mark.asyncio
+async def test_process_frequencies_data_merges_duplicate_ctcss_entries(fm_empty):
+    """End-to-end version of the merge, through the same path a real YAML config load uses."""
+
+    frequencies = await load_inline_config(
+        fm_empty,
+        {'label': 'Security Patrol dispatch', 'single': 462.400,
+            'priority': 1, 'ctcss': 100.0},
+        {'label': 'Security Patrol dispatch (Backup)',
+            'single': 462.400, 'priority': 1, 'ctcss': 67.0},
+    )
+
+    assert len(frequencies) == 1
+    assert frequencies[0].ctcss_tones == [100.0, 67.0]
 
 
 @pytest.mark.asyncio
@@ -793,3 +961,38 @@ async def test_fail_change_nonexistant_range(fm_empty):
 
     with pytest.raises(ValueError, match='not found in frequencies list'):
         await fm_empty.change(entry)
+
+
+@pytest.mark.asyncio
+async def test_get_priority_info(fm_empty):
+    CENTER_FREQ = 500e6  # 500 MHz
+    fm_empty.set_center(CENTER_FREQ)
+
+    # 1. Add a single frequency with priority 1, mode='add' (auto-priority)
+    await fm_empty.add({'single': 500.01, 'priority': 1, 'label': 'Auto Priority Single', 'mode': 'add'})
+
+    # 2. Add a single frequency with priority 1, normal (not auto)
+    await fm_empty.add({'single': 500.02, 'priority': 1, 'label': 'Priority Single'})
+
+    # 3. Add a range frequency with priority 3
+    await fm_empty.add({'lo': 500.03, 'hi': 500.05, 'priority': 3, 'label': 'Range Priority'})
+
+    # Test single auto-priority: +10 kHz (10000 Hz)
+    p, is_auto = fm_empty.get_priority_info(10000)
+    assert p == 1
+    assert is_auto is True
+
+    # Test single normal priority: +20 kHz (20000 Hz)
+    p, is_auto = fm_empty.get_priority_info(20000)
+    assert p == 1
+    assert is_auto is False
+
+    # Test range priority: +40 kHz (40000 Hz)
+    p, is_auto = fm_empty.get_priority_info(40000)
+    assert p == 3
+    assert is_auto is False
+
+    # Test non-priority channel: +60 kHz (60000 Hz)
+    p, is_auto = fm_empty.get_priority_info(60000)
+    assert p is None
+    assert is_auto is False

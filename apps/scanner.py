@@ -11,6 +11,7 @@ import h2m_parser as prsr
 import time
 import numpy as np
 import sys
+import threading
 # import yaml
 import logging
 from numpy.typing import NDArray
@@ -19,7 +20,6 @@ from classification import ClassifierParams
 from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
 from utilities import baseband_to_frequency, frequency_to_baseband
-#import asyncio
 from dataclasses import dataclass, field
 
 @dataclass(kw_only=True)
@@ -80,7 +80,8 @@ class Scanner(object):
                  frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
                  min_recording: float=0, max_recording: float=0,
                  classifier_params: ClassifierParams=None,
-                 auto_priority: bool=False, agc: bool=False):
+                 auto_priority: bool=False, agc: bool=False,
+                 file_metadata: list[str] | None=None):
 
         # Default values
         self.squelch_db = -60
@@ -104,14 +105,22 @@ class Scanner(object):
         self.max_recording = max_recording
         self.xmit_stats: dict[float, ClassificationCount] = {}
         self.auto_priority = auto_priority
+        self.file_metadata = file_metadata if file_metadata is not None else []
+        self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(num_demod)}
+        self.mismatched_freqs: dict[float, float] = {}
 
         self.channel_logger = ChannelLogger.get_logger(channel_log_params)
+
+        self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
 
         # Create receiver object
         self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
                                        hw_args, freq_correction, record, play,
                                        audio_bps, min_recording, classifier_params,
-                                       self.got_channel_activity, agc)
+                                       self.got_channel_activity, agc,
+                                       file_metadata=self.file_metadata,
+                                       get_priority_info=self.frequency_manager.get_priority_info,
+                                       get_ctcss_info=self.frequency_manager.get_ctcss_info)
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
@@ -130,12 +139,24 @@ class Scanner(object):
         self.step = self.frequency_provider.step
         self.steps = self.frequency_provider.steps
 
-        self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
         # self.frequencies = self.frequency_manager.frequencies
 
         # Start the receiver and wait for samples to accumulate
         self.receiver.start()
         time.sleep(1)
+
+        self.eof = False
+        self._watch_thread = threading.Thread(target=self._wait_for_receiver_thread, daemon=True)
+        self._watch_thread.start()
+
+    def _wait_for_receiver_thread(self) -> None:
+        try:
+            self.receiver.wait()
+            logging.info("Receiver flowgraph terminated (EOF reached)")
+        except Exception as error:
+            logging.error(f"Error waiting for receiver: {error}")
+        finally:
+            self.eof = True
 
     def center_freq_changed(self):
         '''
@@ -145,7 +166,7 @@ class Scanner(object):
         self.set_center_freq(self.frequency_provider.center_freq)
 
         self.frequency_params.notify_interface()
-    
+
     async def scan_cycle(self) -> None:
         """Execute one scan cycle
 
@@ -160,6 +181,24 @@ class Scanner(object):
         """
 
         raw_channels = self._get_raw_channels()
+
+        # Remove suppressed frequencies whose carrier is gone and minimum hold time has elapsed.
+        # Note: If a carrier stays active continuously (e.g. repeater with incorrect tone), it will
+        # remain suppressed forever. This is desired. If tones are reloaded or lockouts cleared,
+        # mismatched_freqs is cleared entirely.
+        raw_rf_channels = [baseband_to_frequency(bb, self.center_freq) for bb in raw_channels]
+        the_now = time.time()
+        for rf_freq in list(self.mismatched_freqs.keys()):
+            if rf_freq not in raw_rf_channels and (the_now - self.mismatched_freqs[rf_freq] >= 3.0):
+                del self.mismatched_freqs[rf_freq]
+
+        # Accumulate signal levels for active demodulators if requested
+        if 'strength' in self.file_metadata:
+            for idx, demodulator in enumerate(self.receiver.demodulators):
+                if demodulator.center_freq != 0:
+                    strength = self._get_signal_strength(demodulator.center_freq)
+                    curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                    self._demod_signal_stats[idx] = (curr_sum + strength, curr_count + 1)
 
         self._channels = self._add_metadata(raw_channels)
 
@@ -197,6 +236,19 @@ class Scanner(object):
 
         return channels
 
+    def _get_signal_strength(self, bb: int) -> float:
+        if self.spectrum is None or len(self.spectrum) == 0:
+            return -100.0
+
+        bin_idx = int(np.round((bb * len(self.spectrum) / self.samp_rate) + len(self.spectrum) / 2))
+        bin_idx = max(0, min(len(self.spectrum) - 1, bin_idx))
+
+        power = self.spectrum[bin_idx]
+        if power <= 0:
+            return -200.0
+
+        return 10.0 * np.log10(power) - 70.0
+
     async def _process_current_demodulators(self, channels: ChannelList) -> None:
 
         the_now = time.time()
@@ -207,13 +259,35 @@ class Scanner(object):
 
             # Stop locked out demodulator (lockout was just added via UI)
             if self.frequency_manager.locked_out(demodulator.center_freq):
-                await demodulator.set_center_freq(0, self.center_freq)
+                curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                self._demod_signal_stats[idx] = (0.0, 0)
+                await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
+                continue
+
+            # Stop demodulator if CTCSS tone is mismatched
+            if demodulator.is_ctcss_mismatched():
+                rf_freq = baseband_to_frequency(demodulator.center_freq, self.center_freq)
+                if rf_freq not in self.mismatched_freqs:
+                    self.mismatched_freqs[rf_freq] = the_now
+                curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                # Mark the current transmission for discard. While is_ctcss_mismatched() already
+                # sets discard_current = True internally, setting it here explicitly is the
+                # primary/canonical way of signaling that the scanner loop has rejected the
+                # active transmission.
+                self._demod_signal_stats[idx] = (0.0, 0)
+                demodulator.discard_current = True
+                await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
                 continue
 
             # Stop the demodulator if not being scanned and outside the hang time
             if any(channel.hanging and channel.bb == demodulator.center_freq for channel in channels):
                 if the_now - demodulator.last_heard > self.hang_time:
-                    await demodulator.set_center_freq(0, self.center_freq)
+                    curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                    avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                    self._demod_signal_stats[idx] = (0.0, 0)
+                    await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
             else:
                 demodulator.set_last_heard(the_now)
 
@@ -221,13 +295,20 @@ class Scanner(object):
             if self.max_recording > 0:
                 if time.time() - demodulator.time_stamp >= self.max_recording:
                     # clear the demodulator to reset file
-                    await demodulator.set_center_freq(0, self.center_freq)
+                    curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                    avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                    self._demod_signal_stats[idx] = (0.0, 0)
+                    await demodulator.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
 
     async def _assign_channels_to_demodulators(self, channels: ChannelList) -> None:
 
         # assign channels to available demodulators
         for channel in [channel for channel in channels if not channel.hanging]:
         #for channel in channels:
+            # Skip if the channel is currently suppressed due to CTCSS mismatch
+            if channel.rf in self.mismatched_freqs:
+                continue
+
             # If channel not in demodulators
             if channel.bb not in self.receiver.get_demod_freqs() and not channel.locked:
                 # Sequence through each demodulator
@@ -235,9 +316,16 @@ class Scanner(object):
                     demodulator = self.receiver.demodulators[idx]
                     # If channel is higher priority than what is being demodulated
                     if self.frequency_manager.is_higher_priority(channel.bb, demodulator.center_freq):
+                        # Calculate avg_signal for the completed transmission if it was actively running
+                        avg_signal = None
+                        if demodulator.center_freq != 0:
+                            curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+                            avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+                        self._demod_signal_stats[idx] = (0.0, 0)
+
                         # Assigning channel to empty demodulator
                         await demodulator.set_center_freq(
-                            channel.bb, self.center_freq)
+                            channel.bb, self.center_freq, avg_signal=avg_signal)
                         break
                     else:
                         pass
@@ -259,13 +347,18 @@ class Scanner(object):
         for channel in all_channels:
             frequency = baseband_to_frequency(channel, self.receiver.center_freq)
             priority = self.frequency_manager.is_priority(channel)
+            
+            is_active = channel in demod_freqs and channel in active_channels
+            is_hanging = channel in demod_freqs and channel not in active_channels
+
             idx = 0 if priority is not None else len(sweep)  # priority channels up front
             sweep.insert(idx, ChannelFrequency(bb=channel,
                                       rf=frequency,
                                       locked=self.frequency_manager.locked_out(channel),
-                                      active=channel in demod_freqs and channel in active_channels,
+                                      active=is_active,
                                       priority=priority,
-                                      hanging=channel in demod_freqs and channel not in active_channels,
+                                      hanging=is_hanging,
+                                      ctcss=self.frequency_manager.get_ctcss_info(frequency),
                                       label=self.frequency_manager.get_label(frequency)))
 
         return sweep
@@ -278,15 +371,17 @@ class Scanner(object):
         except IndexError:
             # user selected a digit but no channels in interface
             return
-    
+
     async def clear_lockout(self) -> None:
         """
         Clears lockout channels and rebuilds based on config.  Usually called
         by the user interface ('l' key).
         """
+        self.mismatched_freqs.clear()
         self.frequencies = await self.frequency_manager.load()
 
     async def load_frequencies(self) -> None:
+        self.mismatched_freqs.clear()
         self.frequencies = await self.frequency_manager.load()
 
     def set_center_freq(self, center_freq: int) -> None:
@@ -354,7 +449,7 @@ class Scanner(object):
         '''
         This callback is to let the demodulators inform us about a
         transmission.
-    
+
         1. Log the activity via the currently configured channel logger
         2. If the channel is interesting, let the frequency provider know
             - It will hold the current center frequency open a bit longer
@@ -426,8 +521,11 @@ class Scanner(object):
 
     async def clean_up(self) -> None:
         # cleanup terminating all demodulators
-        for demod in self.receiver.demodulators:
-            await demod.set_center_freq(0, self.center_freq)
+        for idx, demod in enumerate(self.receiver.demodulators):
+            curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
+            avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None
+            self._demod_signal_stats[idx] = (0.0, 0)
+            await demod.set_center_freq(0, self.center_freq, avg_signal=avg_signal)
 
 
 async def main() -> None:

@@ -3,7 +3,7 @@ This is a GNU Radio (GR) based SDR scanner with a Curses interface, primarily me
 
 http://youtu.be/BXptQFSV8E4
 
-![GUI screenshot](ham2mon.png)
+![GUI screenshot](doc/ham2mon.png)
 
 ## Tested with:
 
@@ -43,7 +43,7 @@ lordmorgul:
 - channel width configurable from command line option
 - incorporate miweber67 freq range limits
 - WBFM support
-- CTCSS support (in progress)
+- CTCSS support (initial)
 
 miweber67
 - frequency range to limit selected channels to within specific limit
@@ -120,13 +120,22 @@ This application uses the [uv](https://github.com/astral-sh/uv) package manager 
     ```
 
 4. **Install and Sync Python Dependencies:**
-   Install remaining Python-only dependencies (like `numpy`, `PyYAML`, and `requests`) defined in [pyproject.toml](file:///library/pub/dev/ham2mon/pyproject.toml):
+   Install remaining Python-only dependencies (like `PyYAML`, and `requests`) defined in [pyproject.toml](file:///library/pub/dev/ham2mon/pyproject.toml):
 
     ```bash
     uv sync
     ```
 
-    _(To use the optional audio classification features, install with the tensorflow extra: `uv sync --extra tensorflow`)_
+    _(To use the optional audio classification features, you must install an interpreter runtime. The preferred order is:)_
+
+    * **LiteRT (Recommended):** The modern, lightweight runtime (~17MB). It starts up instantly and has minimal overhead:
+      ```bash
+      uv sync --extra ai-edge-litert
+      ```
+    * **TensorFlow:** The legacy heavyweight runtime (~500MB+). It has a much longer startup/import time:
+      ```bash
+      uv sync --extra tensorflow
+      ```
 
 5. **Configure Volk for Performance Optimization (Recommended):**
    GNU Radio uses the Volk (Vector Optimized Library of Kernels) library to perform accelerated SIMD calculations. You can profile your CPU to select the fastest mathematical kernels:
@@ -199,29 +208,48 @@ uv run apps/ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,fre
 
 ## Help Menu
 ```
-Usage: ham2mon.py [options]
+usage: ham2mon.py [-h] [-a HW_ARGS] [-n NUM_DEMOD] [-d TYPE_DEMOD]
+                  [-f FREQ_SPEC [FREQ_SPEC ...]]
+                  [--quiet_timeout QUIET_TIMEOUT]
+                  [--active_timeout ACTIVE_TIMEOUT] [-r ASK_SAMP_RATE]
+                  [-g RF_GAIN_DB] [-i IF_GAIN_DB] [-o BB_GAIN_DB]
+                  [--lna_gain LNA_GAIN_DB] [--att_gain ATT_GAIN_DB]
+                  [--lna_mix_bb_gain LNA_MIX_BB_GAIN_DB]
+                  [--tia_gain TIA_GAIN_DB] [--pga_gain PGA_GAIN_DB]
+                  [--lb_gain LB_GAIN_DB] [-x MIX_GAIN_DB] [--agc]
+                  [-s SQUELCH_DB] [-v VOLUME_DB] [-t THRESHOLD_DB] [-w]
+                  [-F FREQUENCY_FILE_NAME] [--disable-lockout]
+                  [--disable-priority] [-P] [-T CHANNEL_LOG_TYPE]
+                  [-L CHANNEL_LOG_TARGET] [-A CHANNEL_LOG_TIMEOUT]
+                  [-c FREQ_CORRECTION] [-m] [-b AUDIO_BPS] [-M MAX_DB]
+                  [-N MIN_DB] [-B CHANNEL_SPACING]
+                  [--min_recording MIN_RECORDING]
+                  [--max_recording MAX_RECORDING] [--voice] [--data] [--skip]
+                  [--model MODEL_FILE_NAME]
+                  [--log-level {debug,info,warn,error}]
+                  [--log-dest {none,file,syslog,stderr}] [--log-file LOG_FILE]
+                  [--file-metadata FILE_METADATA]
 
 options:
   -h, --help            show this help message and exit
-  -a HW_ARGS, --args HW_ARGS
-                        Hardware args
-  -n NUM_DEMOD, --demod NUM_DEMOD
+  -a, --args HW_ARGS    Hardware args
+  -n, --demod NUM_DEMOD
                         Number of demodulators
-  -d TYPE_DEMOD, --demodulator TYPE_DEMOD
+  -d, --demodulator TYPE_DEMOD
                         Type of demodulator (0=NBFM, 1=AM and 2=WBFM)
-  -f FREQ_SPEC [FREQ_SPEC ...], --freq FREQ_SPEC [FREQ_SPEC ...]
+  -f, --freq FREQ_SPEC [FREQ_SPEC ...]
                         Hardware RF center frequency or range in Mhz
   --quiet_timeout QUIET_TIMEOUT
                         Timeout when there is no activity
   --active_timeout ACTIVE_TIMEOUT
                         Timeout when there is activity
-  -r ASK_SAMP_RATE, --rate ASK_SAMP_RATE
+  -r, --rate ASK_SAMP_RATE
                         Hardware ask sample rate in sps (1E6 minimum)
-  -g RF_GAIN_DB, --gain RF_GAIN_DB, --rf_gain RF_GAIN_DB
+  -g, --gain, --rf_gain RF_GAIN_DB
                         Hardware RF gain in dB
-  -i IF_GAIN_DB, --if_gain IF_GAIN_DB
+  -i, --if_gain IF_GAIN_DB
                         Hardware IF gain in dB
-  -o BB_GAIN_DB, --bb_gain BB_GAIN_DB
+  -o, --bb_gain BB_GAIN_DB
                         Hardware BB gain in dB
   --lna_gain LNA_GAIN_DB
                         Hardware LNA gain in dB
@@ -234,38 +262,35 @@ options:
   --pga_gain PGA_GAIN_DB
                         Hardware PGA gain in dB
   --lb_gain LB_GAIN_DB  Hardware LB gain in dB
-  -x MIX_GAIN_DB, --mix_gain MIX_GAIN_DB
+  -x, --mix_gain MIX_GAIN_DB
                         Hardware MIX gain index
   --agc                 Enable automatic gain control
-  -s SQUELCH_DB, --squelch SQUELCH_DB
+  -s, --squelch SQUELCH_DB
                         Squelch in dB
-  -v VOLUME_DB, --volume VOLUME_DB
+  -v, --volume VOLUME_DB
                         Volume in dB
-  -t THRESHOLD_DB, --threshold THRESHOLD_DB
+  -t, --threshold THRESHOLD_DB
                         Threshold in dB
   -w, --write           Record (write) channels to disk
-  -F FREQUENCY_FILE_NAME, --frequencies FREQUENCY_FILE_NAME
+  -F, --frequencies FREQUENCY_FILE_NAME
                         YAML file containing frequencies and ranges in Mhz
   --disable-lockout     Disable locking out of channels
   --disable-priority    Disable prioritization of channels
   -P, --auto-priority   Automatically add voice channels as priority channels
-  -T CHANNEL_LOG_TYPE, --log_type CHANNEL_LOG_TYPE
+  -T, --log_type CHANNEL_LOG_TYPE
                         Log file type for channel detection
-  -L CHANNEL_LOG_TARGET, --log_target CHANNEL_LOG_TARGET
+  -L, --log_target CHANNEL_LOG_TARGET
                         Log file or endpoint for channel detection
-  -A CHANNEL_LOG_TIMEOUT, --log_active_timeout CHANNEL_LOG_TIMEOUT
+  -A, --log_active_timeout CHANNEL_LOG_TIMEOUT
                         Timeout delay for active channel log entries
-  -c FREQ_CORRECTION, --correction FREQ_CORRECTION
+  -c, --correction FREQ_CORRECTION
                         Frequency correction in ppm
   -m, --mute-audio      Mute audio from speaker (still allows recording)
-  -b AUDIO_BPS, --bps AUDIO_BPS
-                        Audio bit depth (bps)
-  -M MAX_DB, --max_db MAX_DB
-                        Spectrum window max dB for display
-  -N MIN_DB, --min_db MIN_DB
-                        Spectrum window min dB for display (no greater than
+  -b, --bps AUDIO_BPS   Audio bit depth (bps)
+  -M, --max_db MAX_DB   Spectrum window max dB for display
+  -N, --min_db MIN_DB   Spectrum window min dB for display (no greater than
                         -10dB from max
-  -B CHANNEL_SPACING, --channel-spacing CHANNEL_SPACING
+  -B, --channel-spacing CHANNEL_SPACING
                         Channel spacing (spectrum bin size)
   --min_recording MIN_RECORDING
                         Minimum length of a recording in seconds
@@ -276,25 +301,121 @@ options:
   --skip                Record voice
   --model MODEL_FILE_NAME
                         Classification model file in tflite format
-  --debug               Enable debug file with additional information
-                        (ham2mon.log)
+  --log-level {debug,info,warn,error}
+                        Log verbosity level; only has effect if --log-dest is
+                        not 'none' (default: warn)
+  --log-dest {none,file,syslog,stderr}
+                        Log destination (default: none)
+  --log-file LOG_FILE   Log file path when --log-dest is 'file' (default:
+                        script_dir/ham2mon.log)
+  --file-metadata FILE_METADATA
+                        Comma-separated list of metadata fields to include in
+                        output filenames (e.g. priority,strength)
 ```
 Note: The available gains are hardware specific.  The user interface will list the gains available based on hardware option supplied to ham2mon.
 
 ## Description:
-The high speed signal processing is done in GR and the logic & control in Python. There are no custom GR blocks.  The GUI is written in Curses and is meant to be lightweight.  See the video for a basic overview.  I attempted to make the program very object oriented and “Pythonic”.  Each module runs on it's own for testing purposes.
+The high speed signal processing is done in GR and the logic & control in Python. There are no custom GR blocks.  The GUI is written in Curses and is meant to be lightweight.  See the video for a basic overview.  I attempted to make the program very object oriented and “Pythonic”.
 
-![GRC screenshot](https://github.com/madengr/ham2mon/blob/master/flow_example.png)
+```mermaid
+graph TD
+    %% Define styles
+    classDef source fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef dsp fill:#ede7f6,stroke:#4a148c,stroke-width:2px;
+    classDef control fill:#fff8e1,stroke:#ff6f00,stroke-width:2px;
+    classDef sink fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px;
 
-See the flow_example.grc for an example of the GR flow, and receiver.py for the Python coded flow.  The complex samples are grouped into a vector of length 2^n and then decimated by keeping “1 in N” vectors. The FFT is taken followed by magnitude-squared to form a power spectrum.  The FFT length is chosen, based on sample rate, to span about 3 RBW bins across a 12.5 kHz FM channel.  The spectrum vectors are then integrated and further decimated for a video average, akin to the VBW of a spectrum analyzer.  The spectrum is then probed by the Python code at ~10 Hz rate.
+    %% Nodes
+    Source["SDR Source<br>(osmocom or File Source)"]:::source
 
-The demodulator blocks are put into a hierarchical GR block so multiple can be instantiated in parallel.  A frequency translating FIR filter tunes the channel, followed by two more decimating FIR filters to 12.5 kHz channel bandwidth.  For sample rates 1 Msps or greater, the total decimation for the first three stages takes the rate to 40-80 ksps.  A non-blocking power squelch silences the channel, followed by quadrature (FM) demodulation, or AGC and AM demodulation.  The audio stream is filtered to 3.5 kHz bandwidth and further decimated to 8-16 ksps.  A polyphase arbitrary resampler takes the final audio rate to a constant 8 ksps.  The audio can then be mixed with other streams, or sunk to WAV file via a blocking squelch to remove dead audio.
+    subgraph "Spectrum Probe Path (Logic/Scanner Control)"
+        S2V["Stream to Vector<br>(Length: 256)"]:::dsp
+        KeepN["Keep 1 in N<br>(Decimation: 4)"]:::dsp
+        FFT["FFT<br>(Size: 256)"]:::dsp
+        Mag2["Complex to Magnitude Squared"]:::dsp
+        Int["Integrate<br>(Decimation: 100)"]:::dsp
+        Log["Log10<br>(10 * log10(x))"]:::dsp
+        Probe["Probe Signal Vector<br>(Queried at ~10 Hz by scanner.py)"]:::control
+    end
+
+    subgraph "Channel Demodulator Path (Tuner)"
+        Xlating["Freq Translating FIR Filter<br>(Tuning channel offset, Decim: 5)"]:::dsp
+        Decim1["Decimating FIR Filter<br>(Low-pass filter, Decim: 5)"]:::dsp
+        Decim2["Decimating FIR Filter<br>(Channel filter, Decim: 1)"]:::dsp
+        Squelch1["Power Squelch<br>(Squelch gate, Gate: No)"]:::dsp
+        Demod["Demodulator<br>(Quadrature Demod for FM / Complex to Mag for AM)"]:::dsp
+        Decim3["Decimating FIR Filter<br>(Audio filter, Decim: 5)"]:::dsp
+        Resampler["Polyphase Arbitrary Resampler<br>(Resample to constant rate)"]:::dsp
+    end
+
+    subgraph "CTCSS Tone & Bypass Chain (Parallel Path)"
+        InputHub["Input Hub<br>(multiply_const_ff(1.0))"]:::dsp
+        BypassGain["Bypass Gain<br>(multiply_const_ff(1.0 or 0.0))"]:::dsp
+        CTCSS_Squelch["CTCSS Squelch<br>(analog.ctcss_squelch_ff, gate: No)"]:::dsp
+        CTCSS_HPF["High-Pass Filter<br>(fir_filter_fff, 300Hz cutoff)"]:::dsp
+        CTCSSGain["CTCSS Gain<br>(multiply_const_ff(0.0 or 1.0))"]:::dsp
+        Adder["Adder<br>(blocks.add_ff)"]:::dsp
+        OutputHub["Output Hub<br>(multiply_const_ff(1.0))"]:::dsp
+    end
+
+    subgraph Sinks
+        AudioSink["Audio Sink<br>(Speaker/System Audio)"]:::sink
+        Squelch2["Power Squelch<br>(Gate: Yes, -200dB threshold)"]:::sink
+        RecSelector["Recording Selector<br>(blocks.selector)"]:::control
+        NullSink["Null Sink<br>(blocks.null_sink, Idle path)"]:::sink
+        WavSink["Wav File Sink<br>(16-bit, 8ksps recording)"]:::sink
+    end
+
+    %% Connections
+    Source --> S2V
+    Source --> Xlating
+
+    %% Spectrum path
+    S2V --> KeepN
+    KeepN --> FFT
+    FFT --> Mag2
+    Mag2 --> Int
+    Int --> Log
+    Log --> Probe
+
+    %% Tuner path
+    Xlating --> Decim1
+    Decim1 --> Decim2
+    Decim2 --> Squelch1
+    Squelch1 --> Demod
+    Demod --> Decim3
+    Decim3 --> Resampler
+
+    %% CTCSS Parallel path
+    Resampler --> InputHub
+    InputHub --> BypassGain
+    BypassGain --> Adder
+
+    InputHub --> CTCSS_Squelch
+    CTCSS_Squelch --> CTCSS_HPF
+    CTCSS_HPF --> CTCSSGain
+    CTCSSGain --> Adder
+
+    Adder --> OutputHub
+
+    %% Sinks path
+    OutputHub --> AudioSink
+    OutputHub --> Squelch2
+    Squelch2 --> RecSelector
+
+    RecSelector -- "Index 0 (Idle)" --> NullSink
+    RecSelector -- "Index 1 (Recording)" --> WavSink
+```
+
+See [receiver.py](file:///library/pub/dev/ham2mon/apps/receiver.py) for the Python coded flow.  The complex samples are grouped into a vector of length 2^n and then decimated by keeping “1 in N” vectors. The FFT is taken followed by magnitude-squared to form a power spectrum.  The FFT length is chosen, based on sample rate, to span about 3 RBW bins across a 12.5 kHz FM channel.  The spectrum vectors are then integrated and further decimated for a video average, akin to the VBW of a spectrum analyzer.  The spectrum is then probed by the Python code at ~10 Hz rate.
+
+The demodulator blocks are put into a hierarchical GR block so multiple can be instantiated in parallel.  A frequency translating FIR filter tunes the channel, followed by two more decimating FIR filters to 12.5 kHz channel bandwidth.  For sample rates 1 Msps or greater, the total decimation for the first three stages takes the rate to 40-80 ksps.  A non-blocking power squelch silences the channel, followed by quadrature (FM) demodulation, or AGC and AM demodulation.  The audio stream is filtered to 3.5 kHz bandwidth and further decimated to 8-16 ksps.  A polyphase arbitrary resampler takes the final audio rate to a constant 8 ksps (or 16 ksps for AM/WBFM). The audio stream is then routed through a parallel-path CTCSS bypass/filter chain, mixed with other streams, or routed to a selector-controlled WAV file sink/null sink path via a blocking squelch to remove dead audio.
 
 The scanner.py contains the control code, and may be run on on it's own non-interactively.  It instantiates the receiver.py with N demodulators and probes the average spectrum at ~10 Hz.  The spectrum is processed with estimate.py, which takes a weighted average of the spectrum bins that are above a threshold.  This weighted average does a fair job of estimating the modulated channel center to sub-kHz resolution given the RBW is several kHz.  The estimate.py returns a list of baseband channels that are rounded to the nearest 5 kHz (for NBFM band plan ambiguity).
 
 The list used to tune the demodulators (lockout channels are skipped).  The demodulators are only tuned if the channel has ceased activity from the last probe or if a higher priority channel has activity.  Otherwise, the demodulator is held on the channel.  The demodulators are parked at 0 Hz baseband when not tuned, as this provides a constant, low amplitude signal due to FM demod of LO leakage.
 
-The ham2mon.py interfaces the scanner.py with the curses.py GUI.  The GUI provides a spectral display with adjustable scaling and detector threshold line.  The center frequency, gain, squelch, and volume can be adjusted in real time, as well as adding channel lockouts.  The hardware arguments, sample rate, number of demodulators, recording status, and lockout file are set via switches at run time.
+The ham2mon.py interfaces the scanner.py with the cursesgui.py GUI.  The GUI provides a spectral display with adjustable scaling and detector threshold line.  The center frequency, gain, squelch, and volume can be adjusted in real time, as well as adding channel lockouts.  The hardware arguments, sample rate, number of demodulators, recording status, and lockout file are set via switches at run time.
 
 The default settings are optimized for an Ettus B200.  The RTL dongle will require raising the squelch and adjustment of the spectrum scale and threshold.
 
@@ -389,7 +510,7 @@ A type may support a target through the `--log_target` option.  In the case of t
 
 An activity log entry is written every 15 seconds (by default).  This can be changed with `--log_active_timeout`.  Set this to 0 to disable activity logging (channel on/off messages will still occur).
 
-If `debug` is selected as logging type than channel events can be viewed when the `--debug` option is also selected on the command line.
+If `debug` is selected as logging type then channel events can be viewed when the `--log-level=debug` option is also selected on the command line.
 
 See [json-server example](doc/json-server_example.md) for one way this can be used.
 
@@ -398,28 +519,101 @@ For detail on what is logged including format see the source code for the [chann
 ## Auto Priority
 With the `-P` option, channels that meet specific conditions will automatically be added to the priority list.  Currently, only one algorithm is supported: Voice priority.  With this, those channels that have more voice transmissions than data/skip transmissions will be added to the priority list.
 
-If the number of voice transmissions is less than the number of data/skip transmissions, then the priority flag be reoved for that frequency.  This will override and priorities assigned in the [priority file](#priority-handling).
+If the number of voice transmissions is less than the number of data/skip transmissions, then the priority flag will be removed for that frequency.  This will override any priorities assigned in the [priority file](#priority-handling).
 
-Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.
+Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.  Therefore, `--model` must also be specified when using auto priority.
 
 ## Logging
-Application logging events are written to `ham2mon.log`.  These are seperate from channel logging events (-L option) and are intended for application debugging.
+Application logging events can be configured using the `--log-level` and `--log-dest` options. These are separate from channel logging events (-L option) and are intended for application debugging. By default, logging is disabled (`--log-dest=none`). If enabled with `--log-dest=file`, logs are written to `ham2mon.log` (or a custom path specified with `--log-file`).
 
 ## Audio Classification
 *Note: The classification is not 100% accurate.  There will be both false positives and negatives.*
 
-Recorded audio can be classified using a pre-trained model.  The model must be present and the tensorflow python module must be installed.  The model file can be specified with the `--model` and option.
+Recorded audio can be classified using a pre-trained model.  The model is an optional artifact not included in the repository when cloned (see releases).  You must separately download it and add it to your system. The optional tensorflow python module must also be installed (see installation instructions).
 
-The command line options (--voice, --data, and --skip) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode ("-w") will be automatically enabled.
+The model file must be specified using the `--model <path>` option.
 
-The classification designator will be added after the frequency (e.g. 460.125_V_1698933610.wav for voice).  Only 16bps audio is currently supported so enable it with "-b 16".
+At least one of the command line options (`--voice`, `--data`, and `--skip`) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode (`-w`) will be automatically enabled.
 
-No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the provided model.
+The classification designator will be added after the frequency (e.g. 460.1250_V_20231102_140010.123.wav for voice).  Only 16-bit audio is currently supported so enable it with `-b 16`.
+
+No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the available model.
+
+## Filename Metadata
+
+When writing transmissions to disk (using `-w` or audio classification options), you can customize the output filenames to include optional metadata by specifying the `--file-metadata` option. This option accepts a comma-separated list of metadata fields to include (e.g. `--file-metadata priority,strength`).
+
+Supported metadata fields:
+
+- `priority`: Appends the priority status of the channel.
+  - Manual priorities are formatted as `P1`, `P2`, etc.
+  - Automatic priorities (dynamically added from auto-priority) are formatted as `PA`.
+- `strength`: Appends the average signal strength (mean RSSI) recorded during the active transmission in dB (e.g., `-48dB`).
+  - Note: The raw FFT spectrum power values are automatically calibrated to a standard negative RSSI range (applying a `-70 dB` calibration offset) to align with standard receiver squelch scales.
+
+> [!NOTE]
+> If a requested metadata field is unavailable when the recording is persisted (e.g., if a channel's priority is not configured, or if signal strength data is `None` because the channel was stopped before any signal power stats could be accumulated), the corresponding segment is completely omitted from the output filename. No placeholders are used.
+
+### Filename Format
+
+The metadata fields are appended in a structured sequence using underscores (`_`) as delimiters:
+`<frequency>[_classification][_priority][_strength]_<timestamp>.wav`
+
+Examples:
+
+- Standard (no metadata): `460.1250_20231102_140010.123.wav`
+- With priority requested: `460.1250_P1_20231102_140010.123.wav`
+- With priority and strength requested: `460.1250_P1_-48dB_20231102_140010.123.wav`
+- With auto-priority and strength requested: `460.1250_PA_-45dB_20231102_140010.123.wav`
+- With strength requested but unavailable (e.g. no signal stats): `460.1250_20231102_140010.123.wav`
+
+If audio classification is enabled (e.g., via `--voice`, which adds a classification segment such as `V` or `D`), it will be inserted directly after the frequency:
+- With classification, priority, and strength: `460.1250_V_P1_-48dB_20231102_140010.123.wav`
+
+## CTCSS Squelch and Tone Filtering
+
+CTCSS (Continuous Tone-Coded Squelch System) allows filtering transmissions by requiring a sub-audible squelch tone (between 67.0 Hz and 254.1 Hz) to be present before unmuting audio output or recording to disk.
+
+### Configuration
+
+CTCSS tones are configured per-channel inside the YAML frequencies file (specified via the `-F`/`--frequencies` command-line option):
+
+```yaml
+frequencies:
+  - label: "CTCSS Test Channel"
+    single: 144.500
+    ctcss: 100.0   # Configured expected CTCSS tone in Hz
+```
+
+### User Options
+
+Depending on your configuration in `frequencies.yaml` (specified via the `-F`/`--frequencies` option), the application operates in one of two modes:
+
+1. **Carrier Squelch (CSQ) Mode (CTCSS Bypassed):**
+   * **Trigger:** Enabled for any channel configured in `frequencies.yaml` **without** a `ctcss` tone, or for any frequency not present in `frequencies.yaml` at all (such as dynamically discovered frequencies during a range scan).
+   * **Behavior:** The receiver will record and unmute any signal that is strong enough to break the RF carrier power squelch, regardless of whether a sub-audible tone is present or what its frequency is. Additionally, the 300Hz high-pass filter is dynamically bypassed in this mode to preserve full audio fidelity and bass (e.g. for broadcast FM music).
+2. **Tone Squelch (CTCSS) Mode:**
+   * **Trigger:** Enabled for channels configured **with** a specific `ctcss` key (e.g. `ctcss: 100.0`).
+   * **Behavior:** The receiver will only unmute and keep the recording if the signal contains the specified CTCSS tone. Transmissions carrying a different tone or no tone at all are muted and discarded.
+
+### GUI Display
+
+When a tuned frequency is configured with a CTCSS tone (Tone Squelch Mode), the active CTCSS tone frequency (e.g. `100.0` Hz) will be displayed at the end of the channel list row in the **CHANNELS** window, provided the window width is at least 22 characters.
+
+### Technical Implementation
+
+1. **Parallel Routing:** Rather than using selectors to bypass the CTCSS block—which freezes downstream sample flow and causes trailing audio to leak into the start of subsequent recordings—audio always flows through both the bypass path and the CTCSS path in parallel. The active path is selected using gain-multiplier blocks.
+2. **Idle Recording Bypass:** When a demodulator is idle (not recording), a selector block routes the audio to a null sink instead of the WAV file sink. This keeps the upstream pipeline and high-pass filter running, continually flushing the buffers with zeros to prevent audio spillover.
+3. **Sub-audible Hum Filter:** A 300Hz High-Pass Filter (HPF) is active in the audio path of CTCSS-enabled channels to strip out the sub-audible tone from output audio and saved recordings. For CSQ channels, the filter is dynamically bypassed (acting as a transparent all-pass filter) to preserve full audio fidelity.
+4. **Scanner Detuning & Mismatch Suppression:** If a carrier is detected on a configured frequency but the tone mismatches:
+   * The audio remains muted and no WAV file is written.
+   * The scanner detunes the demodulator to `0` Hz immediately to free up processing resources.
+   * The RF frequency is placed on a mismatch suppression list. The scanner tracks the carrier presence via the FFT power spectrum and will refuse to re-assign a demodulator to that frequency until the RF carrier drops below the threshold and a 3.0-second hold time has elapsed.
 
 ## Ham2mon Development
 
 ### End-to-End Testing
-To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it im ham2mon.
+To validate changes to ham2mon source code that may impact scanning it is best to "replay" a raw IQ file into ham2mon to confirm things are working as expected.  This can be done by first recording an IQ file(s) and then replaying it in ham2mon.
 
 Example recording with airspy:
 
@@ -445,6 +639,32 @@ uv --directory apps run coverage run -m pytest -s tests/test_frequency_manager.p
 uv --directory apps run coverage report frequency_manager.py
 uv --directory apps run coverage html
 ```
+
+#### Test Debugging Options
+
+The test suite supports command-line flags to capture and inspect the dynamically generated `.iq` test signals used in synthetic test cases:
+
+* `--persist-iq`: Copies dynamically generated `.iq` test signals from a test run's temporary folder to the `test_signals/debug/` directory.
+* `--plot-iq`: Generates a spectrogram PNG plot of each dynamically generated `.iq` signal in the `test_signals/debug/` directory.
+* `--persist-wav`: Copies demodulated `.wav` files generated by tests from the test run's temporary folder to the `test_signals/debug/` directory.
+
+Examples:
+```bash
+# Persist generated IQ signals to test_signals/debug/
+uv run pytest -v --persist-iq
+
+# Generate spectrogram plots for generated IQ signals
+uv run pytest -v --plot-iq
+
+# Persist demodulated WAV files to test_signals/debug/
+uv run pytest -v --persist-wav
+
+# Persist and plot IQ signals along with demodulated WAV files
+uv run pytest -v --persist-iq --plot-iq --persist-wav
+```
+
+> [!NOTE]
+> Spectrogram plotting requires `matplotlib` and `scipy` to be installed (which can be present in your system Python packages or virtual environment). If these libraries are missing, the test suite will run successfully but skip generating the plots with a warning.
 
 ### Module testing
 

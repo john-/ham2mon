@@ -8,11 +8,13 @@ Created on Fri Jul  3 13:38:36 2015
 
 import scanner as scnr
 from curses import ERR, KEY_RESIZE, curs_set, wrapper
+import curses
 import cursesgui
 import h2m_parser as h2m_parser
 import asyncio
 import errors as err
 import logging
+import logging.handlers
 import traceback
 #from pathlib import Path
 from os.path import realpath, dirname
@@ -23,6 +25,8 @@ class MyDisplay():
 
     def __init__(self, stdscr: "_curses._CursesWindow") -> None:
         self.stdscr = stdscr
+        self.scanner = None
+        self.too_small = False
 
     async def run(self) -> None:
         curs_set(0)
@@ -35,7 +39,7 @@ class MyDisplay():
         while True:
             char = self.stdscr.getch()
 
-            if char == ord('Q'):
+            if char == ord('Q') or (self.scanner and self.scanner.eof):
                 break
             if char == ERR:
                 await asyncio.sleep(0.1)
@@ -46,6 +50,7 @@ class MyDisplay():
 
             await self.cycle()
 
+        self.scanner.stop()
         await self.scanner.clean_up()
 
     async def make_display(self) -> None:
@@ -57,14 +62,34 @@ class MyDisplay():
         # pylint: disable=too-many-statements
         # pylint: disable-msg=R0914
 
-        # Setup the screen
+        # Clean up existing sub-windows to prevent C-level resource memory leaks
+        for win_name in ('specwin', 'chanwin', 'lockoutwin', 'rxwin'):
+            if hasattr(self, win_name):
+                win_obj = getattr(self, win_name)
+                if win_obj and hasattr(win_obj, 'cleanup'):
+                    win_obj.cleanup()
+
+        # Erase the full screen and reset ncurses parameters
+        self.stdscr.clear()
         cursesgui.setup_screen(self.stdscr)
+
+        # Enforce minimum terminal dimensions to prevent negative window sizing crash
+        screen_dims = self.stdscr.getmaxyx()
+        if screen_dims[0] < 24 or screen_dims[1] < 80:
+            self.too_small = True
+            self.stdscr.erase()
+            self.stdscr.border(0)
+            self.stdscr.addstr(1, 2, "Terminal too small!", curses.A_BOLD | curses.color_pair(1))
+            self.stdscr.addstr(2, 2, f"Current: {screen_dims[1]}x{screen_dims[0]}", curses.A_DIM)
+            self.stdscr.addstr(3, 2, "Required minimum: 80x24", curses.A_DIM)
+            self.stdscr.noutrefresh()
+            return
+        else:
+            self.too_small = False
 
         # Create windows
         self.specwin = cursesgui.SpectrumWindow(self.stdscr)
-        self.chanwin = cursesgui.ChannelWindow(self.stdscr)
-        self.lockoutwin = cursesgui.LockoutWindow(self.stdscr)
-        self.rxwin = cursesgui.RxWindow(self.stdscr)
+        self.chanwin, self.lockoutwin, self.rxwin = cursesgui.create_bottom_row_windows(self.stdscr)
 
         # Get the initial settings for GUI
         self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
@@ -90,11 +115,12 @@ class MyDisplay():
         self.rxwin.classifier_params = PARSER.classifier_params
         self.specwin.threshold_db = self.scanner.threshold_db
 
+        # Update virtual representation of root screen first
+        self.stdscr.noutrefresh()
+
         self.chanwin.draw_frame()
         self.lockoutwin.draw_frame()
         self.rxwin.draw_frame()
-
-        self.stdscr.refresh()
 
     async def cycle(self) -> None:
         # Initiate a scan cycle
@@ -104,14 +130,19 @@ class MyDisplay():
 
         await self.scanner.scan_cycle()
 
+        if getattr(self, 'too_small', False):
+            # Double-buffer refresh only the resized root window holding the warning
+            curses.doupdate()
+            return
+
         # Update the spectrum, channel, and rx displays
         self.specwin.draw_spectrum(self.scanner.spectrum)
         self.chanwin.draw_channels(self.scanner.channels)
         self.lockoutwin.draw_channels(self.scanner.frequencies, self.scanner.channels)
         self.rxwin.draw_rx()
 
-        # Update physical screen
-        self.stdscr.refresh()
+        # Update physical screen via optimized double buffering
+        curses.doupdate()
 
     async def init_scanner(self) -> scnr.Scanner:
         # Create scanner object
@@ -138,13 +169,15 @@ class MyDisplay():
         classifier_params = PARSER.classifier_params
 
         auto_priority = PARSER.auto_priority
+        file_metadata = PARSER.file_metadata
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                                freq_correction, record, frequency_configuration,
                                channel_log_params,
                                play, audio_bps, channel_spacing,
                                frequency_params, min_recording, max_recording,
-                               classifier_params, auto_priority, agc)
+                               classifier_params, auto_priority, agc,
+                               file_metadata=file_metadata)
 
         await scanner.load_frequencies()
         # Set the parameters
@@ -157,7 +190,7 @@ class MyDisplay():
 
     def center_freq_changed(self):
         '''
-        Callback that notifies when the scanner changed 
+        Callback that notifies when the scanner changed
         the center frequency.  This occurs when range scanning.
         '''
         self.rxwin.center_freq = self.scanner.center_freq
@@ -206,17 +239,43 @@ if __name__ == '__main__':
         # Do this since curses wrapper won't let parser write to screen
         PARSER = h2m_parser.CLParser()
 
-        if PARSER.debug:
-            dir = realpath(dirname(__file__))
-            logging.basicConfig(filename='%s/ham2mon.log'%(dir), \
-            level=logging.DEBUG, format='%(asctime)s %(message)s')
+        if PARSER.log_dest != 'none':
+            log_level_map = {
+                'debug': logging.DEBUG,
+                'info': logging.INFO,
+                'warn': logging.WARNING,
+                'error': logging.ERROR
+            }
+            level = log_level_map.get(PARSER.log_level, logging.WARNING)
+
+            logger = logging.getLogger()
+            logger.setLevel(level)
+
+            formatter = logging.Formatter('%(asctime)s %(message)s')
+
+            if PARSER.log_dest == 'syslog':
+                syslog_handler = logging.handlers.SysLogHandler(address='/dev/log')
+                syslog_handler.setFormatter(logging.Formatter('ham2mon[%(process)d]: %(message)s'))
+                logger.addHandler(syslog_handler)
+            elif PARSER.log_dest == 'stderr':
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                logger.addHandler(stream_handler)
+            elif PARSER.log_dest == 'file':
+                log_file_path = PARSER.log_file
+                if not log_file_path:
+                    script_dir = realpath(dirname(__file__))
+                    log_file_path = '%s/ham2mon.log' % (script_dir)
+                file_handler = logging.FileHandler(log_file_path, delay=True)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
 
         wrapper(main)
     except KeyboardInterrupt:
         pass
     except RuntimeError as error:
         print("")
-        print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root or with --debug option.")
+        print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root or with --log-level=debug option.")
         print("")
         print(f'RuntimeError: {error=}, {type(error)=}')
         logging.debug(traceback.format_exc())
