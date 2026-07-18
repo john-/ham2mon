@@ -19,7 +19,7 @@ from channel_loggers import ActivityParams, ChannelMessage, ActivityLogger
 from classification import ClassifierParams
 from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
-from utilities import baseband_to_frequency, frequency_to_baseband
+from utilities import baseband_to_frequency, frequency_to_baseband, baseband_to_bin, bin_to_baseband
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
@@ -225,8 +225,7 @@ class Scanner(object):
             estimate.channel_estimate(self.spectrum, threshold))
 
         # Convert channels from bin indices to baseband frequency in Hz
-        channels = (channels-len(self.spectrum)/2) *\
-            self.samp_rate/len(self.spectrum)
+        channels = bin_to_baseband(channels, self.samp_rate, len(self.spectrum))
 
         # Round channels to channel spacing
         # Note this affects tuning the demodulators
@@ -247,8 +246,7 @@ class Scanner(object):
         if self.spectrum is None or len(self.spectrum) == 0:
             return -100.0
 
-        bin_idx = int(np.round((bb * len(self.spectrum) / self.samp_rate) + len(self.spectrum) / 2))
-        bin_idx = max(0, min(len(self.spectrum) - 1, bin_idx))
+        bin_idx = baseband_to_bin(bb, self.samp_rate, len(self.spectrum))
 
         power = self.spectrum[bin_idx]
         if power <= 0:

@@ -12,6 +12,7 @@ import numpy as np
 import logging
 from pathlib import PurePath
 from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
+from utilities import baseband_to_bin, build_column_edges, index_to_column
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -135,11 +136,23 @@ class SpectrumWindow(object):
             self.min_db = self.max_db - 10
 
         # Split the data into N window bins
-        # N is window width of the inner window
-        win_bins = np.array_split(data, self.dims[1]-self.chars)
+        # N is window width of the inner window.
+        # col_edges[col] is the first data index belonging to column `col`;
+        # col_edges[num_cols] is a trailing sentinel equal to L.  This is the
+        # single source of truth for the data-index <-> column mapping and is
+        # reused below to place channel markers, so the two can never drift
+        # apart the way separately-derived formulas could.
+        num_cols = self.dims[1] - self.chars
+        L = len(data)
+        col_edges = build_column_edges(L, num_cols)
         win_bin_max = []
-        for win_bin in win_bins:
-            win_bin_max.append(np.max(win_bin))
+        for col in range(num_cols):
+            start_idx = col_edges[col]
+            end_idx = col_edges[col + 1]
+            if start_idx < end_idx:
+                win_bin_max.append(np.max(data[start_idx:end_idx]))
+            else:
+                win_bin_max.append(data[min(start_idx, L - 1)])
 
         # Convert to dB
         win_bin_max_db = 10*np.log10(win_bin_max)
@@ -206,6 +219,7 @@ class SpectrumWindow(object):
         string = ">" + "%+03d" % self.threshold_db
         self.win.addnstr(pos_yt, (self.dims[1] - self.chars), string,
                          self.chars, curses.color_pair(2))
+
         # Hide cursor
         self.win.leaveok(1)
 
