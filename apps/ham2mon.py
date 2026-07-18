@@ -91,7 +91,11 @@ class MyDisplay():
 
         # Create windows
         self.specwin = cursesgui.SpectrumWindow(self.stdscr)
-        self.chanwin, self.lockoutwin, self.rxwin = cursesgui.create_bottom_row_windows(self.stdscr)
+        num_demod = None
+        if self.scanner and hasattr(self.scanner, 'receiver') and hasattr(self.scanner.receiver, 'demodulators'):
+            num_demod = len(self.scanner.receiver.demodulators)
+        self.chanwin, self.lockoutwin, self.rxwin = cursesgui.create_bottom_row_windows(
+            self.stdscr, num_demod=num_demod)
 
         # Get the initial settings for GUI
         self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
@@ -222,9 +226,13 @@ class MyDisplay():
 
         # Send keystroke to lockout window and update lockout channels if True
         if self.lockoutwin.proc_keyb_set_lockout(keyb) and self.rxwin.freq_entry == 'None':
-            # Subtract 48 from ascii keyb value to obtain 0 - 9
-            idx = keyb - 48
-            await self.scanner.add_lockout(idx)
+            # Translate pressed digit to the stable row number, then look up
+            # the RF frequency anchored to that row.  get_rf_by_row() returns
+            # None when no channel occupies the row, in which case we skip.
+            row = keyb - 48
+            rf = self.chanwin.get_rf_by_row(row)
+            if rf is not None:
+                await self.scanner.add_lockout(rf)
         if self.lockoutwin.proc_keyb_clear_lockout(keyb):
             await self.scanner.clear_lockout()
 

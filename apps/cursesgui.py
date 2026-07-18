@@ -269,8 +269,10 @@ class ChannelWindow(object):
     """
     # pylint: disable=too-few-public-methods
 
-    def __init__(self, screen, width=None):
+    def __init__(self, screen, width=None, num_demod: int | None = None):
         self.screen = screen
+
+        self.num_demod = num_demod
 
         # Create a window object in the bottom half of the screen
         # Place on left side and to the right of the border
@@ -287,6 +289,14 @@ class ChannelWindow(object):
 
         self.entries: list[ChannelWindow.ChannelEntry] = []
 
+        # Sticky-row state: maps rf frequency (float) -> row index so that a
+        # frequency keeps the same display row for as long as it is visible
+        # (active or hanging).  Rows are reclaimed into _free_rows only when a
+        # frequency completely disappears from the channel list.
+        self._row_map: dict[float, int] = {}
+        self._rf_by_row: dict[int, float] = {}   # reverse of _row_map; O(1) row -> rf lookup
+        self._free_rows: list[int] = []
+
     class ChannelEntry(object):
         win = None
 
@@ -296,6 +306,7 @@ class ChannelWindow(object):
             self.width = width
             self.prev_channel: ChannelFrequency | None = None
             self.prev_idx: int | None = None
+            self.prev_show_placeholder: bool | None = None
 
             self.attrs = { 'bold_freq': curses.color_pair(2) | curses.A_BOLD,
                            'bold_icon': curses.color_pair(2),
@@ -305,15 +316,20 @@ class ChannelWindow(object):
         def reset_cache(self) -> None:
             self.prev_channel = None
             self.prev_idx = None
+            self.prev_show_placeholder = None
 
-        def set(self, channel: ChannelFrequency, idx: int = 0) -> None:
-            if self.prev_channel != channel or self.prev_idx != idx:
+        def set(self, channel: ChannelFrequency, idx: int = 0,
+                show_placeholder: bool = True) -> None:
+            if (self.prev_channel != channel or self.prev_idx != idx
+                    or self.prev_show_placeholder != show_placeholder):
                 self.channel = channel
                 self.idx = idx
+                self.show_placeholder = show_placeholder
                 self.draw()
 
             self.prev_channel = channel
             self.prev_idx = idx
+            self.prev_show_placeholder = show_placeholder
 
         def draw(self) -> None:
             row = self.row
@@ -324,9 +340,19 @@ class ChannelWindow(object):
             if win is None:
                 return
 
+            # Clear the entire row width to prevent stale characters from previous draws (e.g. uncleared dots)
+            win.addnstr(row, col, ' ' * self.width, self.width)
+
             if channel is None:
-                text = ' ' * self.width
-                win.addnstr(row, col, text, self.width)
+                if not self.show_placeholder:
+                    return
+                idx_str = f'{self.idx:>2d}:'
+                scanning_str = ' Scanning...'
+                win.addnstr(row, col, idx_str, len(idx_str),
+                            curses.color_pair(7) | curses.A_DIM)
+                win.addnstr(row, col + len(idx_str), scanning_str,
+                            max(0, self.width - len(idx_str)),
+                            curses.color_pair(6) | curses.A_DIM)
                 return
 
             idx_str = f'{self.idx:02d}:'
@@ -401,28 +427,81 @@ class ChannelWindow(object):
             # Reset caches after a geometry-driven rebuild to force a full redraw
             for entry in self.entries:
                 entry.reset_cache()
+            # Geometry changed: discard all sticky-row assignments so they are
+            # rebuilt cleanly against the new entry count.
+            self._row_map.clear()
+            self._rf_by_row.clear()
+            self._free_rows = list(range(usable_height))
 
     def draw_channels(self, channels: list[ChannelFrequency]):
-        """Draws tuned channels list
+        """Draws tuned channels list using sticky row anchoring.
 
-        Args:
-            rf_channels [string]: List of strings in MHz
+        Each RF frequency is assigned a row index the first time it becomes
+        visible (active or hanging) and keeps that row until it completely
+        disappears from the channel list.  Rows are reclaimed into a free pool
+        in ascending order so newly arriving frequencies take the lowest
+        available slot, giving a natural top-to-bottom fill pattern.
+
+        The label shown next to each frequency is its row index, which is
+        permanent for as long as the frequency is visible.  The keyboard
+        lockout hotkeys (``0``–``9``) correspond to these row indices.
+        ham2mon uses get_rf_by_row() to translate the pressed digit into an
+        RF frequency which is passed directly to Scanner.add_lockout().
         """
-        # Draw the tuned channels prefixed by index in list (demodulator index)
-        # Use color if tuned channel is active during this scan_cycle
-        subset = [c for c in channels if c.active or c.hanging]  # needs to match Scanner.add_lockout
+        subset = [c for c in channels if c.active or c.hanging]
+        visible_rfs = {c.rf for c in subset}
 
-        for idx, entry in enumerate(self.entries):
-            if idx >= len(subset):
-                entry.set(None)
-            else:
-                entry.set(subset[idx], idx)
+        # Initialise _free_rows on the very first call (before any geometry
+        # change has fired draw_frame with a mismatched entry count).
+        if not self._row_map and not self._free_rows and self.entries:
+            self._free_rows = list(range(len(self.entries)))
+
+        # Release rows belonging to frequencies that are no longer visible.
+        released = [row for rf, row in self._row_map.items() if rf not in visible_rfs]
+        for rf in [rf for rf in list(self._row_map) if rf not in visible_rfs]:
+            row = self._row_map.pop(rf)
+            self._rf_by_row.pop(row, None)
+        # Keep free list sorted ascending so the lowest slot is always taken
+        # first, preserving a tidy top-to-bottom fill order.
+        self._free_rows = sorted(self._free_rows + released)
+
+        # Assign a row to any newly visible frequency.
+        for channel in subset:
+            if channel.rf not in self._row_map and self._free_rows:
+                row = self._free_rows.pop(0)
+                self._row_map[channel.rf] = row
+                self._rf_by_row[row] = channel.rf
+
+        # Build a row-indexed view: row -> channel.
+        row_content: dict[int, ChannelFrequency] = {}
+        for channel in subset:
+            row = self._row_map.get(channel.rf)
+            if row is not None:
+                row_content[row] = channel
+
+        # Render every entry: draw the assigned channel at its stable row index,
+        # passing the row number as the display index (lockout hotkey label).
+        # row_idx is always passed, even for idle rows, so the "Scanning..."
+        # placeholder in ChannelEntry.draw() can display the correct row
+        # number for empty slots too.
+        for row_idx, entry in enumerate(self.entries):
+            is_demod_slot = self.num_demod is None or row_idx < self.num_demod
+            entry.set(row_content.get(row_idx), row_idx,
+                      show_placeholder=is_demod_slot)
 
         # Hide cursor
         self.win.leaveok(1)
 
         # Update virtual window
         self.win.noutrefresh()
+
+    def get_rf_by_row(self, row: int) -> float | None:
+        """Return the RF frequency currently anchored to *row*, or None.
+
+        Used by the lockout key handler in ham2mon to translate a pressed
+        digit (row number) into an RF frequency for Scanner.add_lockout().
+        """
+        return self._rf_by_row.get(row)
 
     def cleanup(self) -> None:
         if hasattr(self, 'win') and self.win:
@@ -1104,7 +1183,7 @@ class RxWindow(object):
 
 
 def create_bottom_row_windows(screen, chan_min_width=20, lock_min_width=20,
-                               weights=None):
+                              weights=None, num_demod: int | None = None):
     """Creates and positions the Channel, Lockout, and Receiver windows.
 
     Channel and Lockout display open-ended, user-supplied label text, so
@@ -1121,6 +1200,8 @@ def create_bottom_row_windows(screen, chan_min_width=20, lock_min_width=20,
         weights (dict): optional override of {'chan', 'lock', 'rx'} growth
             weights; defaults to Channel/Lockout growing twice as fast as
             Receiver once minimums are satisfied
+        num_demod (int): optional count of available demodulators to cap
+            scanning placeholder rendering
 
     Returns:
         tuple: (ChannelWindow, LockoutWindow, RxWindow) instances
@@ -1140,7 +1221,7 @@ def create_bottom_row_windows(screen, chan_min_width=20, lock_min_width=20,
     min_widths = {'chan': chan_min_width, 'lock': lock_min_width, 'rx': rx_min_width}
     widths = compute_panel_widths(total_usable_width, min_widths, weights)
 
-    chanwin = ChannelWindow(screen, width=widths['chan'])
+    chanwin = ChannelWindow(screen, width=widths['chan'], num_demod=num_demod)
     lockoutwin = LockoutWindow(screen, width=widths['lock'], x_offset=widths['chan'] + 1)
     rxwin = RxWindow(screen, width=widths['rx'])
     return chanwin, lockoutwin, rxwin

@@ -376,14 +376,15 @@ class Scanner(object):
 
         return sweep
 
-    async def add_lockout(self, idx: int) -> None:
-        # need the same subset here as in cursesgui.ChannelWindow so idx gets the right channel
-        subset = [c for c in self.channels if c.active or c.hanging]
-        try:
-            self.frequencies = await self.frequency_manager.change({'single': subset[idx].rf, 'locked': True, 'mode': 'add'})
-        except IndexError:
-            # user selected a digit but no channels in interface
-            return
+    async def add_lockout(self, rf: float) -> None:
+        """Lock out the given RF frequency.
+
+        The RF value is supplied directly by the UI layer (translated from a
+        pressed digit via ChannelWindow.get_rf_by_row) so no subset indexing
+        is required here.
+        """
+        self.frequencies = await self.frequency_manager.change(
+            {'single': rf, 'locked': True, 'mode': 'add'})
 
     async def clear_lockout(self) -> None:
         """
