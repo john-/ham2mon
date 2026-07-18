@@ -10,10 +10,10 @@ import curses
 import time
 import numpy as np
 import logging
-from pathlib import PurePath
-import bisect
+from pathlib import Path, PurePath
 from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
 from utilities import baseband_to_bin, build_column_edges, index_to_column
+from ui_theme import THEME, ThemeConfiguration
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -184,11 +184,11 @@ class SpectrumWindow(object):
 
         # Clear outer window, draw border and title on the outer frame
         self.outer_win.erase()
+        self.outer_win.attron(THEME.get('spectrum.border'))
         self.outer_win.border(0)
-        self.outer_win.attron(curses.color_pair(6))
         outer_width = self.dims[1] + 2
         self.outer_win.addnstr(0, (outer_width - 8) // 2, "SPECTRUM", 8,
-                               curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+                               THEME.get('spectrum.title'))
         self.outer_win.leaveok(1)
         self.outer_win.noutrefresh()
 
@@ -201,30 +201,30 @@ class SpectrumWindow(object):
             # Since we have no borders on inner window, we write exactly at pos_x
             if pos_y[pos_x] > pos_yt:
                 # bar is below threshold, use low value color
-                self.win.vline(pos_y[pos_x], pos_x, "-", max_y-pos_y[pos_x]+1, curses.color_pair(3) | curses.A_BOLD)
+                self.win.vline(pos_y[pos_x], pos_x, "-", max_y-pos_y[pos_x]+1, THEME.get('spectrum.bar_below_threshold'))
             elif pos_y[pos_x] <= min_y:
                 # bar is above max (clipped to min y), use max value color
-                self.win.vline(pos_y[pos_x], pos_x, "+", max_y-pos_y[pos_x]+1, curses.color_pair(1) | curses.A_BOLD)
+                self.win.vline(pos_y[pos_x], pos_x, "+", max_y-pos_y[pos_x]+1, THEME.get('spectrum.bar_above_max'))
             else:
                 # bar is between max value and threshold, use threshold color
-                self.win.vline(pos_y[pos_x], pos_x, "*", max_y-pos_y[pos_x]+1, curses.color_pair(2) | curses.A_BOLD)
+                self.win.vline(pos_y[pos_x], pos_x, "*", max_y-pos_y[pos_x]+1, THEME.get('spectrum.bar_between'))
 
         # Draw the max_db and min_db strings
         string = ">" + "%+03d" % self.max_db
         self.win.addnstr(0, self.dims[1] - self.chars, string, self.chars,
-                         curses.color_pair(1))
+                         THEME.get('spectrum.max_db_label'))
         string = ">" + "%+03d" % self.min_db
         self.win.addnstr(max_y, self.dims[1] - self.chars, string,
-                         self.chars, curses.color_pair(3))
+                         self.chars, THEME.get('spectrum.min_db_label'))
 
         # Draw the threshold line
-        self.win.hline(pos_yt, 0, "-", len(pos_y), curses.color_pair(2))
+        self.win.hline(pos_yt, 0, "-", len(pos_y), THEME.get('spectrum.threshold_line'))
 
         # Draw the threshold string on the same row as the threshold line.
         # The inner window has no border, so addnstr at pos_yt == max_y is safe.
         string = ">" + "%+03d" % self.threshold_db
         self.win.addnstr(pos_yt, (self.dims[1] - self.chars), string,
-                         self.chars, curses.color_pair(2))
+                         self.chars, THEME.get('spectrum.threshold_label'))
 
         # Place a channel marker above the signal peak at its baseband frequency column.
         if channels is not None and self.samp_rate > 0:
@@ -280,8 +280,8 @@ class SpectrumWindow(object):
                 for idx in range(col, col + len(label)):
                     occupied_rows[marker_y].add(idx)
 
-                attr = (curses.color_pair(7)
-                        if channel.active else curses.color_pair(7) | curses.A_DIM)
+                attr = (THEME.get('spectrum.channel_marker_active')
+                        if channel.active else THEME.get('spectrum.channel_marker_hanging'))
                 try:
                     self.win.addnstr(marker_y, col, label, len(label), attr)
                 except curses.error:
@@ -374,10 +374,10 @@ class ChannelWindow(object):
             self.prev_idx: int | None = None
             self.prev_show_placeholder: bool | None = None
 
-            self.attrs = { 'bold_freq': curses.color_pair(2) | curses.A_BOLD,
-                           'bold_icon': curses.color_pair(2),
-                           'normal_freq': curses.color_pair(2) | curses.A_DIM,
-                           'normal_icon': curses.color_pair(2) | curses.A_DIM }
+            self.attrs = { 'bold_freq': THEME.get('channel.freq_active'),
+                           'bold_icon': THEME.get('channel.icon_active'),
+                           'normal_freq': THEME.get('channel.freq_inactive'),
+                           'normal_icon': THEME.get('channel.icon_inactive') }
 
         def reset_cache(self) -> None:
             self.prev_channel = None
@@ -415,10 +415,10 @@ class ChannelWindow(object):
                 idx_str = f'{self.idx:>2d}:'
                 scanning_str = ' Scanning...'
                 win.addnstr(row, col, idx_str, len(idx_str),
-                            curses.color_pair(7) | curses.A_DIM)
+                            THEME.get('channel.placeholder_index'))
                 win.addnstr(row, col + len(idx_str), scanning_str,
                             max(0, self.width - len(idx_str)),
-                            curses.color_pair(6) | curses.A_DIM)
+                            THEME.get('channel.placeholder_text'))
                 return
 
             idx_str = f'{self.idx:>2d}:'
@@ -431,8 +431,8 @@ class ChannelWindow(object):
             attributes = (self.attrs['bold_freq'], self.attrs['bold_icon']) if channel.active else (
                 self.attrs['normal_freq'], self.attrs['normal_icon'])
 
-            idx_attr = (curses.color_pair(7)
-                        if channel.active else curses.color_pair(7) | curses.A_DIM)
+            idx_attr = (THEME.get('channel.index_active')
+                        if channel.active else THEME.get('channel.index_inactive'))
             win.addnstr(row, col, idx_str, len(idx_str), idx_attr)
             win.addnstr(row, col + 3, freq_str, len(freq_str), attributes[0])
             win.addnstr(row, col + 12, icon, 1, attributes[1])
@@ -467,11 +467,11 @@ class ChannelWindow(object):
 
     def draw_frame(self) -> None:
         self.outer_win.erase()
+        self.outer_win.attron(THEME.get('channel.border'))
         self.outer_win.border(0)
-        self.outer_win.attron(curses.color_pair(6))
         outer_width = self.dims[1] + 2
         self.outer_win.addnstr(0, (outer_width - 8) // 2, "CHANNELS", 8,
-                               curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+                               THEME.get('channel.title'))
         self.outer_win.leaveok(1)
         self.outer_win.noutrefresh()
 
@@ -634,8 +634,8 @@ class LockoutWindow(object):
             self.prev_lockout: ConfigFrequency | None = None
             self.prev_has_activity: bool | None = None
 
-            self.attrs = { 'bold_lockout': curses.color_pair(5) | curses.A_BOLD,
-                           'normal_lockout': curses.color_pair(6) }
+            self.attrs = { 'bold_lockout': THEME.get('lockout.active'),
+                           'normal_lockout': THEME.get('lockout.inactive') }
 
         def reset_cache(self) -> None:
             self.prev_lockout = None
@@ -701,11 +701,11 @@ class LockoutWindow(object):
 
     def draw_frame(self) -> None:
         self.outer_win.erase()
+        self.outer_win.attron(THEME.get('lockout.border'))
         self.outer_win.border(0)
-        self.outer_win.attron(curses.color_pair(6))
         outer_width = self.dims[1] + 2
         self.outer_win.addnstr(0, (outer_width - 7) // 2, "LOCKOUT", 7,
-                        curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+                        THEME.get('lockout.title'))
         self.outer_win.leaveok(1)
         self.outer_win.noutrefresh()
 
@@ -907,8 +907,8 @@ class RxWindow(object):
             win = RxWindow.RxEntry.win
             label_width = RxWindow.RxEntry.label_width
 
-            self.attrs = { 'bold': curses.color_pair(5),
-                           'normal': curses.color_pair(6) }
+            self.attrs = { 'bold': THEME.get('receiver.value_editable'),
+                           'normal': THEME.get('receiver.value_readonly') }
 
             if self.label is None:
                 return
@@ -979,11 +979,11 @@ class RxWindow(object):
 
     def draw_frame(self) -> None:
         self.outer_win.erase()
+        self.outer_win.attron(THEME.get('receiver.border'))
         self.outer_win.border(0)
-        self.outer_win.attron(curses.color_pair(6))
         outer_width = self.dims[1] + 2
         self.outer_win.addnstr(0, (outer_width - 8) // 2, "RECEIVER", 8,
-                         curses.color_pair(6) | curses.A_DIM | curses.A_BOLD)
+                         THEME.get('receiver.title'))
         self.outer_win.leaveok(1)
         self.outer_win.noutrefresh()
 
@@ -1304,8 +1304,14 @@ def create_bottom_row_windows(screen, chan_min_width=20, lock_min_width=20,
     return chanwin, lockoutwin, rxwin
 
 
-def setup_screen(screen):
+def setup_screen(screen, theme_config_path: Path | None = None) -> None:
     """Sets up screen
+
+    Args:
+        theme_config_path (Path, optional): Path to a theme YAML
+            file (see ui_theme.py). If omitted, default-theme.yaml is used.
+            This parameter exists so a future --theme-config CLI flag can be
+            added.
     """
 
     # hide cursor
@@ -1317,17 +1323,18 @@ def setup_screen(screen):
     # break on ctrl-c
     curses.cbreak()
 
-    # Define some colors
-    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-    curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.init_pair(7, curses.COLOR_BLUE, curses.COLOR_BLACK)
+    # Load and resolve the UI theme config. This is the only place any
+    # curses.init_pair()/color_pair() resolution happens -- a one-time,
+    # startup-only cost. curses.start_color() must already have been called
+    # by the caller (see main() below) before this runs.
+    THEME.config = ThemeConfiguration(file_name=theme_config_path)
+    THEME.load()
+    THEME.resolve()
 
     # Add border
+    screen.attron(THEME.get('screen.border'))
     screen.border(0)
+    screen.attroff(THEME.get('screen.border'))
 
 def main():
     """Test most of the GUI (except lockout processing)

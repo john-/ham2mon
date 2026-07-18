@@ -1,0 +1,55 @@
+# ham2mon UI theme configuration
+#
+# Recognized fg/bg colors: either a name (black, red, green, yellow, blue,
+# magenta, cyan, white) or an xterm-256 color index (0-255), e.g. `fg: 208`.
+# Numeric colors are degraded to the nearest of the 8 named colors on
+# terminals that don't report 256-color support (check $TERM, e.g.
+# "xterm-256color", or "screen-256color"/"tmux-256color" under
+# tmux/screen); a startup warning is logged when this happens.
+# Background defaults to black if omitted.
+
+styles:
+
+  # Outer screen frame (drawn once, in setup_screen)
+  screen.border:                   { fg: 31 }
+
+  # SPECTRUM panel
+  spectrum.border:                 { fg: 31 }
+  spectrum.title:                  { fg: 87, dim: true, bold: true }
+  spectrum.bar_above_max:          { fg: 196, bold: true }   # '+' bars, signal above max_db
+  spectrum.bar_between:            { fg: 46,  bold: true }   # '*' bars, between threshold and max
+  spectrum.bar_below_threshold:    { fg: 51,  bold: true }   # '-' bars, below threshold
+  spectrum.max_db_label:           { fg: 196 }
+  spectrum.min_db_label:           { fg: 51 }
+  spectrum.threshold_line:         { fg: 214 }
+  spectrum.threshold_label:        { fg: 214 }
+  spectrum.channel_marker_active:  { fg: 39, bold: true }
+  spectrum.channel_marker_hanging: { fg: 24 }
+
+  # CHANNELS panel
+  channel.border:                  { fg: 31 }
+  channel.title:                   { fg: 87, dim: true, bold: true }
+  channel.freq_active:             { fg: 46, bold: true }
+  channel.icon_active:             { fg: 46 }
+  channel.freq_inactive:           { fg: 46, dim: true }
+  channel.icon_inactive:           { fg: 46, dim: true }
+  channel.index_active:            { fg: 39, bold: true }
+  channel.index_inactive:          { fg: 24 }
+  channel.placeholder_index:       { fg: 24, dim: true }   # index label on empty "Scanning..." rows
+  channel.placeholder_text:        { fg: 244, dim: true }  # the "Scanning..." text itself
+  # Note: the CTCSS tone readout uses channel.icon_active/channel.icon_inactive
+  # (whichever applies to the row) with italic added in code -- it isn't an
+  # independently configurable color, since it needs to track active/inactive
+  # state exactly like the icon does.
+
+  # LOCKOUT panel
+  lockout.border:                  { fg: 31 }
+  lockout.title:                   { fg: 87, dim: true, bold: true }
+  lockout.active:                  { fg: 208, bold: true }  # lockout entry with current activity
+  lockout.inactive:                { fg: 250 }
+
+  # RECEIVER panel
+  receiver.border:                 { fg: 31 }
+  receiver.title:                  { fg: 87, dim: true, bold: true }
+  receiver.value_editable:         { fg: 214 }   # user-adjustable field values
+  receiver.value_readonly:         { fg: 250 }   # labels + read-only field values
