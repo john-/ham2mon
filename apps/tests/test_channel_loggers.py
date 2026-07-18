@@ -1,12 +1,13 @@
 import pytest
+import asyncio
 from unittest.mock import MagicMock
-from channel_loggers import ChannelLogParams, FixedField, JsonToServer
+from channel_loggers import ActivityParams, FixedField, JsonToServer, ActivityLogger, NoOp
 from frequency_manager import ChannelMessage
 
 @pytest.mark.asyncio
 async def test_fixed_field_logger(tmp_path):
     log_file = tmp_path / "channel.log"
-    params = ChannelLogParams(type="fixed-field", target=str(log_file), timeout=0)
+    params = ActivityParams(type="fixed-field", dest=str(log_file), interval=0)
     logger = FixedField(params)
 
     # 1. Message WITH matched CTCSS
@@ -56,7 +57,7 @@ async def test_fixed_field_logger(tmp_path):
 
 @pytest.mark.asyncio
 async def test_json_to_server_logger():
-    params = ChannelLogParams(type="json-server", target="http://example.com/log", timeout=0)
+    params = ActivityParams(type="json-server", dest="http://example.com/log", interval=0)
     logger = JsonToServer(params)
 
     # Mock requests post directly on the instance's requests object
@@ -85,3 +86,91 @@ async def test_json_to_server_logger():
     assert posted_json["state"] == "on"
     assert posted_json["rf"] == 145.5
     assert posted_json["file"] == "test.wav"
+
+
+class SpyLogger(ActivityLogger):
+    def __init__(self, params: ActivityParams, get_ctcss=None) -> None:
+        super().__init__(params, get_ctcss=get_ctcss)
+        self.interval = params.interval
+        self.logged_messages = []
+
+    async def log(self, msg: ChannelMessage | None) -> None:
+        if msg is None:
+            return
+        await super().log(msg)
+        self.logged_messages.append(msg)
+        self.handle_channel_state(msg)
+
+
+def test_activity_logger_factory():
+    # 1. fixed-field logger
+    params_ff = ActivityParams(type="fixed-field", dest="file.log", interval=0)
+    assert isinstance(ActivityLogger.get_logger(params_ff), FixedField)
+
+    # 2. json-server logger
+    params_js = ActivityParams(type="json-server", dest="http://example.com", interval=0)
+    assert isinstance(ActivityLogger.get_logger(params_js), JsonToServer)
+
+    # 3. debug (which is now removed/unsupported) -> falls back to NoOp
+    params_debug = ActivityParams(type="debug", dest="", interval=0)
+    assert isinstance(ActivityLogger.get_logger(params_debug), NoOp)
+
+    # 4. none -> NoOp
+    params_none = ActivityParams(type="none", dest="", interval=0)
+    assert isinstance(ActivityLogger.get_logger(params_none), NoOp)
+
+
+@pytest.mark.asyncio
+async def test_channel_state_handling_keyerror_and_leak_prevention():
+    params = ActivityParams(type="test", dest="", interval=5)
+    logger = SpyLogger(params)
+
+    # 1. Sending an 'off' message without an 'on' message first (no active task)
+    # This should not raise a KeyError.
+    msg_off = ChannelMessage(state="off", rf=145.5, bb=0, channel=1)
+    await logger.log(msg_off)
+    assert 1 not in logger.log_task
+
+    # 2. Sending an 'on' message should start a task
+    msg_on = ChannelMessage(state="on", rf=145.5, bb=0, channel=2)
+    await logger.log(msg_on)
+    assert 2 in logger.log_task
+    task = logger.log_task[2]
+    assert not task.done()
+
+    # 3. Sending an 'off' message should cancel the task and delete it from dict
+    msg_off_2 = ChannelMessage(state="off", rf=145.5, bb=0, channel=2)
+    await logger.log(msg_off_2)
+    assert 2 not in logger.log_task
+    # Yield control to let cancellation take effect in the event loop
+    await asyncio.sleep(0)
+    assert task.cancelled() or task.done()
+
+
+@pytest.mark.asyncio
+async def test_channel_state_active_logging():
+    # Set a very low timeout (10ms) for testing
+    params = ActivityParams(type="test", dest="", interval=0.01)
+    mock_get_ctcss = MagicMock(return_value=100.0)
+    logger = SpyLogger(params, get_ctcss=mock_get_ctcss)
+
+    # Send 'on' message to start active logging
+    msg_on = ChannelMessage(state="on", rf=145.5, bb=0, channel=3)
+    await logger.log(msg_on)
+
+    # Wait long enough for at least 2 active logging ticks to occur
+    await asyncio.sleep(0.035)
+
+    # Send 'off' message to terminate active logging
+    msg_off = ChannelMessage(state="off", rf=145.5, bb=0, channel=3)
+    await logger.log(msg_off)
+
+    # Verify that 'act' (active) messages were logged periodically
+    act_messages = [m for m in logger.logged_messages if m.state == "act"]
+    assert len(act_messages) >= 2
+    for m in act_messages:
+        assert m.rf == 145.5
+        assert m.channel == 3
+        assert m.matched_ctcss == 100.0
+
+    mock_get_ctcss.assert_called_with(0)

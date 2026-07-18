@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Dict, Literal, Optional
 from dataclasses import dataclass
 
+logger = logging.getLogger(f"ham2mon.{__name__}")
+
 @dataclass(kw_only=True)
 class ClassifierParams:
     '''
@@ -60,7 +62,7 @@ class Classifier(object):
         script_dir = Path(__file__).parent
         service_script = script_dir / "classification_service.py"
 
-        logging.info("Starting background TensorFlow classification service subprocess...")
+        logger.info("Starting background TensorFlow classification service subprocess...")
 
         # bufsize=1 ensures line-buffering so that readline and write lines flush immediately.
         self._proc = subprocess.Popen(
@@ -125,24 +127,24 @@ class Classifier(object):
                     stripped = line.strip()
                     if stripped:
                         if stripped.startswith("INFO:"):
-                            logging.info(f"TensorFlow Service: {stripped}")
+                            logger.info(f"TensorFlow Service: {stripped}")
                         else:
-                            logging.warning(f"TensorFlow Service: {stripped}")
+                            logger.warning(f"TensorFlow Service: {stripped}")
             except Exception as e:
                 try:
-                    logging.debug(f"TensorFlow Service stderr drain thread exception: {e}")
+                    logger.debug(f"TensorFlow Service stderr drain thread exception: {e}")
                 except Exception:
                     pass
             finally:
                 try:
-                    logging.debug("TensorFlow Service stderr drain thread exiting.")
+                    logger.debug("TensorFlow Service stderr drain thread exiting.")
                 except Exception:
                     pass
 
         t = threading.Thread(target=log_stderr_stream, args=(self._proc.stderr,), daemon=True)
         t.start()
 
-        logging.info("TensorFlow classification service started successfully!")
+        logger.info("TensorFlow classification service started successfully!")
         self._loaded = True
 
     def is_wanted(self, file: str) -> tuple[bool, Optional[Literal['V', 'D', 'S']]]:
@@ -151,12 +153,12 @@ class Classifier(object):
                 or self._proc.poll() is not None
                 or self._proc.stdin is None
                 or self._proc.stdout is None):
-            logging.warning("TensorFlow classification service is not running. Attempting restart...")
+            logger.warning("TensorFlow classification service is not running. Attempting restart...")
             self.clean_up()
             try:
                 self._ensure_loaded()
             except Exception as e:
-                logging.error(f"Failed to restart TensorFlow classification service: {e}")
+                logger.error(f"Failed to restart TensorFlow classification service: {e}")
                 return False, None
 
         if (self._proc is None
@@ -172,8 +174,8 @@ class Classifier(object):
         # Read prediction response from process stdout with a timeout to avoid hangs
         ready_r, _, _ = select.select([self._proc.stdout], [], [], 5.0)
         if not ready_r:
-            logging.error(f"Timeout waiting for classification response for file: {file}")
-            logging.warning(f"Classification result lost for {file} due to subprocess hang.")
+            logger.error(f"Timeout waiting for classification response for file: {file}")
+            logger.warning(f"Classification result lost for {file} due to subprocess hang.")
             self.clean_up()  # Terminate hung subprocess
             return False, None
 
@@ -196,11 +198,11 @@ class Classifier(object):
             try:
                 self._proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                logging.warning("Classification service did not terminate in time. Killing it...")
+                logger.warning("Classification service did not terminate in time. Killing it...")
                 self._proc.kill()
                 self._proc.wait()
         except Exception as e:
-            logging.debug(f"Error during classification service cleanup: {e}")
+            logger.debug(f"Error during classification service cleanup: {e}")
         finally:
             self._proc = None
             self._loaded = False

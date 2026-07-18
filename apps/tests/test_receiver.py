@@ -732,7 +732,7 @@ async def test_ctcss_mismatch_suppression(tmp_path):
             self.frequencies = []
             self.channels = []
             self._channels = []
-            self.channel_log_params = None
+            self.activity_params = None
             self.channel_spacing = channel_spacing
             self.hang_time = 1.0
             self.max_recording = 0.0

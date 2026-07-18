@@ -8,25 +8,30 @@ from abc import ABC
 from dataclasses import dataclass, asdict
 from importlib import import_module
 import asyncio
+from typing import Callable
+
+logger = logging.getLogger(f"ham2mon.{__name__}")
 
 @dataclass(kw_only=True)
-class ChannelLogParams:
+class ActivityParams:
     '''
-    Holds channel log command line options provided by the user
+    Holds channel activity logging command line options provided by the user
     '''
     type: str
-    target: str
-    timeout: int
+    dest: str
+    interval: int
 
-class ChannelLogger(ABC):
+class ActivityLogger(ABC):
     '''
     Base class for all loggers.  Also notify scanner of activity.
     '''
-    def __init__(self, params: ChannelLogParams) -> None:
-        logging.debug(f'Creating {self.__class__.__name__} channel logger')
-        self.timeout: int = 0  # overridden by child classes
+    def __init__(self, params: ActivityParams,
+                 get_ctcss: Callable[[int], float | None] | None = None) -> None:
+        logger.debug(f'Creating {self.__class__.__name__} channel logger')
+        self.interval: int = 0  # overridden by child classes
         self.log_task: dict[int, asyncio.Task] = {}  # activity logging tasks are channel specific
         self.params = params
+        self.get_ctcss = get_ctcss  # optional callback: bb_freq -> matched ctcss tone or None
 
     async def log(self, msg: ChannelMessage | None) -> None:
         '''
@@ -39,70 +44,70 @@ class ChannelLogger(ABC):
             return
 
     @staticmethod
-    def get_logger(params: ChannelLogParams) -> 'ChannelLogger':
+    def get_logger(params: ActivityParams,
+                   get_ctcss: Callable[[int], float | None] | None = None) -> 'ActivityLogger':
         '''
         Factory to generate a class instance based on command line options
         '''
         if params.type == 'fixed-field':
-            return FixedField(params)
+            return FixedField(params, get_ctcss=get_ctcss)
         elif params.type == 'json-server':
-            return JsonToServer(params)
-        elif params.type == 'debug':
-            return Debug(params)
+            return JsonToServer(params, get_ctcss=get_ctcss)
         else:
-            return NoOp(params)
+            return NoOp(params, get_ctcss=get_ctcss)
 
     def handle_channel_state(self, msg: ChannelMessage) -> None:
         '''
         Use on/off events to start/stop activity timer
         '''
-        if self.timeout == 0:
+        if self.interval == 0:
             return
 
         channel = msg.channel
         if msg.state == 'on':
+            # Cancel any orphaned task for this channel before starting a new one
+            existing = self.log_task.get(channel)
+            if existing and not existing.done():
+                existing.cancel()
             # start reoccurring task to log that channel is active
             self.log_task[channel] = asyncio.create_task(self.log_active(msg))
         elif msg.state == 'off':
             # stop the reoccurring task
-            if self.log_task[channel]:
-                was_cancelled = self.log_task[channel].cancel()
+            task = self.log_task.get(channel)
+            if task:
+                was_cancelled = task.cancel()
                 if not was_cancelled:
-                    logging.error('Could not cancel logging task')
+                    logger.error('Could not cancel logging task')
+                try:
+                    del self.log_task[channel]
+                except KeyError:
+                    pass
 
     async def log_active(self, msg: ChannelMessage) -> None:
         '''
-        While the channel is active log at an interval
+        While the channel is active log at an interval.
+        Reads matched_ctcss live from the demodulator via the get_ctcss
+        callback (if provided) so heartbeats reflect the settled tone rather
+        than the None that was present at channel-open time.
         '''
         while True:
-            await asyncio.sleep(self.timeout)
+            await asyncio.sleep(self.interval)
+            live_ctcss = self.get_ctcss(msg.bb) if self.get_ctcss is not None else None
             await self.log(ChannelMessage(state='act',
                                     rf=msg.rf,
-                                    channel=msg.channel))
+                                    bb=msg.bb,
+                                    channel=msg.channel,
+                                    matched_ctcss=live_ctcss))
 
-class NoOp(ChannelLogger):
+class NoOp(ActivityLogger):
     '''
     Logger that ignores all events
     '''
-    def __init__(self, params: ChannelLogParams) -> None:
-        super().__init__(params)
+    def __init__(self, params: ActivityParams,
+                 get_ctcss: Callable[[int], float | None] | None = None) -> None:
+        super().__init__(params, get_ctcss=get_ctcss)
 
-        self.timeout: int = 0
-
-    async def log(self, msg: ChannelMessage | None) -> None:
-        if msg is None:
-            return
-
-        await super().log(msg)
-
-class Debug(ChannelLogger):
-    '''
-    Send channel events to the debug log (enable with --debug)
-    '''
-    def __init__(self, params: ChannelLogParams) -> None:
-        super().__init__(params)
-
-        self.timeout = params.timeout
+        self.interval: int = 0
 
     async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
@@ -110,20 +115,16 @@ class Debug(ChannelLogger):
 
         await super().log(msg)
 
-        # for this logger we just write to the debug log
-        logging.debug(msg)
-
-        self.handle_channel_state(msg)
-
-class FixedField(ChannelLogger):
+class FixedField(ActivityLogger):
     '''
     Send channel events to a file with fixed field length records
     '''
-    def __init__(self, params) -> None:
-        super().__init__(params)
+    def __init__(self, params,
+                 get_ctcss: Callable[[int], float | None] | None = None) -> None:
+        super().__init__(params, get_ctcss=get_ctcss)
 
-        self.file_name = params.target
-        self.timeout = params.timeout
+        self.file_name = params.dest
+        self.interval = params.interval
 
     async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
@@ -143,20 +144,19 @@ class FixedField(ChannelLogger):
 
         self.handle_channel_state(msg)
 
-class JsonToServer(ChannelLogger):
+class JsonToServer(ActivityLogger):
     '''
     Send channels events as json messages to  a remote server
     '''
-    def __init__(self, params) -> None:
-        super().__init__(params)
+    def __init__(self, params,
+                 get_ctcss: Callable[[int], float | None] | None = None) -> None:
+        super().__init__(params, get_ctcss=get_ctcss)
 
-        self.server = params.target
-        self.timeout = params.timeout
+        self.server = params.dest
+        self.interval = params.interval
 
         self.requests = import_module('requests')
-        # urllib3 is very chatty.  Uncomment is log event for every connection is needed.
-        # remove this if there is a single connection approach
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        # urllib3 log suppression is configured at application startup in ham2mon.py
 
     async def log(self, msg: ChannelMessage | None) -> None:
         if msg is None:
@@ -165,19 +165,19 @@ class JsonToServer(ChannelLogger):
         await super().log(msg)
 
         msg_dict = asdict(msg)
-        logging.debug(f'{msg =}')
+        logger.debug(f'{msg =}')
 
         try:
             # TODO: open the connection once
             request = self.requests.post(self.server, json=msg_dict)
             request.raise_for_status()
         except self.requests.exceptions.HTTPError as errh:
-            logging.error(f'HTTP Error: {errh.args[0]}')
+            logger.error(f'HTTP Error: {errh.args[0]}')
         except self.requests.exceptions.ConnectionError as errc:
-            logging.error(f'Connection Error: {errc.args[0]}')
+            logger.error(f'Connection Error: {errc.args[0]}')
         except self.requests.exceptions.Timeout as errt:
-            logging.error(f'Timeout Error: {errt.args[0]}')
+            logger.error(f'Timeout Error: {errt.args[0]}')
         except self.requests.exceptions.RequestException as err:
-            logging.error(f'Some kind of Error: {err.args[0]}')
+            logger.error(f'Some kind of Error: {err.args[0]}')
 
         self.handle_channel_state(msg)

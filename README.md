@@ -220,8 +220,8 @@ usage: ham2mon.py [-h] [-a HW_ARGS] [-n NUM_DEMOD] [-d TYPE_DEMOD]
                   [--lb_gain LB_GAIN_DB] [-x MIX_GAIN_DB] [--agc]
                   [-s SQUELCH_DB] [-v VOLUME_DB] [-t THRESHOLD_DB] [-w]
                   [-F FREQUENCY_FILE_NAME] [--disable-lockout]
-                  [--disable-priority] [-P] [-T CHANNEL_LOG_TYPE]
-                  [-L CHANNEL_LOG_TARGET] [-A CHANNEL_LOG_TIMEOUT]
+                  [--disable-priority] [-P] [-T ACTIVITY_TYPE]
+                  [-L ACTIVITY_DEST] [-A ACTIVITY_INTERVAL]
                   [-c FREQ_CORRECTION] [-m] [-b AUDIO_BPS] [-M MAX_DB]
                   [-N MIN_DB] [-B CHANNEL_SPACING]
                   [--min_recording MIN_RECORDING]
@@ -278,12 +278,12 @@ options:
   --disable-lockout     Disable locking out of channels
   --disable-priority    Disable prioritization of channels
   -P, --auto-priority   Automatically add voice channels as priority channels
-  -T, --log_type CHANNEL_LOG_TYPE
-                        Log file type for channel detection
-  -L, --log_target CHANNEL_LOG_TARGET
-                        Log file or endpoint for channel detection
-  -A, --log_active_timeout CHANNEL_LOG_TIMEOUT
-                        Timeout delay for active channel log entries
+  -T, --activity-type ACTIVITY_TYPE
+                        Log file type for channel activity detection
+  -L, --activity-dest ACTIVITY_DEST
+                        Log file or endpoint for channel activity detection
+  -A, --activity-interval ACTIVITY_INTERVAL
+                        Timeout delay for active channel activity log entries
   -c, --correction FREQ_CORRECTION
                         Frequency correction in ppm
   -m, --mute-audio      Mute audio from speaker (still allows recording)
@@ -505,16 +505,17 @@ Labels can be assigned to frequencies and frequency ranges in the frequency file
 
 Labels are enabled by default and currently cannot be disabled.
 
-## Channel Detection Log File
-Channel events can be written to file or other targets.  Events occur when channel activity is detected as well as for ongoing activity.
+## Channel Activity Log File
+Channel events can be written to a file or external targets. Events occur when channel activity is detected (on/off states) as well as periodically for ongoing activity.
 
-By default, no channel activity is recorded.  The type can be specified with `--log_type`.  Current types include `fixed-field`, `debug` and `json-server`.  The default type is `none`.
+By default, no channel activity is logged to external targets. The type can be specified with `--activity-type`. Current types include `fixed-field` and `json-server`. The default type is `none`.
 
-A type may support a target through the `--log_target` option.  In the case of types the write to a file the target will be a file name.  The default target is `channel-log`.
+A type may support a destination through the `--activity-dest` option. In the case of types that write to a file, the destination will be a file name. The default destination is `channel-log`.
 
-An activity log entry is written every 15 seconds (by default).  This can be changed with `--log_active_timeout`.  Set this to 0 to disable activity logging (channel on/off messages will still occur).
+An activity log entry is written every 15 seconds (by default) for active channels. This can be changed with `--activity-interval`. Set this to 0 to disable periodic activity logging (channel on/off messages will still occur).
 
-If `debug` is selected as logging type then channel events can be viewed when the `--log-level=debug` option is also selected on the command line.
+> [!NOTE]
+> Channel activity events are also automatically sent to standard application logs at the `DEBUG` level. This means you do not need to specify a separate channel logger to see activity events in your developer logs; simply configure `--log-level=debug`.
 
 See [json-server example](doc/json-server_example.md) for one way this can be used.
 
@@ -528,7 +529,11 @@ If the number of voice transmissions is less than the number of data/skip transm
 Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.  Therefore, `--model` must also be specified when using auto priority.
 
 ## Logging
-Application logging events can be configured using the `--log-level` and `--log-dest` options. These are separate from channel logging events (-L option) and are intended for application debugging. By default, logging is disabled (`--log-dest=none`). If enabled with `--log-dest=file`, logs are written to `ham2mon.log` (or a custom path specified with `--log-file`).
+Application logging events can be configured using the `--log-level` and `--log-dest` options. By default, logging is disabled (`--log-dest=none`). If enabled with `--log-dest=file`, logs are written to `ham2mon.log` (or a custom path specified with `--log-file`).
+
+`ham2mon` uses standard Python logging set up under a parent `"ham2mon"` namespace with module-level loggers (e.g. `[ham2mon.apps.receiver]` or `[ham2mon.apps.scanner]`). This allows developers to easily trace the source area of log messages. Additionally:
+* When `--log-level=debug` is enabled, all channel detection messages (e.g. tuning on, tuning off, periodic active updates) are automatically outputted to the standard logs.
+* Third-party dependency logs (such as `urllib3` or `gnuradio`) are isolated so they do not pollute the debug output files or standard streams.
 
 ## Audio Classification
 *Note: The classification is not 100% accurate.  There will be both false positives and negatives.*

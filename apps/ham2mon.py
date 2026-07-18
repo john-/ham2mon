@@ -21,6 +21,8 @@ from os.path import realpath, dirname
 
 import _curses
 
+logger = logging.getLogger("ham2mon")
+
 class MyDisplay():
 
     def __init__(self, stdscr: "_curses._CursesWindow") -> None:
@@ -102,13 +104,13 @@ class MyDisplay():
         self.rxwin.record = self.scanner.record
         self.rxwin.type_demod = PARSER.type_demod
         self.rxwin.frequency_file_name = self.scanner.frequency_file_name
-        self.rxwin.channel_log_type = self.scanner.channel_log_params.type
-        # not all channel_log types use a target
-        if self.scanner.channel_log_params.type == 'fixed-field':
-            target = self.scanner.channel_log_params.target
+        self.rxwin.activity_type = self.scanner.activity_params.type
+        # not all activity types use a dest
+        if self.scanner.activity_params.type == 'fixed-field':
+            dest = self.scanner.activity_params.dest
         else:
-            target = None
-        self.rxwin.channel_log_target = target
+            dest = None
+        self.rxwin.activity_dest = dest
 
         self.specwin.max_db = PARSER.max_db
         self.specwin.min_db = PARSER.min_db
@@ -153,7 +155,7 @@ class MyDisplay():
         record = PARSER.record
         play = PARSER.play
         frequency_configuration = PARSER.frequency_configuration
-        channel_log_params = PARSER.channel_log_params
+        activity_params = PARSER.activity_params
         freq_correction = PARSER.freq_correction
         audio_bps = PARSER.audio_bps
         channel_spacing = PARSER.channel_spacing
@@ -173,7 +175,7 @@ class MyDisplay():
 
         scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                                freq_correction, record, frequency_configuration,
-                               channel_log_params,
+                               activity_params,
                                play, audio_bps, channel_spacing,
                                frequency_params, min_recording, max_recording,
                                classifier_params, auto_priority, agc,
@@ -248,14 +250,14 @@ if __name__ == '__main__':
             }
             level = log_level_map.get(PARSER.log_level, logging.WARNING)
 
-            logger = logging.getLogger()
             logger.setLevel(level)
+            logger.propagate = False
 
-            formatter = logging.Formatter('%(asctime)s %(message)s')
+            formatter = logging.Formatter('%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 
             if PARSER.log_dest == 'syslog':
                 syslog_handler = logging.handlers.SysLogHandler(address='/dev/log')
-                syslog_handler.setFormatter(logging.Formatter('ham2mon[%(process)d]: %(message)s'))
+                syslog_handler.setFormatter(logging.Formatter('ham2mon[%(process)d]: [%(name)s] %(levelname)s: %(message)s'))
                 logger.addHandler(syslog_handler)
             elif PARSER.log_dest == 'stderr':
                 stream_handler = logging.StreamHandler()
@@ -270,6 +272,9 @@ if __name__ == '__main__':
                 file_handler.setFormatter(formatter)
                 logger.addHandler(file_handler)
 
+            # Suppress chatty third-party loggers that would otherwise pollute output
+            logging.getLogger("urllib3").setLevel(logging.WARNING)
+
         wrapper(main)
     except KeyboardInterrupt:
         pass
@@ -278,7 +283,7 @@ if __name__ == '__main__':
         print("RuntimeError: SDR hardware not detected or insufficient USB permissions. Try running as root or with --log-level=debug option.")
         print("")
         print(f'RuntimeError: {error=}, {type(error)=}')
-        logging.debug(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         print("")
     except err.LogError:
         print("")
@@ -287,5 +292,5 @@ if __name__ == '__main__':
     except OSError as error:
         print("")
         print(f'OS error: {error=}, {type(error)=}')
-        logging.debug(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         print("")

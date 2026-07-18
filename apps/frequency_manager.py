@@ -12,6 +12,8 @@ import yaml
 import logging
 from utilities import frequency_to_baseband
 
+logger = logging.getLogger(f"ham2mon.{__name__}")
+
 
 @dataclass(kw_only=True)
 class FrequencyInfo:
@@ -257,16 +259,16 @@ class FrequencyManager:
         if not file.exists():
             raise FileNotFoundError(f'Frequency file does not exist: {file}')
 
-        logging.debug(f'Loading frequencies from {file}')
+        logger.debug(f'Loading frequencies from {file}')
         with file.open(mode='r') as file:
             try:
                 frequencies_config = yaml.safe_load(file)
             except yaml.YAMLError as e:
                 if hasattr(e, 'problem_mark'):
-                    logging.error(
+                    logger.error(
                         f'{e.problem_mark} {e.problem} {e.context if e.context else ""}')
                 else:
-                    logging.error(
+                    logger.error(
                         f'Something went wrong while parsing yaml file: {file}')
                 raise Exception(
                     "Invalid yaml frequency file (enable debugging for more info)")
@@ -371,7 +373,7 @@ class FrequencyManager:
 
         existing.ctcss_tones.append(wanted.ctcss)
         existing.ctcss_labels.append(wanted.label or existing.label or "")
-        logging.debug(
+        logger.debug(
             f'Merged CTCSS tone {wanted.ctcss} into existing frequency '
             f'{existing.label!r} (tones now {existing.ctcss_tones})')
 

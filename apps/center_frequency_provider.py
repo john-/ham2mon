@@ -11,6 +11,8 @@ import logging
 import asyncio
 import typing
 
+logger = logging.getLogger(f"ham2mon.{__name__}")
+
 @dataclass(kw_only=True)
 class FrequencyRangeParams:
     '''
@@ -55,7 +57,7 @@ class FrequencyProvider():
     '''
   
     def __init__(self, params: FrequencyGroup) -> None:
-        logging.debug('Creating frequency provider')
+        logger.debug('Creating frequency provider')
 
         self.center_freq: int
         self.step: int = 0
@@ -98,7 +100,7 @@ class FrequencyProvider():
         This routine may be cancelled if the provider is informed
         of activity that should stop the advance to the next step.
         '''
-        logging.debug(f'starting: {self.step=} {self.center_freq=}')
+        logger.debug(f'starting: {self.step=} {self.center_freq=}')
 
         await asyncio.sleep(timeout)
 
@@ -124,16 +126,16 @@ class FrequencyProvider():
         if self.not_stepping():
             return
 
-        logging.debug('Got something of note, setting the active timer')
+        logger.debug('Got something of note, setting the active timer')
 
         was_cancelled = self.step_task.cancel()
         try:
             await self.step_task
         except asyncio.CancelledError: # This exception reflects that the coroutine addressed to the cancel
-            logging.debug("cancelled step task in frequency_provider")
+            logger.debug("cancelled step task in frequency_provider")
 
         if not was_cancelled:
-            logging.error('Could not cancel logging task in frequency_provider')
+            logger.error('Could not cancel logging task in frequency_provider')
 
         timeout = self.params.active_timeout
         self.step_task = asyncio.create_task(self.step_if_no_activity(timeout))
@@ -172,7 +174,7 @@ class FrequencyProvider():
 
             distance = int((end_at - start_at) / (number_of_moves - 1))
 
-            logging.debug(f'Range: {start_at}-{end_at} Steps: {number_of_moves} Distance: {distance}, Min time: {number_of_moves*self.params.quiet_timeout}')
+            logger.debug(f'Range: {start_at}-{end_at} Steps: {number_of_moves} Distance: {distance}, Min time: {number_of_moves*self.params.quiet_timeout}')
 
             center = start_at
             for _ in range(number_of_moves):
