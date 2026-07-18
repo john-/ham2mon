@@ -136,6 +136,7 @@ class FixedField(ChannelLogger):
             text = (f'{now.strftime("%Y-%m-%d, %H:%M:%S.%f")}: {msg.state:<4}{msg.rf:<10}'
                     f'{msg.channel:<2}{msg.priority if msg.priority else "":<2}'
                     f'{msg.classification if msg.classification else "":<2}'
+                    f'{f"{msg.matched_ctcss:.1f}" if msg.matched_ctcss else "":<7}'
                     f'{msg.file if msg.file else "":<50}\n'
                     )
             file.write(text)

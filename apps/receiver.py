@@ -56,7 +56,8 @@ class Receiver(gr.top_block):
                  classifier_params: ClassifierParams, notify_scanner: Callable,
                  agc: bool, file_metadata: list[str] | None = None,
                  get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
-                 get_ctcss_info: Callable[[int], float | None] | None = None,
+                 get_ctcss_info: Callable[[float], list[float]] | None = None,
+                 max_ctcss_tones: int = 0,
                  source_type: str = "hardware", source_file: str | None = None,
                  wav_dir: str = "wav", center_freq: int = int(144E6)):
 
@@ -157,6 +158,7 @@ class Receiver(gr.top_block):
         self.file_metadata = file_metadata if file_metadata is not None else []
         self.get_priority_info = get_priority_info
         self.get_ctcss_info = get_ctcss_info
+        self.max_ctcss_tones = max_ctcss_tones
 
         # -----------Flow for Demod--------------
 
@@ -174,6 +176,7 @@ class Receiver(gr.top_block):
                                                         file_metadata=self.file_metadata,
                                                         get_priority_info=self.get_priority_info,
                                                         get_ctcss_info=self.get_ctcss_info,
+                                                        max_ctcss_tones=self.max_ctcss_tones,
                                                         wav_dir=self._wav_dir))
             elif type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
@@ -185,6 +188,7 @@ class Receiver(gr.top_block):
                                                       file_metadata=self.file_metadata,
                                                       get_priority_info=self.get_priority_info,
                                                       get_ctcss_info=self.get_ctcss_info,
+                                                      max_ctcss_tones=self.max_ctcss_tones,
                                                       wav_dir=self._wav_dir))
             elif type_demod == 2:
                 self.demodulators.append(TunerDemodWBFM(self.samp_rate,
@@ -196,6 +200,7 @@ class Receiver(gr.top_block):
                                                         file_metadata=self.file_metadata,
                                                         get_priority_info=self.get_priority_info,
                                                         get_ctcss_info=self.get_ctcss_info,
+                                                        max_ctcss_tones=self.max_ctcss_tones,
                                                         wav_dir=self._wav_dir))
             else:
                 raise Exception(f'Invalid demodulator type: {type_demod}')
@@ -343,6 +348,18 @@ class Receiver(gr.top_block):
         for demodulator in self.demodulators:
             center_freqs.append(demodulator.center_freq)
         return center_freqs
+
+    def get_demod_freq_map(self) -> dict[int, object]:
+        """Returns a mapping of baseband center frequency to demodulator.
+
+        Allows O(1) lookup of a demodulator by its tuned frequency, which is
+        more efficient than the O(N) linear scan that would otherwise be needed
+        when iterating over channels in the scanner sweep.
+
+        Returns:
+            dict[int, BaseTuner]: {center_freq_hz: demodulator} for all demodulators
+        """
+        return {d.center_freq: d for d in self.demodulators}
 
     def __del__(self):
         """Called when the object is destroyed."""

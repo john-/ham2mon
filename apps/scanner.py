@@ -120,7 +120,11 @@ class Scanner(object):
                                        self.got_channel_activity, agc,
                                        file_metadata=self.file_metadata,
                                        get_priority_info=self.frequency_manager.get_priority_info,
-                                       get_ctcss_info=self.frequency_manager.get_ctcss_info)
+                                       # kept the kwarg name get_ctcss_info (see BaseTuner) even
+                                       # though it now points at get_ctcss_tones() and returns a
+                                       # list of valid tones rather than a single one.
+                                       get_ctcss_info=self.frequency_manager.get_ctcss_tones,
+                                       max_ctcss_tones=frequency_configuration.max_ctcss_tones)
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
@@ -338,7 +342,8 @@ class Scanner(object):
 
         # If a demodulator is not in channel list than it is waiting for hang time to end
         # There is no activity on it so it was not in the scan
-        demod_freqs = self.receiver.get_demod_freqs()
+        demod_map = self.receiver.get_demod_freq_map()
+        demod_freqs = list(demod_map.keys())
         for demod_freq in demod_freqs:
             if demod_freq != 0 and demod_freq not in all_channels:
                all_channels = np.append(all_channels, demod_freq)
@@ -351,6 +356,10 @@ class Scanner(object):
             is_active = channel in demod_freqs and channel in active_channels
             is_hanging = channel in demod_freqs and channel not in active_channels
 
+            matched_tone = None
+            if channel in demod_map:
+                matched_tone = demod_map[channel].matched_ctcss_tone
+
             idx = 0 if priority is not None else len(sweep)  # priority channels up front
             sweep.insert(idx, ChannelFrequency(bb=channel,
                                       rf=frequency,
@@ -359,7 +368,10 @@ class Scanner(object):
                                       priority=priority,
                                       hanging=is_hanging,
                                       ctcss=self.frequency_manager.get_ctcss_info(frequency),
-                                      label=self.frequency_manager.get_label(frequency)))
+                                      matched_ctcss=matched_tone,
+                                      label=self.frequency_manager.get_label(frequency, matched_tone),
+                                      ctcss_tones=self.frequency_manager.get_ctcss_tones(frequency)))
+
 
         return sweep
 
@@ -460,7 +472,8 @@ class Scanner(object):
             return
 
         # embellish the message with frequency information
-        msg.label = self.frequency_manager.get_label(msg.rf)
+        msg.label = self.frequency_manager.get_label(msg.rf, msg.matched_ctcss)
+
         msg.priority = self.frequency_manager.is_priority(msg.bb)   # TODO: is_priority only takes base band frequency
 
         await self.channel_logger.log(msg)  # off events or nothing to note

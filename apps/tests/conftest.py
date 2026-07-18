@@ -196,7 +196,8 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
         play: bool = False,
         agc: bool = False,
         file_metadata: list[str] | None = None,
-        get_ctcss_info: Callable[[int], float | None] | None = None
+        get_ctcss_info: Callable[[float], list[float]] | None = None,
+        max_ctcss_tones: int = 3
     ) -> Receiver:
         classifier_params = ClassifierParams(
             wanted={'V': False, 'D': False, 'S': False},
@@ -219,6 +220,7 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
             file_metadata=file_metadata,
             get_priority_info=mock_get_priority_info,
             get_ctcss_info=get_ctcss_info,
+            max_ctcss_tones=max_ctcss_tones,
             source_type="file",
             source_file=source_file,
             wav_dir=test_wav_dir,

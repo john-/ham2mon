@@ -22,21 +22,18 @@ demodulator noise floor compresses the ratio between loud and quiet speakers
 in a way that makes the threshold fragile; measuring energy at each speaker's
 specific tone frequency sidesteps that entirely.
 
-Although not required for the test itself, these frequencies are synced with
-`doc/frequencies-example.yaml`.  See `doc/simulate-radio-tranmissions.md` for details.
-
 Scenario narrative (synthetic labels, not real-world frequencies):
 
   RF centre: 462.550 MHz  |  IQ sample rate: 1 Msps  |  Duration: 10 s
 
-  - "Local repeater output"    462.730 MHz, CSQ (no CTCSS), two speakers:
+  - "Warehouse Ops"    462.730 MHz, CSQ (no CTCSS), two speakers:
       base station (strong, hot modulation) and handheld (weaker, softer).
       Each trades two exchanges.
 
-  - "Some dispatch"  462.400 MHz, CTCSS 100.0 Hz, two speakers:
+  - "Security Patrol"  462.400 MHz, CTCSS 100.0 Hz, two speakers:
       patrol unit and dispatch, tone-squelched repeater pair.
 
-  - "General talkaround" 462.610 MHz, CTCSS 167.9 Hz:
+  - "Maintenance Crew" 462.610 MHz, CTCSS 167.9 Hz:
       single brief weak/distant transmission, borrows the third demodulator.
 
   - Background QRM     462.290 MHz, CTCSS 71.9 Hz:
@@ -378,9 +375,9 @@ async def test_busy_net_realistic_scanning_session(receiver_factory, tmp_path, m
 
     def mock_ctcss_info(rf_freq_mhz: float):
         if abs(rf_freq_mhz - patrol_rf_mhz) < 1e-4:
-            return PATROL_CTCSS_HZ
+            return [PATROL_CTCSS_HZ]
         if abs(rf_freq_mhz - maintenance_rf_mhz) < 1e-4:
-            return MAINTENANCE_CTCSS_HZ
+            return [MAINTENANCE_CTCSS_HZ]
         return None  # CSQ for Warehouse Ops and anything else
 
     rx = receiver_factory(
