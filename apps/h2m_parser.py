@@ -9,7 +9,7 @@ Created on Sat Jul 18 15:21:33 2015
 # from optparse import OptionParser
 from argparse import ArgumentParser
 from pathlib import Path
-from channel_loggers import ChannelLogParams
+from channel_loggers import ActivityParams
 from classification import ClassifierParams
 from center_frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
 from frequency_manager import FrequencyConfiguration
@@ -32,9 +32,9 @@ class CLParser(object):
         disable_lockout (bool): Disable locking out of channels
         disable_priority (bool): Disable prioritization out of channels
         auto_priority (bool): Automatically set priority channels
-        channel_log_target (string): Name of file or endpoint for channel logging
-        channel_log_type (string): Log file type for channel detection
-        channel_log_timeout (int): Timeout delay between active channel log entries
+        activity_dest (string): Name of file or endpoint for channel activity logging
+        activity_type (string): Log file type for channel activity detection
+        activity_interval (int): Timeout delay between active channel activity log entries
         freq_correction (int): Frequency correction in ppm
         audio_bps (int): Audio bit depth in bps
         max_db (float): Spectrum max dB for display
@@ -146,20 +146,20 @@ class CLParser(object):
                           dest="auto_priority",
                           help="Automatically add voice channels as priority channels")
 
-        parser.add_argument("-T", "--log_type", type=str,
-                          dest="channel_log_type",
+        parser.add_argument("-T", "--activity-type", type=str,
+                          dest="activity_type",
                           default="none",
-                          help="Log file type for channel detection")
+                          help="Log file type for channel activity detection (none, fixed-field, json-server)")
 
-        parser.add_argument("-L", "--log_target", type=str,
-                          dest="channel_log_target",
+        parser.add_argument("-L", "--activity-dest", type=str,
+                          dest="activity_dest",
                           default="channel-log",
-                          help="Log file or endpoint for channel detection")
+                          help="Log file or endpoint for channel activity detection")
 
-        parser.add_argument("-A", "--log_active_timeout", type=int,
-                          dest="channel_log_timeout",
+        parser.add_argument("-A", "--activity-interval", type=int,
+                          dest="activity_interval",
                           default=15,
-                          help="Timeout delay for active channel log entries")
+                          help="Timeout delay for active channel activity log entries")
 
         parser.add_argument("-c", "--correction", type=int, dest="freq_correction",
                           default=0,
@@ -298,10 +298,10 @@ class CLParser(object):
             max_ctcss_tones=int(options.max_ctcss_tones)
         )
 
-        self.channel_log_params = ChannelLogParams(
-            target=str(options.channel_log_target),
-            type=str(options.channel_log_type),
-            timeout=int(options.channel_log_timeout)
+        self.activity_params = ActivityParams(
+            dest=str(options.activity_dest),
+            type=str(options.activity_type),
+            interval=int(options.activity_interval)
         )
         self.freq_correction = int(options.freq_correction)
         self.audio_bps = int(options.audio_bps)
@@ -375,9 +375,9 @@ def main():
     print("record:              " + str(parser.record))
     print("play:                " + str(parser.play))
     print("frequency_file_name: " + str(parser.frequency_configuration.file_name))
-    print("channel_log target:  " + str(parser.channel_log_params.target))
-    print("channel_log timeout: " + str(parser.channel_log_params.timeout))
-    print("channel_log type:    " + str(parser.channel_log_params.type))
+    print("activity_dest:       " + str(parser.activity_params.dest))
+    print("activity_interval:   " + str(parser.activity_params.interval))
+    print("activity_type:       " + str(parser.activity_params.type))
     print("freq_correction:     " + str(parser.freq_correction))
     print("audio_bps:           " + str(parser.audio_bps))
     print("max_db:              " + str(parser.max_db))

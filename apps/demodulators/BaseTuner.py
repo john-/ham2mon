@@ -21,6 +21,8 @@ from frequency_manager import ChannelMessage
 from utilities import baseband_to_frequency
 from classification import Classifier
 
+logger = logging.getLogger(f"ham2mon.{__name__}")
+
 class BaseTuner(gr.hier_block2):
     """Some base methods that are the same between the known tuner types.
 
@@ -132,7 +134,7 @@ class BaseTuner(gr.hier_block2):
 
     def set_last_heard(self, a_time: float) -> None:
         self.last_heard = a_time
-        # channel_log active channel if at required interval
+        # Log active channel if at required interval
         # alternately use a timer or something that is created on demod start
 
     async def set_center_freq(self, center_freq: int, rf_center_freq: int, avg_signal: int | None = None) -> None:
@@ -157,16 +159,17 @@ class BaseTuner(gr.hier_block2):
                 self.discard_current = True
             # Move file from tmp directory if it is long enough
             # and classified appropriately
-            results = self._persist_wavfile(rf_center_freq, avg_signal=avg_signal)   # also get channel_log information
+            results = self._persist_wavfile(rf_center_freq, avg_signal=avg_signal)   # also get activity logging information
         else:
             self.discard_current = False
             if self.center_freq != 0:
                 # not recording files and center_freq has changed
                 results = ChannelMessage(state='off',
-                                         rf=baseband_to_frequency(
-                                            self.center_freq, rf_center_freq),
-                                         bb=self.center_freq,
-                                         channel=self.channel)
+                                         rf=float(baseband_to_frequency(
+                                            self.center_freq, rf_center_freq)),
+                                         bb=int(self.center_freq),
+                                         channel=int(self.channel),
+                                         matched_ctcss=float(self.matched_ctcss_tone) if self.matched_ctcss_tone is not None else None)
             else:
                 # center_freq is 0
                 results = None
@@ -199,15 +202,15 @@ class BaseTuner(gr.hier_block2):
                 try:
                     self._rec_selector.set_output_index(1)
                 except IndexError as e:
-                    logging.warning("Failed to set recording selector index: %s", e)
+                    logger.warning("Failed to set recording selector index: %s", e)
 
 
         if self.center_freq != 0:
             await self.notify_scanner(ChannelMessage(state='on',
-                                                         rf=baseband_to_frequency(
-                                                            self.center_freq, rf_center_freq),
-                                                         bb=self.center_freq,
-                                                         channel=self.channel))
+                                                         rf=float(baseband_to_frequency(
+                                                            self.center_freq, rf_center_freq)),
+                                                         bb=int(self.center_freq),
+                                                         channel=int(self.channel)))
 
     def set_file_name(self, rf_center_freq: int) -> None:
         self.tstamp_str = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "{:.3f}".format(self.time_stamp % 1)[1:]
@@ -238,16 +241,16 @@ class BaseTuner(gr.hier_block2):
             try:
                 self._rec_selector.set_output_index(0)
             except IndexError as e:
-                logging.warning("Failed to set recording selector index: %s", e)
+                logger.warning("Failed to set recording selector index: %s", e)
 
         self.blocks_wavfile_sink.close()
 
         xmit_msg = ChannelMessage(state='off',
-                                rf=baseband_to_frequency(self.center_freq, rf_center_freq),
-                                bb=self.center_freq,
-                                channel=self.channel,
-                                signal_db=avg_signal,
-                                matched_ctcss=self.matched_ctcss_tone)
+                                rf=float(baseband_to_frequency(self.center_freq, rf_center_freq)),
+                                bb=int(self.center_freq),
+                                channel=int(self.channel),
+                                signal_db=int(avg_signal) if avg_signal is not None else None,
+                                matched_ctcss=float(self.matched_ctcss_tone) if self.matched_ctcss_tone is not None else None)
 
         # Discard the file if flagged as mismatched CTCSS
         if self.discard_current:
@@ -256,7 +259,7 @@ class BaseTuner(gr.hier_block2):
                 try:
                     os.unlink(self.file_name)
                 except OSError as e:
-                    logging.warning("Failed to delete mismatched CTCSS file %s: %s", self.file_name, e)
+                    logger.warning("Failed to delete mismatched CTCSS file %s: %s", self.file_name, e)
             xmit_msg.detail = 'Discarded mismatched CTCSS'
             return xmit_msg
 
@@ -265,7 +268,7 @@ class BaseTuner(gr.hier_block2):
             try:
                 os.unlink(self.file_name)
             except OSError as e:
-                logging.warning("Failed to delete short recording file %s: %s", self.file_name, e)
+                logger.warning("Failed to delete short recording file %s: %s", self.file_name, e)
             xmit_msg.detail = 'Discarded short recording'
             return xmit_msg
 
@@ -278,7 +281,7 @@ class BaseTuner(gr.hier_block2):
                 try:
                     os.unlink(self.file_name)
                 except OSError as e:
-                    logging.warning("Failed to delete unwanted classification file %s: %s", self.file_name, e)
+                    logger.warning("Failed to delete unwanted classification file %s: %s", self.file_name, e)
                 xmit_msg.detail = 'Discarded unwanted classification'
                 return xmit_msg
 
@@ -376,7 +379,7 @@ class BaseTuner(gr.hier_block2):
             try:
                 self._rec_selector.set_output_index(1 if self.file_name is not None else 0)
             except IndexError as e:
-                logging.warning("Failed to configure recording selector: %s", e)
+                logger.warning("Failed to configure recording selector: %s", e)
 
     def _apply_ctcss_config(self, ctcss_tones: list[float] | None) -> None:
         """Applies CTCSS configuration parameters and updates routing if started.
@@ -390,7 +393,7 @@ class BaseTuner(gr.hier_block2):
         tones = list(ctcss_tones) if ctcss_tones else []
 
         if len(tones) > self.max_ctcss_tones:
-            logging.warning(
+            logger.warning(
                 f"Channel {self.channel}: {len(tones)} CTCSS tones configured but "
                 f"only {self.max_ctcss_tones} are supported; the rest will be ignored")
             tones = tones[:self.max_ctcss_tones]

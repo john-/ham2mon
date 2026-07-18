@@ -15,12 +15,14 @@ import threading
 # import yaml
 import logging
 from numpy.typing import NDArray
-from channel_loggers import ChannelLogParams, ChannelMessage, ChannelLogger
+from channel_loggers import ActivityParams, ChannelMessage, ActivityLogger
 from classification import ClassifierParams
 from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
 from utilities import baseband_to_frequency, frequency_to_baseband
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(f"ham2mon.{__name__}")
 
 @dataclass(kw_only=True)
 class ClassificationCount:
@@ -46,7 +48,7 @@ class Scanner(object):
         record (bool): Record audio to file if True
         auto_priority (bool): Automatically set priority channels
         frequency_configuration (FrequencyConfiguration): File name and other config information
-        channel_log_params (ChannelLogParams): Parameters for logging channel activity
+        activity_params (ActivityParams): Parameters for logging channel activity
         audio_bps (int): Audio bit depth in bps (bits/samples)
         frequency_params (FrequencyGroup): Parameters for frequency provider
         spacing (int): granularity of frequency quantization
@@ -74,7 +76,7 @@ class Scanner(object):
     def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
                  hw_args: str="uhd", freq_correction: int=0, record: bool=True,
                  frequency_configuration: FrequencyConfiguration | None=None,
-                 channel_log_params: ChannelLogParams=ChannelLogParams(type='none', target='', timeout=0),
+                 activity_params: ActivityParams=ActivityParams(type='none', dest='', interval=0),
                  play: bool=True,
                  audio_bps: int=8, channel_spacing: int=5000,
                  frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
@@ -96,7 +98,7 @@ class Scanner(object):
         self.frequencies: FrequencyList = []    # needed for the UI
         self.channels: ChannelList = []
         self._channels: ChannelList = []
-        self.channel_log_params = channel_log_params
+        self.activity_params = activity_params
         self.channel_spacing = channel_spacing
         self.frequency_file_name = frequency_configuration.file_name  # used by the gui
         self.log_timeout_last = int(time.time())
@@ -109,7 +111,8 @@ class Scanner(object):
         self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(num_demod)}
         self.mismatched_freqs: dict[float, float] = {}
 
-        self.channel_logger = ChannelLogger.get_logger(channel_log_params)
+        self.activity_logger = ActivityLogger.get_logger(activity_params,
+                                                        get_ctcss=self.get_matched_ctcss)
 
         self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
 
@@ -156,9 +159,9 @@ class Scanner(object):
     def _wait_for_receiver_thread(self) -> None:
         try:
             self.receiver.wait()
-            logging.info("Receiver flowgraph terminated (EOF reached)")
+            logger.info("Receiver flowgraph terminated (EOF reached)")
         except Exception as error:
-            logging.error(f"Error waiting for receiver: {error}")
+            logger.error(f"Error waiting for receiver: {error}")
         finally:
             self.eof = True
 
@@ -476,12 +479,24 @@ class Scanner(object):
 
         msg.priority = self.frequency_manager.is_priority(msg.bb)   # TODO: is_priority only takes base band frequency
 
-        await self.channel_logger.log(msg)  # off events or nothing to note
+        # NOTE: msg is a mutable dataclass reference. Log it before passing to activity_logger
+        # so that any in-place field mutation by a logger does not silently alter the debug record.
+        logger.debug(msg)
+
+        await self.activity_logger.log(msg)  # off events or nothing to note
 
         if self.interesting(msg):
             await self.frequency_provider.interesting_activity()
 
         await self.priority_assess(msg.rf, msg.classification)
+
+    def get_matched_ctcss(self, bb: int) -> float | None:
+        '''Return the live matched CTCSS tone for the demodulator currently
+        tuned to baseband frequency `bb`, or None if unknown/unmatched.
+        Used by the channel logger to populate act-heartbeat messages.
+        '''
+        d = self.receiver.get_demod_freq_map().get(bb)
+        return d.matched_ctcss_tone if d is not None else None
 
     def interesting(self, msg: ChannelMessage) -> bool:
         '''
@@ -525,11 +540,11 @@ class Scanner(object):
         metrics: ClassificationCount = self.xmit_stats[freq]
         if metrics.V > metrics.D and metrics.V > metrics.S:  # Flag voice frequency as priority if not already set
             if self.frequency_manager.is_priority(bb_freq) is None:
-                logging.debug(f'adding {freq=} to priority list')
+                logger.debug(f'adding {freq=} to priority list')
                 self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': 1, 'mode': 'add'})
         else: # If not voice, remove from priority list if it currently a priority
             if self.frequency_manager.is_priority(bb_freq) is not None:
-                logging.debug(f'removing {freq=} from the priority list')
+                logger.debug(f'removing {freq=} from the priority list')
                 self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': None, 'mode': 'add'})
 
     async def clean_up(self) -> None:
@@ -566,7 +581,7 @@ async def main() -> None:
     freq_correction = parser.freq_correction
     record = parser.record
     frequency_configuration = parser.frequency_configuration
-    channel_log_params = parser.channel_log_params
+    activity_params = parser.activity_params
     play = parser.play
     audio_bps = parser.audio_bps
     channel_spacing = parser.channel_spacing
@@ -576,7 +591,7 @@ async def main() -> None:
     classifier_params = parser.classifier_params
     scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
                         freq_correction, record, frequency_configuration,
-                        channel_log_params, play,
+                        activity_params, play,
                         audio_bps, channel_spacing, frequency_params,
                         min_recording, max_recording,
                         classifier_params)

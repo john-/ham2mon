@@ -11,7 +11,7 @@ For this example, Home Assistant needs to be running on the same network as Ham2
 
 These are the specific command line parameters required/recommended for this to function.  These are in addition to any others required for your situation.
 ```
---log_type json-server --log_target "<Home Assistant url> --log_active_timeout 0"
+--activity-type json-server --activity-dest "<Home Assistant url>" --activity-interval 0
 ```
 The Home Assistant (HA) url can be copy/pasted from Home Assistant|Settings|Automation & scenes|<your automation>|Webhook Trigger.  Altough HA shows only the Webhook ID the copy includes the url (with the ID).
 
@@ -50,4 +50,4 @@ mode: single
 ## Important notes
 Ham2mon can generate a lot of messages which could result in a significant amount of network traffic and overhead on Home Assistant.  Although the example automation has some throttling (triggers no more than once every 30 seconds) all the messages are still received by HA.
 
-Additional ham2mon options can improve this.  For example, recording voice only and locking out channels/ranges that are not of interest.  Also, disable activity logging to send only on/off events (`--log_active_timeout 0`)
+Additional ham2mon options can improve this.  For example, recording voice only and locking out channels/ranges that are not of interest.  Also, disable activity logging to send only on/off events (`--activity-interval 0`)

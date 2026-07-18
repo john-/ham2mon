@@ -13,6 +13,8 @@ import logging
 from pathlib import PurePath
 from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
 
+logger = logging.getLogger(f"ham2mon.{__name__}")
+
 locale.setlocale(locale.LC_ALL, '')
 
 
@@ -667,8 +669,8 @@ class RxWindow(object):
         type_demod (int): Type of demodulation (0 = FM, 1 = AM)
         record (bool): Record audio to file if True
         frequency_file_name (PurePath): Name of file with frequencies
-        channel_log_file_name (string): Name of file for channel activity logging
-        channel_log_timeout (int): Timeout delay between logging active state of channel in seconds
+        activity_dest (string): Name of file or endpoint for channel activity logging
+        activity_interval (int): Timeout delay between logging active state of channel in seconds
         log_mode (string): Log system mode (file, database type)
     """
     # pylint: disable=too-many-instance-attributes
@@ -688,8 +690,8 @@ class RxWindow(object):
         self.type_demod = 0
         self.record = True
         self.frequency_file_name: PurePath = None
-        self.channel_log_type = ""
-        self.channel_log_target = ""
+        self.activity_type = ""
+        self.activity_dest = ""
         self.gains = None
         self.classifier_params = None
 
@@ -822,7 +824,7 @@ class RxWindow(object):
         # drop column-2 values (max_len clamps to 0) without this notice.
         min_two_col_width = RxWindow.RxEntry.column_width * 2
         if self.dims[1] < min_two_col_width:
-            logging.warning(
+            logger.warning(
                 "RxWindow inner width %d < %d; column-2 fields will not be drawn",
                 self.dims[1], min_two_col_width)
 
@@ -865,12 +867,12 @@ class RxWindow(object):
         self.frequency_file_name_field = RxWindow.RxEntry(
             "Freq File", 2, 'left', False)
 
-        self.channel_log_type_field = RxWindow.RxEntry(
-            "Log Type", 2, 'left', False)
+        self.activity_type_field = RxWindow.RxEntry(
+            "Activity Type", 2, 'left', False)
 
-        if self.channel_log_target is not None:
-            self.channel_log_target_field = RxWindow.RxEntry(
-                "Log Target", 2, 'left', False)
+        if self.activity_dest is not None:
+            self.activity_dest_field = RxWindow.RxEntry(
+                "Activity Dest", 2, 'left', False)
 
     def draw_rx(self) -> None:
         """Draws receiver parameters
@@ -915,10 +917,10 @@ class RxWindow(object):
         file_name = self.frequency_file_name.name if self.frequency_file_name else "none"
         self.frequency_file_name_field.set(file_name)
 
-        self.channel_log_type_field.set(self.channel_log_type)
+        self.activity_type_field.set(self.activity_type)
 
-        if self.channel_log_target is not None:
-            self.channel_log_target_field.set(self.channel_log_target)
+        if self.activity_dest is not None:
+            self.activity_dest_field.set(self.activity_dest)
 
         # Hide cursor
         self.win.leaveok(1)

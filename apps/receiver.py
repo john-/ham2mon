@@ -24,6 +24,8 @@ from demodulators.AM import TunerDemodAM
 from demodulators.WBFM import TunerDemodWBFM
 from classification import ClassificationNotWanted, Classifier, ClassifierParams
 
+logger = logging.getLogger(f"ham2mon.{__name__}")
+
 class Receiver(gr.top_block):
     """Receiver for NBFM and AM modulation
 
@@ -71,7 +73,7 @@ class Receiver(gr.top_block):
         try:
             os.makedirs(os.path.join(self._wav_dir, 'tmp'), exist_ok=True)
         except OSError as error:  # will need to add something here for Win support
-            logging.error(f"Could not create wav/tmp directory: {error}")
+            logger.error(f"Could not create wav/tmp directory: {error}")
             raise
 
         # Clean up existing files without breaking makedirs or masking permission errors
@@ -79,7 +81,7 @@ class Receiver(gr.top_block):
             try:
                 os.unlink(f)
             except OSError as error:
-                logging.warning(f"Could not remove stale wav file: {f} ({error})")
+                logger.warning(f"Could not remove stale wav file: {f} ({error})")
 
         # Default values
         self.center_freq: int = center_freq
@@ -152,7 +154,7 @@ class Receiver(gr.top_block):
             classifier = None
         except Exception as error:
             msg = f'Could not create classifier ({error})'
-            logging.error(msg)
+            logger.error(msg)
             raise Exception(msg)
 
         self.file_metadata = file_metadata if file_metadata is not None else []
@@ -220,7 +222,7 @@ class Receiver(gr.top_block):
                 # Connect the summed outputs to the audio sink
                 self.connect(add_ff, audio_sink)
             except RuntimeError as error:
-                logging.warning(f"Could not initialize audio sink (speaker output disabled): {error}")
+                logger.warning(f"Could not initialize audio sink (speaker output disabled): {error}")
                 # Fall back to null sink to prevent application crash
                 null_sink = blocks.null_sink(gr.sizeof_float)
                 self.connect(add_ff, null_sink)
@@ -242,7 +244,7 @@ class Receiver(gr.top_block):
                 assert agc == agc_is_set, f'set_gain_mode returned "{agc_is_set}"'
             except Exception as error:
                 msg = f'Could not set AGC mode ({error})'
-                logging.error(msg)
+                logger.error(msg)
                 raise Exception(msg)
 
         samp_rate = src.get_sample_rate()
