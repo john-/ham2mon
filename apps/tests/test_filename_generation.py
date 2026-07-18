@@ -273,3 +273,37 @@ def test_persist_filename_strength_metadata_none_signal() -> None:
     assert msg.file == "wav/460.1250_20260531_160622.345.wav"
     assert os.path.exists("wav/460.1250_20260531_160622.345.wav")
 
+
+def test_persist_filename_with_ctcss() -> None:
+    # Test that when 'ctcss' metadata is requested and a tone is matched, it is appended to the filename
+    tuner = MockTuner(None, lambda msg: None, file_metadata=["ctcss"])
+    tuner.matched_ctcss_tone = 103.5
+
+    temp_file = "wav/tmp/460.1250_20260531_160622.345.wav"
+    with open(temp_file, "wb") as f:
+        f.write(b"0" * 100)
+
+    tuner.set_temp_file(temp_file)
+
+    msg = tuner._persist_wavfile(rf_center_freq=460000000)
+    assert msg is not None
+    assert msg.file == "wav/460.1250_103.5Hz_20260531_160622.345.wav"
+    assert os.path.exists("wav/460.1250_103.5Hz_20260531_160622.345.wav")
+
+
+def test_persist_filename_with_ctcss_none() -> None:
+    # Test that when 'ctcss' metadata is requested, but matched_ctcss_tone is None, the ctcss segment is omitted
+    tuner = MockTuner(None, lambda msg: None, file_metadata=["ctcss"])
+    tuner.matched_ctcss_tone = None
+
+    temp_file = "wav/tmp/460.1250_20260531_160622.345.wav"
+    with open(temp_file, "wb") as f:
+        f.write(b"0" * 100)
+
+    tuner.set_temp_file(temp_file)
+
+    msg = tuner._persist_wavfile(rf_center_freq=460000000)
+    assert msg is not None
+    assert msg.file == "wav/460.1250_20260531_160622.345.wav"
+    assert os.path.exists("wav/460.1250_20260531_160622.345.wav")
+

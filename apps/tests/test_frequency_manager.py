@@ -16,7 +16,7 @@ LAST_ENTRY = -1
 async def fm_empty() -> FrequencyManager:
 
     config = FrequencyConfiguration(
-        file_name=None, disable_lockout=False, disable_priority=False)
+        file_name=None, disable_lockout=False, disable_priority=False, max_ctcss_tones=3)
     channel_spacing = CHANNEL_SPACING
 
     frequency_manager = FrequencyManager(config, channel_spacing)
@@ -29,7 +29,7 @@ async def fm_empty() -> FrequencyManager:
 @pytest.fixture
 async def fm_with_entries() -> FrequencyManager:
 
-    config = FrequencyConfiguration(file_name=TEST_DIR / "frequency_config_for_testing.yaml", disable_lockout=False, disable_priority=False)
+    config = FrequencyConfiguration(file_name=TEST_DIR / "frequency_config_for_testing.yaml", disable_lockout=False, disable_priority=False, max_ctcss_tones=3)
     channel_spacing = CHANNEL_SPACING
 
     frequency_manager = FrequencyManager(config, channel_spacing)
@@ -996,3 +996,85 @@ async def test_get_priority_info(fm_empty):
     p, is_auto = fm_empty.get_priority_info(60000)
     assert p is None
     assert is_auto is False
+
+
+@pytest.mark.asyncio
+async def test_max_ctcss_tones_limit(fm_empty):
+    """Test that max_ctcss_tones limits CTCSS tone count and throws validation errors."""
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+
+    # Set up config with max_ctcss_tones = 2
+    config_2 = FrequencyConfiguration(
+        file_name=None,
+        disable_lockout=False,
+        disable_priority=False,
+        max_ctcss_tones=2
+    )
+    fm_2 = FrequencyManager(config_2, channel_spacing=5000)
+
+    # 1. Add first CTCSS tone: OK
+    await fm_2.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
+    assert fm_2.frequencies[0].ctcss_tones == [100.0]
+
+    # 2. Add second CTCSS tone (merge): OK
+    await fm_2.add({'single': 144.390, 'ctcss': 141.3})
+    assert fm_2.frequencies[0].ctcss_tones == [100.0, 141.3]
+
+    # 3. Add third CTCSS tone (merge): should raise ValueError due to limit
+    with pytest.raises(ValueError, match="exceeds max_ctcss_tones limit"):
+        await fm_2.add({'single': 144.390, 'ctcss': 151.4})
+
+    # Set up config with max_ctcss_tones = 0 (CTCSS disabled)
+    config_0 = FrequencyConfiguration(
+        file_name=None,
+        disable_lockout=False,
+        disable_priority=False,
+        max_ctcss_tones=0
+    )
+    fm_0 = FrequencyManager(config_0, channel_spacing=5000)
+
+    # 4. Adding with CTCSS should fail immediately when max_ctcss_tones is 0
+    with pytest.raises(ValueError, match="CTCSS is disabled"):
+        await fm_0.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
+
+
+@pytest.mark.asyncio
+async def test_change_ctcss_merging(fm_empty):
+    """Test that change() supports CTCSS tone merging and respects max limits."""
+    # Default max_ctcss_tones is 3
+    # 1. Add a frequency with a CTCSS tone
+    await fm_empty.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
+    assert fm_empty.frequencies[0].ctcss_tones == [100.0]
+
+    # 2. Merge another CTCSS tone via change()
+    await fm_empty.change({'single': 144.390, 'ctcss': 141.3})
+    assert fm_empty.frequencies[0].ctcss_tones == [100.0, 141.3]
+
+    # 3. Merge a third tone via change()
+    await fm_empty.change({'single': 144.390, 'ctcss': 151.4})
+    assert fm_empty.frequencies[0].ctcss_tones == [100.0, 141.3, 151.4]
+
+    # 4. Merging a fourth tone should fail (max limit is 3)
+    with pytest.raises(ValueError, match="exceeds max_ctcss_tones limit"):
+        await fm_empty.change({'single': 144.390, 'ctcss': 162.2})
+
+
+@pytest.mark.asyncio
+async def test_get_label_with_ctcss(fm_empty):
+    """Test that get_label correctly resolves the label matching a specific CTCSS tone."""
+    # 1. Add multiple entries for same frequency with different CTCSS tones and labels
+    await fm_empty.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Tone 100'})
+    await fm_empty.add({'single': 144.390, 'ctcss': 141.3, 'label': 'Tone 141'})
+    await fm_empty.add({'single': 144.390, 'ctcss': 151.4, 'label': 'Tone 151'})
+
+    # 2. Assert that get_label without ctcss returns the primary label
+    assert fm_empty.get_label(144.390) == 'Tone 100'
+
+    # 3. Assert that get_label with specific ctcss returns the corresponding label
+    assert fm_empty.get_label(144.390, 100.0) == 'Tone 100'
+    assert fm_empty.get_label(144.390, 141.3) == 'Tone 141'
+    assert fm_empty.get_label(144.390, 151.4) == 'Tone 151'
+
+    # 4. Assert that get_label with unmatched/unknown ctcss falls back to primary label
+    assert fm_empty.get_label(144.390, 88.5) == 'Tone 100'
+

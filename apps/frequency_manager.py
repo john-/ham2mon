@@ -70,6 +70,8 @@ class ConfigFrequency(FrequencyInfo):
     # itself remains the first/primary tone, kept for backward compatibility with
     # code that only expects a single value (e.g. get_ctcss_info()).
     ctcss_tones: list[float] = field(default_factory=list, init=False, repr=False)
+    ctcss_labels: list[str] = field(default_factory=list, init=False, repr=False)
+
 
     def calculate_baseband(self, center_freq: int, channel_spacing: int) -> None:
         if self.is_single:
@@ -120,6 +122,8 @@ class ConfigFrequency(FrequencyInfo):
         # Set state
         self.is_single = self.single is not None
         self.ctcss_tones = [self.ctcss] if self.ctcss is not None else []
+        self.ctcss_labels = [self.label] if (self.ctcss is not None and self.label is not None) else []
+
 
     def _validate_frequency_types(self):
         """Ensure all frequency values are floats if provided"""
@@ -183,6 +187,9 @@ class ChannelFrequency(FrequencyInfo):
     bb: int
     active: bool
     hanging: bool
+    matched_ctcss: float | None = field(default=None)  # actively matched CTCSS tone during a live transmission; None when idle or unmatched
+    ctcss_tones: list[float] = field(default_factory=list)
+
 
 
 @dataclass(kw_only=True)
@@ -202,6 +209,7 @@ class ChannelMessage(FrequencyInfo):
     classification: Optional[str] = None
     detail: Optional[str] = None
     signal_db: Optional[int] = None
+    matched_ctcss: float | None = field(default=None)  # CTCSS tone that matched and opened squelch for this transmission
 
 
 FrequencyList: TypeAlias = list[ConfigFrequency]
@@ -216,6 +224,7 @@ class FrequencyConfiguration:
     file_name: Optional[Path] = None
     disable_lockout: bool
     disable_priority: bool
+    max_ctcss_tones: int = 0
 
 
 class FrequencyManager:
@@ -295,6 +304,16 @@ class FrequencyManager:
         '''
         wanted = ConfigFrequency(**entry)
 
+        if wanted.ctcss is not None:
+            if self.config.max_ctcss_tones <= 0:
+                raise ValueError(
+                    f"CTCSS is disabled (max_ctcss_tones={self.config.max_ctcss_tones}) "
+                    f"but frequency config specifies ctcss: {wanted.ctcss}")
+            if len(wanted.ctcss_tones) > self.config.max_ctcss_tones:
+                raise ValueError(
+                    f"Frequency config specifies {len(wanted.ctcss_tones)} CTCSS tones "
+                    f"but max_ctcss_tones is limited to {self.config.max_ctcss_tones}")
+
         # use the dataclass __eq__ functions to look for matches
         matching_frequencies = [existing for existing in self.frequencies
                                 if wanted == existing]
@@ -334,6 +353,16 @@ class FrequencyManager:
             entry (dict): The raw dict passed to add(), used to distinguish
                 "not specified" from "explicitly set" for conflict checks
         '''
+        if self.config.max_ctcss_tones <= 0:
+            raise ValueError(
+                f"CTCSS is disabled (max_ctcss_tones={self.config.max_ctcss_tones}) "
+                f"but frequency config specifies ctcss: {wanted.ctcss}")
+
+        if len(existing.ctcss_tones) >= self.config.max_ctcss_tones:
+            raise ValueError(
+                f"Cannot merge CTCSS tone {wanted.ctcss} into "
+                f"{existing.label!r}: exceeds max_ctcss_tones limit of {self.config.max_ctcss_tones}")
+
         if 'priority' in entry and existing.priority is not None and wanted.priority != existing.priority:
             raise ValueError(
                 f"Cannot merge CTCSS tone {wanted.ctcss} into "
@@ -341,9 +370,11 @@ class FrequencyManager:
                 f"with existing priority {existing.priority}")
 
         existing.ctcss_tones.append(wanted.ctcss)
+        existing.ctcss_labels.append(wanted.label or existing.label or "")
         logging.debug(
             f'Merged CTCSS tone {wanted.ctcss} into existing frequency '
             f'{existing.label!r} (tones now {existing.ctcss_tones})')
+
 
     async def change(self, entry: dict) -> FrequencyList:
         '''
@@ -369,6 +400,11 @@ class FrequencyManager:
                 for field in ['label', 'priority', 'locked']:
                     if field in entry:
                         setattr(frequency, field, entry[field])
+
+                # CTCSS tone merging in change()
+                if 'ctcss' in entry and entry['ctcss'] is not None:
+                    if entry['ctcss'] not in frequency.ctcss_tones:
+                        self._merge_ctcss_tone(frequency, new_values, entry)
 
                 return self.frequencies
 
@@ -544,22 +580,31 @@ class FrequencyManager:
                 self.center_freq, self.channel_spacing)
 
 
-    def get_label(self, rf: float) -> str | None:
+    def get_label(self, rf: float, ctcss: float | None = None) -> str | None:
         '''
         Get the label for a frequency.  If there is not a label for the frequency then
         return the label for the range of frequencies (if any)
 
         Args:
             rf (float): Radio frequency of tuned channel
+            ctcss (float, optional): Matched CTCSS tone frequency
         '''
         range_label: str | None = None
         for freq_entry in self.frequencies:
             if freq_entry.is_single:
                 if freq_entry.single == rf:
+                    if ctcss is not None and ctcss in freq_entry.ctcss_tones:
+                        idx = freq_entry.ctcss_tones.index(ctcss)
+                        if idx < len(freq_entry.ctcss_labels):
+                            return freq_entry.ctcss_labels[idx]
                     return freq_entry.label
             else:
                 if freq_entry.lo <= rf <= freq_entry.hi:
                     range_label = freq_entry.label
+                    if ctcss is not None and ctcss in freq_entry.ctcss_tones:
+                        idx = freq_entry.ctcss_tones.index(ctcss)
+                        if idx < len(freq_entry.ctcss_labels):
+                            range_label = freq_entry.ctcss_labels[idx]
 
         return range_label
 

@@ -224,6 +224,10 @@ class CLParser(object):
                           dest="file_metadata", default="",
                           help="Comma-separated list of metadata fields to include in output filenames (e.g. priority,strength)")
 
+        parser.add_argument("--max-ctcss-tones", type=int,
+                          dest="max_ctcss_tones", default=0,
+                          help="Maximum number of CTCSS tones configured per frequency (default: 0, disabled for performance)")
+
         options = parser.parse_args()
         self.print_help = parser.print_help
         self.parser_args = parser.parse_args
@@ -290,7 +294,8 @@ class CLParser(object):
         self.frequency_configuration = FrequencyConfiguration(
             file_name=file_name,
             disable_lockout=bool(options.disable_lockout),
-            disable_priority=bool(options.disable_priority)
+            disable_priority=bool(options.disable_priority),
+            max_ctcss_tones=int(options.max_ctcss_tones)
         )
 
         self.channel_log_params = ChannelLogParams(
@@ -338,10 +343,10 @@ class CLParser(object):
         self.file_metadata: list[str] = []
         if options.file_metadata:
             fields = [f.strip().lower() for f in options.file_metadata.split(',')]
-            valid_fields = {'priority', 'strength'}
+            valid_fields = {'priority', 'strength', 'ctcss'}
             for field in fields:
                 if field not in valid_fields:
-                    parser.error(f"Unsupported metadata field: '{field}'. Supported fields: priority, strength")
+                    parser.error(f"Unsupported metadata field: '{field}'. Supported fields: priority, strength, ctcss")
             self.file_metadata = fields
 
 

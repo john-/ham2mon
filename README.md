@@ -311,7 +311,10 @@ options:
                         script_dir/ham2mon.log)
   --file-metadata FILE_METADATA
                         Comma-separated list of metadata fields to include in
-                        output filenames (e.g. priority,strength)
+                        output filenames (e.g. priority,strength,ctcss)
+  --max-ctcss-tones MAX_CTCSS_TONES
+                        Maximum number of CTCSS tones configured per frequency
+                        (default: 0, disabled by default for performance reasons)
 ```
 Note: The available gains are hardware specific.  The user interface will list the gains available based on hardware option supplied to ham2mon.
 
@@ -410,7 +413,7 @@ graph TD
 
 See [receiver.py](file:///library/pub/dev/ham2mon/apps/receiver.py) for the Python coded flow.  The complex samples are grouped into a vector of length 2^n and then decimated by keeping “1 in N” vectors. The FFT is taken followed by magnitude-squared to form a power spectrum.  The FFT length is chosen, based on sample rate, to span about 3 RBW bins across a 12.5 kHz FM channel.  The spectrum vectors are then integrated and further decimated for a video average, akin to the VBW of a spectrum analyzer.  The spectrum is then probed by the Python code at ~10 Hz rate.
 
-The demodulator blocks are put into a hierarchical GR block so multiple can be instantiated in parallel.  A frequency translating FIR filter tunes the channel, followed by two more decimating FIR filters to 12.5 kHz channel bandwidth.  For sample rates 1 Msps or greater, the total decimation for the first three stages takes the rate to 40-80 ksps.  A non-blocking power squelch silences the channel, followed by quadrature (FM) demodulation, or AGC and AM demodulation.  The audio stream is filtered to 3.5 kHz bandwidth and further decimated to 8-16 ksps.  A polyphase arbitrary resampler takes the final audio rate to a constant 8 ksps (or 16 ksps for AM/WBFM). The audio stream is then routed through a parallel-path CTCSS bypass/filter chain, mixed with other streams, or routed to a selector-controlled WAV file sink/null sink path via a blocking squelch to remove dead audio.
+The demodulator blocks are put into a hierarchical GR block so multiple can be instantiated in parallel.  A frequency translating FIR filter tunes the channel, followed by two more decimating FIR filters to 12.5 kHz channel bandwidth.  For sample rates 1 Msps or greater, the total decimation for the first three stages takes the rate to 40-80 ksps.  A non-blocking power squelch silences the channel, followed by quadrature (FM) demodulation, or AGC and AM demodulation.  The audio stream is filtered to 3.5 kHz bandwidth and further decimated to 8-16 ksps.  A polyphase arbitrary resampler takes the final audio rate to a constant 8 ksps (or 16 ksps for AM/WBFM). The audio stream is then routed through a parallel-path CTCSS bypass/filter chain (consisting of a bypass branch and up to `max_ctcss_tones` parallel squelch/filter branches running in parallel, with only the active branch's gain enabled), mixed with other streams, or routed to a selector-controlled WAV file sink/null sink path via a blocking squelch to remove dead audio.
 
 The scanner.py contains the control code, and may be run on on it's own non-interactively.  It instantiates the receiver.py with N demodulators and probes the average spectrum at ~10 Hz.  The spectrum is processed with estimate.py, which takes a weighted average of the spectrum bins that are above a threshold.  This weighted average does a fair job of estimating the modulated channel center to sub-kHz resolution given the RBW is several kHz.  The estimate.py returns a list of baseband channels that are rounded to the nearest 5 kHz (for NBFM band plan ambiguity).
 
@@ -542,7 +545,7 @@ No capability is provided to train the model.  Training data will not be provide
 
 ## Filename Metadata
 
-When writing transmissions to disk (using `-w` or audio classification options), you can customize the output filenames to include optional metadata by specifying the `--file-metadata` option. This option accepts a comma-separated list of metadata fields to include (e.g. `--file-metadata priority,strength`).
+When writing transmissions to disk (using `-w` or audio classification options), you can customize the output filenames to include optional metadata by specifying the `--file-metadata` option. This option accepts a comma-separated list of metadata fields to include (e.g. `--file-metadata priority,strength,ctcss`).
 
 Supported metadata fields:
 
@@ -551,14 +554,15 @@ Supported metadata fields:
   - Automatic priorities (dynamically added from auto-priority) are formatted as `PA`.
 - `strength`: Appends the average signal strength (mean RSSI) recorded during the active transmission in dB (e.g., `-48dB`).
   - Note: The raw FFT spectrum power values are automatically calibrated to a standard negative RSSI range (applying a `-70 dB` calibration offset) to align with standard receiver squelch scales.
+- `ctcss`: Appends the matched CTCSS tone frequency formatted with a single decimal point followed by `Hz` (e.g., `100.0Hz`).
 
 > [!NOTE]
-> If a requested metadata field is unavailable when the recording is persisted (e.g., if a channel's priority is not configured, or if signal strength data is `None` because the channel was stopped before any signal power stats could be accumulated), the corresponding segment is completely omitted from the output filename. No placeholders are used.
+> If a requested metadata field is unavailable when the recording is persisted (e.g., if a channel's priority is not configured, or if signal strength data is `None` because the channel was stopped before any signal power stats could be accumulated, or if the transmission had no matching CTCSS tone), the corresponding segment is completely omitted from the output filename. No placeholders are used.
 
 ### Filename Format
 
 The metadata fields are appended in a structured sequence using underscores (`_`) as delimiters:
-`<frequency>[_classification][_priority][_strength]_<timestamp>.wav`
+`<frequency>[_classification][_priority][_strength][_ctcssHz]_<timestamp>.wav`
 
 Examples:
 
@@ -566,10 +570,11 @@ Examples:
 - With priority requested: `460.1250_P1_20231102_140010.123.wav`
 - With priority and strength requested: `460.1250_P1_-48dB_20231102_140010.123.wav`
 - With auto-priority and strength requested: `460.1250_PA_-45dB_20231102_140010.123.wav`
+- With priority, strength, and ctcss requested: `460.1250_P1_-48dB_100.0Hz_20231102_140010.123.wav`
 - With strength requested but unavailable (e.g. no signal stats): `460.1250_20231102_140010.123.wav`
 
 If audio classification is enabled (e.g., via `--voice`, which adds a classification segment such as `V` or `D`), it will be inserted directly after the frequency:
-- With classification, priority, and strength: `460.1250_V_P1_-48dB_20231102_140010.123.wav`
+- With classification, priority, strength, and CTCSS: `460.1250_V_P1_-48dB_100.0Hz_20231102_140010.123.wav`
 
 ## CTCSS Squelch and Tone Filtering
 
@@ -586,6 +591,22 @@ frequencies:
     ctcss: 100.0   # Configured expected CTCSS tone in Hz
 ```
 
+To support **multiple valid CTCSS tones** on a single frequency or frequency range, declare the frequency block multiple times, changing only the `ctcss` tone frequency. These will merge into a single tuner entry at load time:
+
+```yaml
+frequencies:
+  # Primary tone
+  - label: "CTCSS Test Channel"
+    single: 144.500
+    ctcss: 100.0
+  # Backup tone
+  - label: "CTCSS Test Channel"
+    single: 144.500
+    ctcss: 141.3
+```
+
+By default, **CTCSS demodulation is disabled (`--max-ctcss-tones` defaults to 0) for performance reasons**, as running CTCSS tone detection blocks on every channel incurs significant CPU overhead even when no signal is present. To enable CTCSS tone detection, you must specify a limit (e.g. `--max-ctcss-tones 3`). Any configured tones loaded beyond this limit are validated and rejected at configuration load time.
+
 ### User Options
 
 Depending on your configuration in `frequencies.yaml` (specified via the `-F`/`--frequencies` option), the application operates in one of two modes:
@@ -595,11 +616,11 @@ Depending on your configuration in `frequencies.yaml` (specified via the `-F`/`-
    * **Behavior:** The receiver will record and unmute any signal that is strong enough to break the RF carrier power squelch, regardless of whether a sub-audible tone is present or what its frequency is. Additionally, the 300Hz high-pass filter is dynamically bypassed in this mode to preserve full audio fidelity and bass (e.g. for broadcast FM music).
 2. **Tone Squelch (CTCSS) Mode:**
    * **Trigger:** Enabled for channels configured **with** a specific `ctcss` key (e.g. `ctcss: 100.0`).
-   * **Behavior:** The receiver will only unmute and keep the recording if the signal contains the specified CTCSS tone. Transmissions carrying a different tone or no tone at all are muted and discarded.
+   * **Behavior:** The receiver will only unmute and keep the recording if the signal contains one of the configured CTCSS tones. Transmissions carrying a different tone or no tone at all are muted and discarded.
 
 ### GUI Display
 
-When a tuned frequency is configured with a CTCSS tone (Tone Squelch Mode), the active CTCSS tone frequency (e.g. `100.0` Hz) will be displayed at the end of the channel list row in the **CHANNELS** window, provided the window width is at least 22 characters.
+When a tuned frequency is configured with a CTCSS tone (Tone Squelch Mode), the matched CTCSS tone frequency (e.g. `100.0` Hz) will be displayed in bold/italics at the end of the channel list row in the **CHANNELS** window. Before a tone is matched (such as during the initial grace period before Goertzel detection completes), it falls back to displaying the primary configured tone. (Completely idle channels drop out of the list display entirely.) This is rendered provided the window width is at least 22 characters.
 
 ### Technical Implementation
 

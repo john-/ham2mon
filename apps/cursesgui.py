@@ -319,7 +319,6 @@ class ChannelWindow(object):
                 freq_str = freq_str[:-1] + ' '
 
             icon = 'P' if channel.priority else ' '
-            label = channel.label or ''
 
             attributes = (self.attrs['bold_freq'], self.attrs['bold_icon']) if channel.active else (
                 self.attrs['normal_freq'], self.attrs['normal_icon'])
@@ -330,10 +329,22 @@ class ChannelWindow(object):
 
             label_start = 14
 
-            has_ctcss = getattr(channel, 'ctcss', None) is not None
+            matched_ctcss = getattr(channel, 'matched_ctcss', None)
+            primary_ctcss = channel.ctcss or (channel.ctcss_tones[0] if channel.ctcss_tones else None)
 
-            if has_ctcss:
-                ctcss_str = f'{channel.ctcss:>5.1f}'
+            has_multiple_ctcss = len(channel.ctcss_tones) > 1
+            is_testing_ctcss = channel.active and not channel.hanging and has_multiple_ctcss and matched_ctcss is None
+
+            if is_testing_ctcss:
+                label = f"{channel.rf:.4f}..."
+                display_ctcss = None
+            else:
+                label = channel.label or ''
+                display_ctcss = matched_ctcss if matched_ctcss is not None else primary_ctcss
+
+
+            if display_ctcss is not None:
+                ctcss_str = f'{display_ctcss:>5.1f}'
                 win.addnstr(row, col + self.width - 5, ctcss_str , 5, attributes[1] | curses.A_ITALIC)
                 win.addnstr(row, col + self.width - 6, ' ', 1, attributes[0])
                 label_end = self.width - 6

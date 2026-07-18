@@ -57,7 +57,8 @@ class TunerDemodNBFM(BaseTuner):
                  notify_scanner: Callable,
                  file_metadata: list[str] | None = None,
                  get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
-                 get_ctcss_info: Callable[[int], float | None] | None = None,
+                 get_ctcss_info: Callable[[float], list[float]] | None = None,
+                 max_ctcss_tones: int = 0,
                  wav_dir: str = "wav"):
         gr.hier_block2.__init__(self, "TunerDemodNBFM",
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
@@ -65,7 +66,7 @@ class TunerDemodNBFM(BaseTuner):
 
         super().__init__(classify, notify_scanner, file_metadata=file_metadata,
                          get_priority_info=get_priority_info, get_ctcss_info=get_ctcss_info,
-                         wav_dir=wav_dir, audio_rate=audio_rate)
+                         wav_dir=wav_dir, audio_rate=audio_rate, max_ctcss_tones=max_ctcss_tones)
 
         # Default values
         self.center_freq = 0

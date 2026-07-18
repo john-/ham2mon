@@ -490,8 +490,20 @@ async def test_fft_spectrum_probe(receiver_factory, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ctcss_match(receiver_factory, tmp_path):
+async def test_ctcss_match(receiver_factory, tmp_path, monkeypatch):
     """Test that NBFM squelch opens when the correct CTCSS tone is present and saves a WAV file."""
+    from receiver import Receiver
+    from gnuradio import blocks, gr
+
+    # Throttled file source for real-time timing verification
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
     iq_file = tmp_path / "signal_ctcss_match.iq"
 
     # Generate NBFM signal at +30 kHz offset with CTCSS tone 100.0 Hz
@@ -515,7 +527,7 @@ async def test_ctcss_match(receiver_factory, tmp_path):
 
     # Mock that returns 100.0 for any query (CTCSS configured to 100 Hz)
     def mock_ctcss_info(bb):
-        return 100.0
+        return [100.0]
 
     rx = receiver_factory(
         source_file=str(iq_file),
@@ -532,6 +544,13 @@ async def test_ctcss_match(receiver_factory, tmp_path):
 
     # Run flowgraph
     rx.start()
+
+    # Wait for the signal to start playing (0.8s, well within active tone window of 0.2s-1.2s)
+    # and confirm it matched (latching ctcss_matched = True)
+    await asyncio.sleep(0.8)
+    assert rx.demodulators[0].is_ctcss_mismatched() == False
+    assert rx.demodulators[0].ctcss_matched == True
+
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, rx.wait)
 
@@ -554,52 +573,66 @@ async def test_ctcss_matching_logic_mocked():
     self = MagicMock()
     self.channel = 1
     self._ctcss_enabled = True
+    self._active_tone_count = 2  # simulate a 2-tone channel (e.g. primary + backup PL)
     self.ctcss_matched = False
     self.ctcss_checked = False
     self.discard_current = False
     self._ctcss_start_time = time.time()
-    self._CTCSS_GRACE_PERIOD_S = 0.4
+    self._CTCSS_GRACE_PERIOD_S = BaseTuner._CTCSS_GRACE_PERIOD_S
     self.ctcss_level = 0.0001
 
     # Bind the methods from BaseTuner
     self.is_ctcss_mismatched = BaseTuner.is_ctcss_mismatched.__get__(self)
     self.set_center_freq = BaseTuner.set_center_freq.__get__(self)
 
-    # Mock squelch blocks and other requirements for set_center_freq
+    # Mock the N parallel CTCSS chains and other requirements for set_center_freq.
+    # Only indices < _active_tone_count are consulted by is_ctcss_mismatched.
+    self._ctcss_squelches = [MagicMock(), MagicMock(), MagicMock()]
     self.analog_pwr_squelch_cc.unmuted.return_value = True
-    self.analog_ctcss_squelch_ff.unmuted.return_value = False
-    self.analog_ctcss_squelch_ff.frequency.return_value = 100.0
-    self.analog_ctcss_squelch_ff.level.return_value = 0.0001
+    for squelch in self._ctcss_squelches:
+        squelch.unmuted.return_value = False
 
     self.notify_scanner = AsyncMock()
     self._persist_wavfile = MagicMock(return_value=None)
     self.freq_xlating_fir_filter_ccc = MagicMock()
     self.get_ctcss_info = None
 
-    # 1. In grace period (< 0.4s), should return False and set ctcss_checked = True
+    # 1. In grace period, should return False and set ctcss_checked = True
     assert self.is_ctcss_mismatched() == False
     assert self.ctcss_checked == True
     assert self.ctcss_matched == False
 
     # 2. Exceed grace period, no match yet, squelch open -> should return True (mismatch)
-    self._ctcss_start_time = time.time() - 0.5
+    self._ctcss_start_time = time.time() - (self._CTCSS_GRACE_PERIOD_S + 0.1)
     assert self.is_ctcss_mismatched() == True
     assert self.discard_current == True
 
-    # 3. Simulate matching tone detection -> should set matched=True and return False
+    # 3. Simulate matching tone detection on the SECOND (backup) tone -> should set
+    #    matched=True and return False, proving the check isn't limited to chain 0.
     self.ctcss_matched = False
     self.discard_current = False
-    self.analog_ctcss_squelch_ff.unmuted.return_value = True
+    self._ctcss_squelches[1].unmuted.return_value = True
     assert self.is_ctcss_mismatched() == False
     assert self.ctcss_matched == True
     assert self.discard_current == False
 
-    # 4. Once matched, even if CTCSS drops (unmuted=False) and grace period exceeded, should remain False (sticky!)
-    self.analog_ctcss_squelch_ff.unmuted.return_value = False
+    # 4. Once matched, even if that tone drops (unmuted=False) and grace period exceeded,
+    #    should remain False (sticky!)
+    self._ctcss_squelches[1].unmuted.return_value = False
     assert self.is_ctcss_mismatched() == False
     assert self.discard_current == False
 
-    # 5. Verify set_center_freq completed transmission discard logic
+    # 5. A third, unconfigured chain (index 2, beyond _active_tone_count=2) matching
+    #    should NOT count -- is_ctcss_mismatched must only look at active slots.
+    self.ctcss_matched = False
+    self.discard_current = False
+    self._ctcss_start_time = time.time() - (self._CTCSS_GRACE_PERIOD_S + 0.1)
+    self._ctcss_squelches[2].unmuted.return_value = True  # inactive slot -- should be ignored
+    assert self.is_ctcss_mismatched() == True
+    assert self.discard_current == True
+    self._ctcss_squelches[2].unmuted.return_value = False
+
+    # 6. Verify set_center_freq completed transmission discard logic
     self.record = True
     self._ctcss_enabled = True
     self.ctcss_checked = True
@@ -647,7 +680,7 @@ async def test_ctcss_mismatch(receiver_factory, tmp_path):
 
     # CTCSS configured to 100 Hz (mismatch!)
     def mock_ctcss_info(bb):
-        return 100.0
+        return [100.0]
 
     rx = receiver_factory(
         source_file=str(iq_file),
@@ -665,8 +698,8 @@ async def test_ctcss_mismatch(receiver_factory, tmp_path):
     # Run flowgraph
     rx.start()
 
-    # Wait for the signal to start playing (0.5s) and check mismatch
-    await asyncio.sleep(0.5)
+    # Wait for the signal to start playing (0.8s) and check mismatch
+    await asyncio.sleep(0.8)
     assert rx.demodulators[0].is_ctcss_mismatched() == True
 
     loop = asyncio.get_running_loop()
@@ -729,7 +762,7 @@ async def test_ctcss_mismatch_suppression(tmp_path):
 
             self.receiver = MockReceiver()
 
-    config = FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False)
+    config = FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False, max_ctcss_tones=3)
     scanner = MockScanner(config, channel_spacing=5000)
 
     # Note: scanner.frequency_manager.get_ctcss_info is not directly called here since
@@ -769,6 +802,143 @@ async def test_ctcss_mismatch_suppression(tmp_path):
     await scanner._assign_channels_to_demodulators(active_channels)
     # Demodulator should now be tuned to the channel baseband frequency (30_000)
     assert demod.center_freq == 30_000
+
+
+@pytest.mark.asyncio
+async def test_ctcss_match_second_configured_tone(receiver_factory, tmp_path):
+    """
+    Test that a channel configured with TWO CTCSS tones (e.g. a repeater with a
+    primary and backup PL tone) correctly matches and records when the SECOND
+    (backup) tone is what's actually transmitted -- not just the first/primary.
+
+    This is the real-signal counterpart to the 2-tone cases in
+    test_ctcss_matching_logic_mocked / test_ctcss_dynamic_routing: those prove the
+    Python bookkeeping is right, this proves chain 1's actual GNU Radio squelch
+    block is correctly wired end-to-end (not just chain 0).
+    """
+    iq_file = tmp_path / "signal_ctcss_second_tone.iq"
+
+    # Generate NBFM signal at +30 kHz offset with the BACKUP tone (67.0 Hz), not the primary (100.0 Hz)
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=1.5,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 67.0,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.2)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    # Channel configured with two valid tones: primary 100.0 Hz, backup 67.0 Hz
+    def mock_ctcss_info(bb):
+        return [100.0, 67.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,  # NBFM
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    await rx.demodulators[0].set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+    assert rx.demodulators[0]._active_tone_count == 2
+
+    # Run flowgraph
+    rx.start()
+
+    # Wait for the signal to start playing and confirm it matched (via chain 1, not chain 0)
+    await asyncio.sleep(0.5)
+    assert rx.demodulators[0]._ctcss_squelches[0].unmuted() == False  # primary tone never present
+    assert rx.demodulators[0]._ctcss_squelches[1].unmuted() == True   # backup tone is present
+    assert rx.demodulators[0].is_ctcss_mismatched() == False
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    # De-tune to persist WAV file
+    await rx.demodulators[0].set_center_freq(0, 144_000_000)
+
+    # Verify output file creation -- matched via the second configured tone
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 1, f"Expected 1 WAV (matched via backup tone), found {wav_files}"
+
+
+@pytest.mark.asyncio
+async def test_ctcss_mismatch_with_two_configured_tones(receiver_factory, tmp_path):
+    """
+    Test that a channel configured with TWO CTCSS tones still correctly reports a
+    mismatch (and discards the recording) when the transmitted tone matches
+    NEITHER configured tone.
+    """
+    iq_file = tmp_path / "signal_ctcss_two_tone_mismatch.iq"
+
+    # Transmitted tone (150.0 Hz) matches neither of the two configured tones
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=1.5,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 150.0,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.2)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    # Channel configured with two valid tones, neither of which is 150.0 Hz
+    def mock_ctcss_info(bb):
+        return [100.0, 67.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,  # NBFM
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    await rx.demodulators[0].set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+    assert rx.demodulators[0]._active_tone_count == 2
+
+    # Run flowgraph
+    rx.start()
+
+    # Wait for the signal to start playing (0.8s) and check mismatch
+    await asyncio.sleep(0.8)
+    assert rx.demodulators[0]._ctcss_squelches[0].unmuted() == False
+    assert rx.demodulators[0]._ctcss_squelches[1].unmuted() == False
+    assert rx.demodulators[0].is_ctcss_mismatched() == True
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    # De-tune
+    await rx.demodulators[0].set_center_freq(0, 144_000_000)
+
+    # Verify no file is saved -- neither configured tone matched
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 0, f"Expected 0 WAV due to two-tone mismatch, found {wav_files}"
 
 
 @pytest.mark.asyncio
@@ -833,10 +1003,13 @@ async def test_ctcss_dynamic_routing(receiver_factory, tmp_path):
     iq_file = tmp_path / "signal_empty.iq"
     np.zeros(1000, dtype=np.complex64).tofile(iq_file)
 
-    # Mock that returns 100.0 Hz CTCSS for 144.03 MHz, but None for others
+    # Mock that returns [100.0] Hz CTCSS for 144.03 MHz, [100.0, 67.0] for 144.06 MHz
+    # (a second, multi-tone channel), and None for others
     def mock_ctcss_info(rf_freq):
         if abs(rf_freq - 144.03) < 1e-4:
-            return 100.0
+            return [100.0]
+        if abs(rf_freq - 144.06) < 1e-4:
+            return [100.0, 67.0]
         return None
 
     rx = receiver_factory(
@@ -855,40 +1028,64 @@ async def test_ctcss_dynamic_routing(receiver_factory, tmp_path):
     assert demod._is_started == False
     assert demod._ctcss_enabled == False
 
-    # Tune to 30 kHz (144.030 MHz) -> CTCSS tone is 100.0 Hz.
+    # Tune to 30 kHz (144.030 MHz) -> CTCSS tone is [100.0] Hz.
     # Flowgraph is not started, so it should update _ctcss_enabled but NOT change gains (remains 1.0/0.0)
     await demod.set_center_freq(30_000, 144_000_000)
     assert demod._ctcss_enabled == True
+    assert demod._active_tone_count == 1
     assert demod._bypass_gain.k() == 1.0
-    assert demod._ctcss_gain.k() == 0.0
+    assert demod._ctcss_gains[0].k() == 0.0
 
-    # Start the receiver -> should update gains (bypass=0.0, ctcss=1.0) since _ctcss_enabled is True
+    # Start the receiver -> should update gains (bypass=0.0, chain 0=1.0) since _ctcss_enabled is True
     rx.start()
     assert demod._is_started == True
     assert demod._bypass_gain.k() == 0.0
-    assert demod._ctcss_gain.k() == 1.0
+    assert demod._ctcss_gains[0].k() == 1.0
 
     # Tune to 50 kHz (144.050 MHz) -> CTCSS tone is None (CSQ mode).
-    # Since flowgraph is started, it should immediately switch gains to bypass (bypass=1.0, ctcss=0.0)
+    # Since flowgraph is started, it should immediately switch gains to bypass (bypass=1.0, all ctcss chains=0.0)
     await demod.set_center_freq(50_000, 144_000_000)
     assert demod._ctcss_enabled == False
     assert demod._bypass_gain.k() == 1.0
-    assert demod._ctcss_gain.k() == 0.0
+    for gain in demod._ctcss_gains:
+        assert gain.k() == 0.0
 
-    # Tune back to 30 kHz (144.030 MHz) -> CTCSS tone is 100.0 Hz again.
-    # Should immediately switch gains back to CTCSS (bypass=0.0, ctcss=1.0)
+    # Tune back to 30 kHz (144.030 MHz) -> CTCSS tone is [100.0] Hz again.
+    # Should immediately switch gains back to CTCSS (bypass=0.0, chain 0=1.0)
     await demod.set_center_freq(30_000, 144_000_000)
     assert demod._ctcss_enabled == True
     assert demod._bypass_gain.k() == 0.0
-    assert demod._ctcss_gain.k() == 1.0
+    assert demod._ctcss_gains[0].k() == 1.0
+
+    # Tune to 60 kHz (144.060 MHz) -> two configured tones, [100.0, 67.0].
+    # Both chain 0 and chain 1 should be active; chain 2 (unused slot) should stay off.
+    await demod.set_center_freq(60_000, 144_000_000)
+    assert demod._ctcss_enabled == True
+    assert demod._active_tone_count == 2
+    assert demod._bypass_gain.k() == 0.0
+    assert demod._ctcss_gains[0].k() == 1.0
+    assert demod._ctcss_gains[1].k() == 1.0
+    assert demod._ctcss_gains[2].k() == 0.0
 
     rx.stop()
     rx.wait()
 
 
 @pytest.mark.asyncio
-async def test_ctcss_wbfm_match(receiver_factory, tmp_path):
+async def test_ctcss_wbfm_match(receiver_factory, tmp_path, monkeypatch):
     """Test that WBFM squelch opens when the correct CTCSS tone is present and saves a WAV file."""
+    from receiver import Receiver
+    from gnuradio import blocks, gr
+
+    # Throttled file source for real-time timing verification
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
     iq_file = tmp_path / "signal_ctcss_wbfm_match.iq"
 
     # Generate WBFM signal at -100 kHz offset with CTCSS tone 100.0 Hz
@@ -912,7 +1109,7 @@ async def test_ctcss_wbfm_match(receiver_factory, tmp_path):
 
     # Mock that returns 100.0 for any query (CTCSS configured to 100 Hz)
     def mock_ctcss_info(bb):
-        return 100.0
+        return [100.0]
 
     rx = receiver_factory(
         source_file=str(iq_file),
@@ -929,6 +1126,13 @@ async def test_ctcss_wbfm_match(receiver_factory, tmp_path):
 
     # Run flowgraph
     rx.start()
+
+    # Wait for the signal to start playing (0.8s, well within active tone window of 0.2s-1.2s)
+    # and confirm it matched (latching ctcss_matched = True)
+    await asyncio.sleep(0.8)
+    assert rx.demodulators[0].is_ctcss_mismatched() == False
+    assert rx.demodulators[0].ctcss_matched == True
+
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, rx.wait)
 
@@ -989,7 +1193,7 @@ async def test_ctcss_recording_contamination(receiver_factory, tmp_path, monkeyp
     iq_data.tofile(iq_file)
 
     def mock_ctcss_info(bb):
-        return 100.0
+        return [100.0]
 
     rx = receiver_factory(
         source_file=str(iq_file),
@@ -1057,4 +1261,301 @@ async def test_ctcss_recording_contamination(receiver_factory, tmp_path, monkeyp
     # Specifically, the 2000 Hz tone (active in transmission 2) should be much stronger than the 1000 Hz leak.
     assert e2000 > e1000 * 2.0, f"Contamination detected! e1000 (leak) = {e1000:.2f}, e2000 (legit) = {e2000:.2f}"
 
+
+@pytest.mark.asyncio
+async def test_ctcss_sustained_match(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that CTCSS tone detection remains active/sustained throughout the transmission,
+    and correctly goes back to False when the tone stops, using a throttled real-time source.
+    """
+    from receiver import Receiver
+    from gnuradio import blocks, gr
+
+    # Monkeypatch Receiver._init_file_source to add a throttle block for real-time simulation
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_sustained.iq"
+
+    # Generate NBFM signal at +30 kHz: CTCSS = 100.0 Hz, active from 0.2s to 1.7s.
+    # We extend duration to 2.8s so that after the transmission ends at 1.7s,
+    # there is a full 1.1s of silence. This guarantees that at least one complete
+    # Goertzel block (4000 samples = 0.5s) containing 100% silence is processed,
+    # forcing the Goertzel detector to update and mute.
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=2.8,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 100.0,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.7)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [100.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,  # NBFM
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    # Start flowgraph
+    rx.start()
+
+    # 1. At t=0.4s: tone has been present for 0.2s. Goertzel length is 4000 (0.5s),
+    # so it should NOT have matched yet.
+    await asyncio.sleep(0.4)
+    assert demod._ctcss_squelches[0].unmuted() == False
+
+    # 2. At t=0.9s: tone has been present for 0.7s. It should now be matched.
+    await asyncio.sleep(0.5)
+    assert demod._ctcss_squelches[0].unmuted() == True
+    assert demod.is_ctcss_mismatched() == False
+
+    # 3. At t=1.5s: tone has been present for 1.3s. It should remain matched.
+    await asyncio.sleep(0.6)
+    assert demod._ctcss_squelches[0].unmuted() == True
+    assert demod.is_ctcss_mismatched() == False
+
+    # 4. At t=2.6s: transmission ended at 1.7s (silence for 0.9s).
+    # Squelch should now be correctly closed (muted) because a full silent block has completed.
+    await asyncio.sleep(1.1)
+    assert demod._ctcss_squelches[0].unmuted() == False
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    # De-tune
+    await demod.set_center_freq(0, 144_000_000)
+
+    # Verify file saved
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 1
+
+
+@pytest.mark.asyncio
+async def test_ctcss_adjacent_tone_rejection(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that a configured standard tone (e.g. 100.0 Hz) is NOT matched when an adjacent
+    standard tone (e.g. 97.4 Hz, just 2.6 Hz away) is transmitted, proving the frequency
+    selectivity of the larger Goertzel filter.
+    """
+    from receiver import Receiver
+    from gnuradio import blocks, gr
+
+    # Throttled file source for real-time timing verification
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_adjacent.iq"
+
+    # Generate NBFM signal at +30 kHz: CTCSS = 97.4 Hz (adjacent neighbor to 100.0 Hz), active from 0.2s to 1.7s
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=2.2,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 97.4,  # Transmitting adjacent tone
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.7)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    # Configured to 100.0 Hz
+    def mock_ctcss_info(bb):
+        return [100.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,  # NBFM
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    # Start flowgraph
+    rx.start()
+
+    # Sleep 1.0s (transmission has been active for 0.8s, well beyond Goertzel/grace period)
+    await asyncio.sleep(1.0)
+
+    # Should remain muted (False) and be flagged as mismatched (True)
+    assert demod._ctcss_squelches[0].unmuted() == False
+    assert demod.is_ctcss_mismatched() == True
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    # De-tune
+    await demod.set_center_freq(0, 144_000_000)
+
+    # Verify no file is saved
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 0
+
+
+@pytest.mark.asyncio
+async def test_ctcss_matched_tone_filename_metadata(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that if 'ctcss' is included in file_metadata, the matched tone is appended
+    to the persisted filename (e.g. _100.0Hz.wav) and returned in ChannelMessage.
+    """
+    from receiver import Receiver
+    from gnuradio import blocks, gr
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_metadata.iq"
+
+    # Generate NBFM signal at +30 kHz: CTCSS = 100.0 Hz, active from 0.2s to 1.7s
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=2.2,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 100.0,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.7)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [100.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,  # NBFM
+        min_recording=0.2,
+        record=True,
+        file_metadata=["ctcss"],
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    messages = []
+    async def custom_notify(msg):
+        if msg is not None:
+            messages.append(msg)
+    demod.notify_scanner = custom_notify
+
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    # Start flowgraph
+    rx.start()
+
+    # Sleep 1.0s to allow detection to match
+    await asyncio.sleep(1.0)
+    assert demod.is_ctcss_mismatched() == False
+    assert demod.ctcss_matched == True
+    assert demod.matched_ctcss_tone == 100.0
+
+    # Detune to trigger file save
+    await demod.set_center_freq(0, 144_000_000)
+
+    # Wait for completion
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    # Check that message contains matched_ctcss
+    xmit_msg = next((m for m in messages if m.state == 'off'), None)
+    assert xmit_msg is not None
+    assert xmit_msg.matched_ctcss == 100.0
+
+    # Verify file saved has the CTCSS metadata suffix
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 1
+    filename = os.path.basename(wav_files[0])
+    assert "_100.0Hz_" in filename
+
+
+@pytest.mark.asyncio
+async def test_max_ctcss_tones_configurable(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that the max_ctcss_tones parameter configured on Receiver is passed to BaseTuner
+    and limits the number of tones evaluated.
+    """
+    # Create a dummy IQ file to satisfy file source initialization
+    dummy_file = tmp_path / "dummy.iq"
+    dummy_file.write_bytes(b'\x00' * 8000)
+
+    # Create a receiver with max_ctcss_tones = 1
+    def mock_ctcss_info(bb):
+        return [100.0, 141.3]
+
+    rx = receiver_factory(
+        source_file=str(dummy_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info,
+        max_ctcss_tones=1
+    )
+
+    demod = rx.demodulators[0]
+    assert demod.max_ctcss_tones == 1
+    assert len(demod._ctcss_squelches) == 1
+
+    # Tune frequency to apply config
+    await demod.set_center_freq(30_000, 144_000_000)
+    assert demod._active_tone_count == 1
+    assert demod._active_tones == [100.0]  # Second tone ignored
 
