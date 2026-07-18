@@ -103,6 +103,7 @@ class MyDisplay():
         self.rxwin.step = self.scanner.step
         self.rxwin.steps = self.scanner.steps
         self.rxwin.samp_rate = self.scanner.samp_rate
+        self.specwin.samp_rate = self.scanner.samp_rate
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
         self.rxwin.record = self.scanner.record
@@ -142,8 +143,8 @@ class MyDisplay():
             return
 
         # Update the spectrum, channel, and rx displays
-        self.specwin.draw_spectrum(self.scanner.spectrum)
         self.chanwin.draw_channels(self.scanner.channels)
+        self.specwin.draw_spectrum(self.scanner.spectrum, self.scanner.channels, self.chanwin.get_row_map())
         self.lockoutwin.draw_channels(self.scanner.frequencies, self.scanner.channels)
         self.rxwin.draw_rx()
 

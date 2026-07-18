@@ -11,6 +11,7 @@ import time
 import numpy as np
 import logging
 from pathlib import PurePath
+import bisect
 from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
 from utilities import baseband_to_bin, build_column_edges, index_to_column
 
@@ -91,6 +92,7 @@ class SpectrumWindow(object):
         self.max_db = 50
         self.min_db = -20
         self.threshold_db = 20
+        self.samp_rate = 0
 
         # Create a window object in top half of the screen, within the border
         screen_dims = screen.getmaxyx()
@@ -117,11 +119,15 @@ class SpectrumWindow(object):
             except Exception:
                 pass
 
-    def draw_spectrum(self, data):
+    def draw_spectrum(self, data, channels=None, row_map=None):
         """Scales input spectral data to window dimensions and draws bar graph
 
         Args:
             data (numpy.ndarray): FFT power spectrum data in linear, not dB
+            channels (list[ChannelFrequency] | None): Full channel list from
+                the scanner.  When provided a self.samp_rate, lockout index
+                label is drawn at the column matching each tuned (active or hanging)
+                channel's baseband frequency.
 
         Test cases for data with min_db=-100 and max_db=0 on 80x24 terminal:
             1.0E-10 draws nothing since it is not above -100 dB
@@ -220,6 +226,66 @@ class SpectrumWindow(object):
         self.win.addnstr(pos_yt, (self.dims[1] - self.chars), string,
                          self.chars, curses.color_pair(2))
 
+        # Place a channel marker above the signal peak at its baseband frequency column.
+        if channels is not None and self.samp_rate > 0:
+            subset = [c for c in channels if c.active or c.hanging]
+            occupied_rows = {}  # Tracks occupied columns per row: {row_y: set(col_indices)}
+
+            def is_free(y: int, c: int, length: int) -> bool:
+                occupied = occupied_rows.get(y, set())
+                return all(idx not in occupied for idx in range(c, c + length))
+
+            for display_idx, channel in enumerate(subset):
+                # bb=0 is centre; -samp_rate/2 is left edge; +samp_rate/2 is right.
+                # Look up the column using col_edges -- the exact same
+                # partition the bars above were built from -- rather than
+                # re-deriving the index->column mapping with a second
+                # formula, so markers can never disagree with the bars.
+                bin_idx = baseband_to_bin(channel.bb, self.samp_rate, L)
+                col = index_to_column(bin_idx, col_edges)
+                if row_map is not None and channel.rf in row_map:
+                    label = str(row_map[channel.rf])
+                else:
+                    label = str(display_idx)
+                # Clamp column so the label fits within the usable columns.
+                col = max(0, min(num_cols - len(label), col))
+
+                # Retrieve the top of the signal at this column
+                signal_top = pos_y[col]
+                target_y = max(0, signal_top - 2)
+
+                # Find the nearest free row (staggering upwards first, then downwards)
+                marker_y = target_y
+                found = False
+                for y in range(target_y, -1, -1):
+                    if is_free(y, col, len(label)):
+                        marker_y = y
+                        found = True
+                        break
+
+                if not found:
+                    for y in range(target_y + 1, self.dims[0]):
+                        if is_free(y, col, len(label)):
+                            marker_y = y
+                            found = True
+                            break
+
+                # If every row is occupied at this column, marker_y stays at
+                # target_y and overwrites whatever is there — acceptable graceful
+                # degradation for extremely congested displays.
+
+                # Record the occupied columns for this row
+                if marker_y not in occupied_rows:
+                    occupied_rows[marker_y] = set()
+                for idx in range(col, col + len(label)):
+                    occupied_rows[marker_y].add(idx)
+
+                attr = (curses.color_pair(7)
+                        if channel.active else curses.color_pair(7) | curses.A_DIM)
+                try:
+                    self.win.addnstr(marker_y, col, label, len(label), attr)
+                except curses.error:
+                    pass
         # Hide cursor
         self.win.leaveok(1)
 
@@ -310,8 +376,8 @@ class ChannelWindow(object):
 
             self.attrs = { 'bold_freq': curses.color_pair(2) | curses.A_BOLD,
                            'bold_icon': curses.color_pair(2),
-                           'normal_freq': curses.color_pair(6),
-                           'normal_icon': curses.color_pair(6) }
+                           'normal_freq': curses.color_pair(2) | curses.A_DIM,
+                           'normal_icon': curses.color_pair(2) | curses.A_DIM }
 
         def reset_cache(self) -> None:
             self.prev_channel = None
@@ -355,7 +421,7 @@ class ChannelWindow(object):
                             curses.color_pair(6) | curses.A_DIM)
                 return
 
-            idx_str = f'{self.idx:02d}:'
+            idx_str = f'{self.idx:>2d}:'
             freq_str = f'{channel.rf:>9.4f}'
             if freq_str.endswith('0'):
                 freq_str = freq_str[:-1] + ' '
@@ -365,7 +431,9 @@ class ChannelWindow(object):
             attributes = (self.attrs['bold_freq'], self.attrs['bold_icon']) if channel.active else (
                 self.attrs['normal_freq'], self.attrs['normal_icon'])
 
-            win.addnstr(row, col, idx_str, len(idx_str), attributes[0])
+            idx_attr = (curses.color_pair(7)
+                        if channel.active else curses.color_pair(7) | curses.A_DIM)
+            win.addnstr(row, col, idx_str, len(idx_str), idx_attr)
             win.addnstr(row, col + 3, freq_str, len(freq_str), attributes[0])
             win.addnstr(row, col + 12, icon, 1, attributes[1])
 
@@ -502,6 +570,15 @@ class ChannelWindow(object):
         digit (row number) into an RF frequency for Scanner.add_lockout().
         """
         return self._rf_by_row.get(row)
+
+    def get_row_map(self) -> dict[float, int]:
+        """Return a snapshot of the current RF-frequency → row-index mapping.
+
+        The returned dict is a shallow copy so callers cannot inadvertently
+        mutate internal state.  Used by SpectrumWindow to draw channel index
+        markers that match the Channel panel row labels and lockout hotkeys.
+        """
+        return dict(self._row_map)
 
     def cleanup(self) -> None:
         if hasattr(self, 'win') and self.win:
