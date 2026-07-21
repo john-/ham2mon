@@ -381,9 +381,11 @@ async def test_volume_clamping(receiver_factory, tmp_path):
     rx.set_volume(10)
     assert rx.volume_db == 10
 
+from config import GainConfig
+
 @pytest.mark.asyncio
 async def test_file_mode_hardware_guards(receiver_factory, tmp_path):
-    """Test that hardware adjustment methods safely stub out and return empty in file mode."""
+    """Test that hardware getters and gain setters handle file source gracefully."""
     iq_file = tmp_path / "dummy.iq"
     np.zeros(1000, dtype=np.complex64).tofile(iq_file)
 
@@ -397,7 +399,49 @@ async def test_file_mode_hardware_guards(receiver_factory, tmp_path):
     # Verify hardware stubs
     assert rx.get_gain_names() == []
     assert rx.set_gains([{"name": "RF", "value": 10.0}]) == [{"name": "RF", "value": 10.0}]
-    assert rx.filter_and_set_gains([{"name": "RF", "value": 10.0}]) == []
+    assert rx.filter_and_set_gains(GainConfig(rf=10.0)) == []
+
+
+@pytest.mark.asyncio
+async def test_filter_and_set_gains_validation(receiver_factory, tmp_path):
+    """Test strict validation raises ValueError if explicit gain is not supported by hardware."""
+    iq_file = tmp_path / "dummy.iq"
+    np.zeros(1000, dtype=np.complex64).tofile(iq_file)
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        record=False
+    )
+    # Mock source_type to simulate real hardware with specific supported gain names
+    rx._source_type = "hardware"
+    rx.get_gain_names = lambda: ["LNA", "MIX", "IF"]
+
+    # Explicitly requesting an unsupported gain (e.g. TIA) should raise ValueError
+    with pytest.raises(ValueError, match="Gain\\(s\\) \\['TIA'\\] are not supported"):
+        rx.filter_and_set_gains(GainConfig(lna=10.0, tia=8.0))
+
+
+@pytest.mark.asyncio
+async def test_filter_and_set_gains_agc(receiver_factory, tmp_path):
+    """Test filter_and_set_gains skips gain setting when AGC is active."""
+    iq_file = tmp_path / "dummy.iq"
+    np.zeros(1000, dtype=np.complex64).tofile(iq_file)
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        record=False
+    )
+    rx._source_type = "hardware"
+    rx.get_gain_names = lambda: ["LNA", "MIX", "IF"]
+
+    # When agc=True, filter_and_set_gains should return []
+    result = rx.filter_and_set_gains(GainConfig(agc=True, lna=10.0))
+    assert result == []
+
 
 @pytest.mark.asyncio
 async def test_file_mode_tuning(receiver_factory, tmp_path):

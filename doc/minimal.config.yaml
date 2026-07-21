@@ -1,0 +1,83 @@
+# ===================================================================
+# ham2mon Bare Minimum Starter Configuration File
+# ===================================================================
+
+# -------------------------------------------------------------------
+# Hardware & SDR Settings (Required to locate and tune your SDR)
+# -------------------------------------------------------------------
+hardware:
+  # The hardware driver argument string (e.g., "airspy,linearity", "rtl=0", "hackrf=0", "uhd")
+  args: "uhd"
+
+  # Center frequencies to monitor in MHz (single frequency or hyphenated range)
+  center_frequencies:
+    - "146"
+
+  # SDR sample rate in Hz (must be at least 1,000,000 / 1 MHz)
+  sample_rate: 4.0e+6
+
+  # Frequency correction offset in PPM (uncomment to apply correction)
+  # freq_correction: 0
+
+# ----------------------------------------------------------------------
+# Optional Settings (Commented out default values. Uncomment/edit to customize)
+# ----------------------------------------------------------------------
+
+# gains:
+#   agc: false
+#   rf: 0.0
+#   lna: 8.0
+#   mix: 5.0
+#   if: 16.0
+#   bb: 16.0
+#   att: 8.0
+#   lna_mix_bb: 8.0
+#   tia: 8.0
+#   pga: 8.0
+#   lb: 8.0
+
+# receiver:
+#   demodulators: 4
+#   mode: 0                  # 0 = NBFM, 1 = AM, 2 = WBFM
+#   squelch_db: -60
+#   threshold_db: 10
+#   channel_spacing: 5000
+#   quiet_timeout: 12
+#   active_timeout: 20
+#   max_ctcss_tones: 0
+
+# audio:
+#   play: true
+#   volume_db: 0
+#   record: false
+#   bit_depth: 16
+#   min_recording_sec: 0.0
+#   max_recording_sec: 0.0
+#   file_metadata: []
+
+# classification:
+#   model_path: none         # Path to classification model (.tflite)
+#   wanted:
+#     voice: false
+#     data: false
+#     skip: false
+#   auto_priority: false
+
+# frequency_policies:
+#   disable_lockout: false
+#   disable_priority: false
+
+# display:
+#   min_db: -10.0
+#   max_db: 50.0
+#   theme_file: "default.theme.yaml"
+
+# channel_activity:
+#   type: none               # none, fixed-field, json-server
+#   dest: "channel-log"
+#   interval_sec: 15
+
+# logging:
+#   dest: none               # none, file, syslog, stderr
+#   level: warn
+#   file: ""

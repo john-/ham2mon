@@ -207,25 +207,28 @@ uv run apps/ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,fre
 
 `CTRL-C or SHIFT-Q = quit`
 
+> [!IMPORTANT]
+> **Migration Note:** All underscore-separated command-line arguments have been renamed to use hyphens (e.g., `--quiet_timeout` is now `--quiet-timeout`, `--lna_gain` is now `--lna-gain`, etc.). If you have existing wrapper scripts, systemd service configurations, or cron jobs, please update them to use the new hyphenated spellings.
+
 ## Help Menu
 ```
 usage: ham2mon.py [-h] [-a HW_ARGS] [-n NUM_DEMOD] [-d TYPE_DEMOD]
                   [-f FREQ_SPEC [FREQ_SPEC ...]]
-                  [--quiet_timeout QUIET_TIMEOUT]
-                  [--active_timeout ACTIVE_TIMEOUT] [-r ASK_SAMP_RATE]
+                  [--quiet-timeout QUIET_TIMEOUT]
+                  [--active-timeout ACTIVE_TIMEOUT] [-r ASK_SAMP_RATE]
                   [-g RF_GAIN_DB] [-i IF_GAIN_DB] [-o BB_GAIN_DB]
-                  [--lna_gain LNA_GAIN_DB] [--att_gain ATT_GAIN_DB]
-                  [--lna_mix_bb_gain LNA_MIX_BB_GAIN_DB]
-                  [--tia_gain TIA_GAIN_DB] [--pga_gain PGA_GAIN_DB]
-                  [--lb_gain LB_GAIN_DB] [-x MIX_GAIN_DB] [--agc]
+                  [--lna-gain LNA_GAIN_DB] [--att-gain ATT_GAIN_DB]
+                  [--lna-mix-bb-gain LNA_MIX_BB_GAIN_DB]
+                  [--tia-gain TIA_GAIN_DB] [--pga-gain PGA_GAIN_DB]
+                  [--lb-gain LB_GAIN_DB] [-x MIX_GAIN_DB] [--agc]
                   [-s SQUELCH_DB] [-v VOLUME_DB] [-t THRESHOLD_DB] [-w]
                   [-F FREQUENCY_FILE_NAME] [--disable-lockout]
                   [--disable-priority] [-P] [-T ACTIVITY_TYPE]
                   [-L ACTIVITY_DEST] [-A ACTIVITY_INTERVAL]
                   [-c FREQ_CORRECTION] [-m] [-b AUDIO_BPS] [-M MAX_DB]
                   [-N MIN_DB] [-B CHANNEL_SPACING]
-                  [--min_recording MIN_RECORDING]
-                  [--max_recording MAX_RECORDING] [--voice] [--data] [--skip]
+                  [--min-recording MIN_RECORDING]
+                  [--max-recording MAX_RECORDING] [--voice] [--data] [--skip]
                   [--model MODEL_FILE_NAME]
                   [--log-level {debug,info,warn,error}]
                   [--log-dest {none,file,syslog,stderr}] [--log-file LOG_FILE]
@@ -240,30 +243,30 @@ options:
                         Type of demodulator (0=NBFM, 1=AM and 2=WBFM)
   -f, --freq FREQ_SPEC [FREQ_SPEC ...]
                         Hardware RF center frequency or range in Mhz
-  --quiet_timeout QUIET_TIMEOUT
+  --quiet-timeout QUIET_TIMEOUT
                         Timeout when there is no activity
-  --active_timeout ACTIVE_TIMEOUT
+  --active-timeout ACTIVE_TIMEOUT
                         Timeout when there is activity
   -r, --rate ASK_SAMP_RATE
                         Hardware ask sample rate in sps (1E6 minimum)
-  -g, --gain, --rf_gain RF_GAIN_DB
+  -g, --gain, --rf-gain RF_GAIN_DB
                         Hardware RF gain in dB
-  -i, --if_gain IF_GAIN_DB
+  -i, --if-gain IF_GAIN_DB
                         Hardware IF gain in dB
-  -o, --bb_gain BB_GAIN_DB
+  -o, --bb-gain BB_GAIN_DB
                         Hardware BB gain in dB
-  --lna_gain LNA_GAIN_DB
+  --lna-gain LNA_GAIN_DB
                         Hardware LNA gain in dB
-  --att_gain ATT_GAIN_DB
+  --att-gain ATT_GAIN_DB
                         Hardware ATT gain in dB
-  --lna_mix_bb_gain LNA_MIX_BB_GAIN_DB
+  --lna-mix-bb-gain LNA_MIX_BB_GAIN_DB
                         Hardware LNA_MIX_BB gain in dB
-  --tia_gain TIA_GAIN_DB
+  --tia-gain TIA_GAIN_DB
                         Hardware TIA gain in dB
-  --pga_gain PGA_GAIN_DB
+  --pga-gain PGA_GAIN_DB
                         Hardware PGA gain in dB
-  --lb_gain LB_GAIN_DB  Hardware LB gain in dB
-  -x, --mix_gain MIX_GAIN_DB
+  --lb-gain LB_GAIN_DB  Hardware LB gain in dB
+  -x, --mix-gain MIX_GAIN_DB
                         Hardware MIX gain index
   --agc                 Enable automatic gain control
   -s, --squelch SQUELCH_DB
@@ -288,14 +291,14 @@ options:
                         Frequency correction in ppm
   -m, --mute-audio      Mute audio from speaker (still allows recording)
   -b, --bps AUDIO_BPS   Audio bit depth (bps)
-  -M, --max_db MAX_DB   Spectrum window max dB for display
-  -N, --min_db MIN_DB   Spectrum window min dB for display (no greater than
+  -M, --max-db MAX_DB   Spectrum window max dB for display
+  -N, --min-db MIN_DB   Spectrum window min dB for display (no greater than
                         -10dB from max
   -B, --channel-spacing CHANNEL_SPACING
                         Channel spacing (spectrum bin size)
-  --min_recording MIN_RECORDING
+  --min-recording MIN_RECORDING
                         Minimum length of a recording in seconds
-  --max_recording MAX_RECORDING
+  --max-recording MAX_RECORDING
                         Maximum length of a recording in seconds
   --voice               Record voice
   --data                Record voice
@@ -439,11 +442,11 @@ Currently, whether ham2mon is configured to record or not will determine how the
 
 The completion of the recording does not occur until after the channel is closed and an audio file is saved.  See option `-w` and Audio Classification for saving of audio files.
 
-There are two timeouts.  If there is no activity on a channel the scanner will move to next step when `--quiet_timeout` is reached.  With activity, the scanner will hold until `--active_timeout` is reached.
+There are two timeouts.  If there is no activity on a channel the scanner will move to next step when `--quiet-timeout` is reached.  With activity, the scanner will hold until `--active-timeout` is reached.
 
 An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) classified as voice 2) at least 2 seconds long 3) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
 
-uv run apps/ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --voice --min_recording 2 --max_recording 10 --quiet_timeout 20 --active_timeout 60
+uv run apps/ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --voice --min-recording 2 --max-recording 10 --quiet-timeout 20 --active-timeout 60
 
 When range scanning, the RECEIVER section will show current step, number of steps and the percent complete.
 
@@ -477,10 +480,12 @@ The frequency file contains metadata for individual frequencies and ranges of fr
 1. Priority frequencies
 2. Lockout frequencies
 3. Frequency labeling
+4. CTCSS (PL tone) filtering
 
-If an individual frequency or frequency range is specfied more than once, an error will be generated and ham2mon will not load.
+If an individual frequency or frequency range is specified more than once, an error will be generated and ham2mon will not load (unless the duplicate entry is used to specify an
+additional unique ctcss tone for that frequency).
 
-For an exmaple, see the [example frequencies file](./apps/frequencies-example.yaml).
+For an example, see the [example frequencies file](./doc/example.freqs.yaml).
 
 ### Priority Handling
 Priorities can be assigned to frequencies and frequency ranges in the frequency file.  Highest priority is 1.  Frequencies can have equal priority.  If no priority is assigned the default value is no priority.
@@ -614,10 +619,10 @@ By default, **CTCSS demodulation is disabled (`--max-ctcss-tones` defaults to 0)
 
 ### User Options
 
-Depending on your configuration in `frequencies.yaml` (specified via the `-F`/`--frequencies` option), the application operates in one of two modes:
+Depending on your configuration in your `.freqs.yaml` file (specified via the `-F`/`--frequencies` option), the application operates in one of two modes:
 
 1. **Carrier Squelch (CSQ) Mode (CTCSS Bypassed):**
-   * **Trigger:** Enabled for any channel configured in `frequencies.yaml` **without** a `ctcss` tone, or for any frequency not present in `frequencies.yaml` at all (such as dynamically discovered frequencies during a range scan).
+   * **Trigger:** Enabled for any channel configured in your `.freqs.yaml` file **without** a `ctcss` tone, or for any frequency not present in the file at all (such as dynamically discovered frequencies during a range scan).
    * **Behavior:** The receiver will record and unmute any signal that is strong enough to break the RF carrier power squelch, regardless of whether a sub-audible tone is present or what its frequency is. Additionally, the 300Hz high-pass filter is dynamically bypassed in this mode to preserve full audio fidelity and bass (e.g. for broadcast FM music).
 2. **Tone Squelch (CTCSS) Mode:**
    * **Trigger:** Enabled for channels configured **with** a specific `ctcss` key (e.g. `ctcss: 100.0`).

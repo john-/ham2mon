@@ -120,7 +120,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True, help="Path to model")
     parser.add_argument(
-        "--audio_rate", type=int, required=True, help="Audio sample rate"
+        "--audio-rate", type=int, required=True, help="Audio sample rate"
     )
     args = parser.parse_args()
 

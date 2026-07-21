@@ -17,12 +17,21 @@ import errno
 import time
 import numpy as np
 import logging
+from pathlib import Path
 from typing import Callable
 
 from demodulators.NBFM import TunerDemodNBFM
 from demodulators.AM import TunerDemodAM
 from demodulators.WBFM import TunerDemodWBFM
 from classification import ClassificationNotWanted, Classifier, ClassifierParams
+from config import (
+    GainConfig,
+    GAIN_FIELDS,
+    HardwareConfig,
+    ReceiverConfig,
+    AudioConfig,
+    ClassificationConfig,
+)
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -52,19 +61,20 @@ class Receiver(gr.top_block):
     # pylint: disable=too-many-locals
     # pylint: disable=too-many-arguments
 
-    def __init__(self, ask_samp_rate: int, num_demod: int, type_demod: int,
-                 hw_args: str, freq_correction: int, record: bool, play: bool,
-                 audio_bps: int, min_recording: float,
-                 classifier_params: ClassifierParams, notify_scanner: Callable,
-                 agc: bool, file_metadata: list[str] | None = None,
+    def __init__(self,
+                 hardware_config: HardwareConfig,
+                 receiver_config: ReceiverConfig,
+                 audio_config: AudioConfig,
+                 gain_config: GainConfig,
+                 classification_config: ClassificationConfig,
+                 notify_scanner: Callable,
                  get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
                  get_ctcss_info: Callable[[float], list[float]] | None = None,
-                 max_ctcss_tones: int = 0,
                  source_type: str = "hardware", source_file: str | None = None,
                  wav_dir: str = "wav", center_freq: int = int(144E6)):
 
         # Call the initialization method from the parent class
-        gr.top_block.__init__(self, "Receiver")
+        super().__init__("Receiver")
 
         self._source_type = source_type
         self._wav_dir = wav_dir
@@ -90,6 +100,18 @@ class Receiver(gr.top_block):
         self.volume_db = 0
         self.gains: list[dict] = []
         audio_rate = 8000
+
+        # Extract configuration attributes from sub-domain config objects
+        ask_samp_rate = int(hardware_config.sample_rate)
+        num_demod = receiver_config.demodulators
+        type_demod = receiver_config.mode
+        hw_args = hardware_config.args
+        freq_correction = hardware_config.freq_correction
+        record = audio_config.record
+        play = audio_config.play
+        audio_bps = audio_config.bit_depth
+        min_recording = audio_config.min_recording_sec
+        agc = gain_config.agc
 
         # Setup the USRP source, or use the USRP sim
         if self._source_type == "file":
@@ -147,6 +169,14 @@ class Receiver(gr.top_block):
                      fft_vcc, complex_to_mag_squared,
                      integrate_ff, self.probe_signal_vf)
 
+        classifier_params = ClassifierParams(
+            wanted={
+                'V': classification_config.wanted.voice,
+                'D': classification_config.wanted.data,
+                'S': classification_config.wanted.skip,
+            },
+            model_file_name=classification_config.model_path or Path(""),
+        )
         classifier: Classifier | None
         try:
           classifier = Classifier(classifier_params, audio_rate)
@@ -157,10 +187,10 @@ class Receiver(gr.top_block):
             logger.error(msg)
             raise Exception(msg)
 
-        self.file_metadata = file_metadata if file_metadata is not None else []
+        self.file_metadata = list(audio_config.file_metadata)
         self.get_priority_info = get_priority_info
         self.get_ctcss_info = get_ctcss_info
-        self.max_ctcss_tones = max_ctcss_tones
+        self.max_ctcss_tones = receiver_config.max_ctcss_tones
 
         # -----------Flow for Demod--------------
 
@@ -290,20 +320,46 @@ class Receiver(gr.top_block):
             return []
         return self.src.get_gain_names()
 
-    def filter_and_set_gains(self, all_gains: list[dict]) -> list[dict]:
-        """Remove unsupported gains and set them
+    def filter_and_set_gains(self, gain_config: GainConfig) -> list[dict]:
+        """Validate explicit gains against hardware support, then apply all supported gains.
+
+        When AGC is active, manual gain setting is skipped entirely — the hardware
+        manages gain automatically and osmosdr ignores set_gain calls in AGC mode.
+
         Args:
-            all_gains (list of dictionary): Supported gains in dB
+            gain_config: GainConfig carrying user-supplied values (non-None) and defaults.
+        Returns:
+            list of {name, value} dicts for the hardware-confirmed active gains.
+        Raises:
+            ValueError: if the user explicitly configured a gain not supported by this hardware.
         """
         if self._source_type == "file":
             return []
-        # TODO: If using AGC remove the uneeded gain. (e.g. Airspy Mini only uses
-        #       IF gain so remove LNA and MIX)
-        gains: list[dict] = []
+
+        if gain_config.agc:
+            logger.debug("AGC enabled — skipping manual gain setup")
+            return []
+
         names = self.get_gain_names()
-        for gain in all_gains:
-            if gain["name"] in names:
-                gains.append(gain)
+
+        # Strict validation: reject any gain the user explicitly named that this SDR cannot handle
+        unsupported = [
+            hw_name
+            for field_name, hw_name in GAIN_FIELDS
+            if gain_config.is_explicit(field_name) and hw_name not in names
+        ]
+        if unsupported:
+            raise ValueError(
+                f"Gain(s) {unsupported} are not supported by the connected SDR hardware. "
+                f"Supported gains: {names}"
+            )
+
+        # Build the active gains list: only hardware-supported gains with effective values
+        gains: list[dict] = [
+            {"name": hw_name, "value": gain_config.get_value(field_name)}
+            for field_name, hw_name in GAIN_FIELDS
+            if hw_name in names
+        ]
         return self.set_gains(gains)
 
     def set_gains(self, gains: list[dict]) -> list[dict]:

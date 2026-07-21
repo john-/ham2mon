@@ -89,8 +89,8 @@ class SpectrumWindow(object):
         self.screen = screen
 
         # Set default values
-        self.max_db = 50
-        self.min_db = -20
+        self.max_db: float = 50.0
+        self.min_db: float = -20.0
         self.threshold_db = 20
         self.samp_rate = 0
 
@@ -971,9 +971,10 @@ class RxWindow(object):
             if len(value) > max_len:
                 value = value[:max_len]
 
+            padded_value = value.ljust(max_len)
             attr = self.attrs['bold'] if self.can_modify else self.attrs['normal']
             try:
-                win.addnstr(row, val_start, value, len(value), attr)
+                win.addnstr(row, val_start, padded_value, len(padded_value), attr)
             except curses.error:
                 pass
 
@@ -1309,7 +1310,7 @@ def setup_screen(screen, theme_config_path: Path | None = None) -> None:
 
     Args:
         theme_config_path (Path, optional): Path to a theme YAML
-            file (see ui_theme.py). If omitted, default-theme.yaml is used.
+            file (see ui_theme.py). If omitted, default.theme.yaml is used.
             This parameter exists so a future --theme-config CLI flag can be
             added.
     """

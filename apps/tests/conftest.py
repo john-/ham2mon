@@ -6,6 +6,13 @@ import re
 import numpy as np
 from typing import Callable
 from classification import ClassifierParams
+from config import (
+    HardwareConfig,
+    ReceiverConfig,
+    AudioConfig,
+    GainConfig,
+    ClassificationConfig,
+)
 from receiver import Receiver
 
 
@@ -199,28 +206,31 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
         get_ctcss_info: Callable[[float], list[float]] | None = None,
         max_ctcss_tones: int = 3
     ) -> Receiver:
-        classifier_params = ClassifierParams(
-            wanted={'V': False, 'D': False, 'S': False},
-            model_file_name=None
+        hw_config = HardwareConfig(sample_rate=float(sample_rate), args="")
+        recv_config = ReceiverConfig(
+            demodulators=num_demod,
+            mode=type_demod,
+            max_ctcss_tones=max_ctcss_tones,
         )
-
-        rx = Receiver(
-            ask_samp_rate=sample_rate,
-            num_demod=num_demod,
-            type_demod=type_demod,
-            hw_args="",
-            freq_correction=0,
+        audio_config = AudioConfig(
             record=record,
             play=play,
-            audio_bps=audio_bps,
-            min_recording=min_recording,
-            classifier_params=classifier_params,
+            bit_depth=audio_bps,
+            min_recording_sec=min_recording if record else 0.0,
+            file_metadata=file_metadata if file_metadata is not None else [],
+        )
+        gain_config = GainConfig(agc=agc)
+        class_config = ClassificationConfig()
+
+        rx = Receiver(
+            hardware_config=hw_config,
+            receiver_config=recv_config,
+            audio_config=audio_config,
+            gain_config=gain_config,
+            classification_config=class_config,
             notify_scanner=mock_notify_scanner,
-            agc=agc,
-            file_metadata=file_metadata,
             get_priority_info=mock_get_priority_info,
             get_ctcss_info=get_ctcss_info,
-            max_ctcss_tones=max_ctcss_tones,
             source_type="file",
             source_file=source_file,
             wav_dir=test_wav_dir,
