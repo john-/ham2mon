@@ -102,8 +102,8 @@ _FLAG_TERMINFO_CAPS: Final[dict[str, str]] = {
 _KNOWN_SPEC_KEYS: Final[frozenset[str]] = frozenset({'fg', 'bg', *_FLAG_NAMES})
 
 # Fallback values for a single malformed/missing entry *within* an otherwise
-# valid, present default-theme.yaml (e.g. a typo'd color name for one style key).
-# This is NOT a substitute for the file itself -- default-theme.yaml is a required
+# valid, present default.theme.yaml (e.g. a typo'd color name for one style key).
+# This is NOT a substitute for the file itself -- default.theme.yaml is a required
 # application resource (see module docstring) and ThemeManager.load() raises
 # if it's missing entirely. These per-key defaults exist purely so one bad
 # line in an otherwise-good file degrades gracefully instead of crashing the
@@ -150,7 +150,7 @@ DEFAULT_STYLES: Final[dict[str, StyleSpec]] = {
 # correctly no matter what directory the process was launched from. This is
 # the file ThemeManager loads unless a future --theme-config CLI flag
 # supplies an explicit override path via ThemeConfiguration.file_name.
-DEFAULT_THEME_FILE: Final[Path] = Path(__file__).resolve().parent / 'default-theme.yaml'
+DEFAULT_THEME_FILE: Final[Path] = Path(__file__).resolve().parent / 'default.theme.yaml'
 
 
 @final
@@ -321,7 +321,7 @@ class ThemeManager:
         if not file.exists():
             raise FileNotFoundError(
                 f'Required application resource is missing: {file}. ' +
-                'default-theme.yaml ships with ham2mon and must be present ' +
+                'default.theme.yaml ships with ham2mon and must be present ' +
                 'alongside the application; if it was deleted, reinstall ' +
                 'or restore it from the repository.')
 

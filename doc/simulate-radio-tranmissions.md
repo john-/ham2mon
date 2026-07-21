@@ -34,7 +34,7 @@ Load the file without referencing the frequency configuration:
 uv run apps/ham2mon.py -a "file=test_signals/debug/test_busy_net_realistic_scanning_session_signal_busy_net.iq,rate=1E6,repeat=true,throttle=true,freq=462.550E6" -r 1E6 -t 30 -d 0 -s -70 -v 20 -w -b 16 -n 3 -M 70
 ```
 
-**Note:** To load the file with the frequency configuration, use the `-F` option (e.g. `-F doc/frequencies-example.yaml`).  The frequencies in the [frequencies-example.yaml](frequencies-example.yaml) file have been synced up with the frequencies in the test case.
+**Note:** To load the file with the frequency configuration, use the `-F` option (e.g. `-F doc/example.freqs.yaml`).  The frequencies in the [example.freqs.yaml](example.freqs.yaml) file have been synced up with the frequencies in the test case.
 
 **Note:** If your frequency configuration includes CTCSS tones (as used by the example file), you must also enable CTCSS demodulation by specifying the max tones (e.g., `--max-ctcss-tones=3`).
 

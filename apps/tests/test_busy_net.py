@@ -45,14 +45,14 @@ Scenario narrative (synthetic labels, not real-world frequencies):
       than conversational speech) meant to read as an automated data
       link rather than a voice channel. Placed close to the edge of the
       1 Msps capture band rather than near the centre. Marked `locked:
-      true` in frequencies-example.yaml, so a real scanner using that
+      true` in example.freqs.yaml, so a real scanner using that
       file would never tune to it -- this test mirrors that by never
       assigning a demodulator to it. The synthetic IQ generator applies
       no special filtering for locked status: the signal is mixed into
       the raw IQ exactly like every other channel, and the lockout is
       purely a scanning-policy decision, not a property of the RF itself.
 
-The frequencies-example.yaml companion file describes these same frequencies
+The example.freqs.yaml companion file describes these same frequencies
 so that loading the saved IQ into the real ham2mon application shows correct
 labels, CTCSS annotations, and priority in the Channel list.
 
@@ -64,7 +64,7 @@ Loading the IQ file into ham2mon:
     uv run apps/ham2mon.py \\
         -a "file=<path>/signal_busy_net.iq,rate=1E6,repeat=true,throttle=true,freq=462.550E6" \\
         -r 1E6 -t 20 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 \\
-        -F doc/frequencies-example.yaml
+        -F doc/example.freqs.yaml
 
     NOTE: rate= inside -a must match -r exactly (1E6). The file source
     driver uses rate= as its playback throttle; -r tells the flowgraph what
@@ -85,7 +85,7 @@ from signal_generator import generate_test_iq
 # Scenario configuration
 # ---------------------------------------------------------------------------
 # Center frequency and channel frequencies are defined here as absolute
-# RF frequencies in MHz, matching the entries in frequencies-example.yaml
+# RF frequencies in MHz, matching the entries in example.freqs.yaml
 # one-for-one (e.g. WAREHOUSE_FREQ_MHZ == the "Warehouse Ops" `single:`
 # value in that file). A human comparing the two files can match channels
 # by frequency directly, with no offset arithmetic required.
@@ -224,7 +224,7 @@ def _build_scenario_iq() -> np.ndarray:
             "ctcss_dev": 500.0,
             "events": [(5.0, 9.0)],
         },
-        # --- Data telemetry burst link: locked in frequencies-example.yaml --
+        # --- Data telemetry burst link: locked in example.freqs.yaml -------
         # No CTCSS (raw carrier keying, as with Warehouse Ops). Present in
         # the IQ exactly like every other channel -- locked status is a
         # scanning-policy decision applied later by ham2mon/the test
@@ -542,7 +542,7 @@ async def test_busy_net_realistic_scanning_session(receiver_factory, tmp_path, m
     # -----------------------------------------------------------------------
     # Locked channel is present in the raw IQ, unfiltered
     # -----------------------------------------------------------------------
-    # "Locked" is a scanning-policy attribute (frequencies-example.yaml,
+    # "Locked" is a scanning-policy attribute (example.freqs.yaml,
     # never demodulated above) -- it must have no effect on signal
     # generation. Confirm the data-link carrier is genuinely present during
     # one of its burst windows and absent during a quiet gap between bursts,

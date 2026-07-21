@@ -21,6 +21,7 @@ from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
 from utilities import baseband_to_frequency, frequency_to_baseband, baseband_to_bin, bin_to_baseband
 from dataclasses import dataclass, field
+from config import MasterHam2MonConfig, GainConfig
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -73,61 +74,69 @@ class Scanner(object):
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
 
-    def __init__(self, ask_samp_rate: int=int(4E6), num_demod: int=4, type_demod: int=0,
-                 hw_args: str="uhd", freq_correction: int=0, record: bool=True,
-                 frequency_configuration: FrequencyConfiguration | None=None,
-                 activity_params: ActivityParams=ActivityParams(type='none', dest='', interval=0),
-                 play: bool=True,
-                 audio_bps: int=8, channel_spacing: int=5000,
-                 frequency_params: FrequencyGroup=FrequencyGroup(sample_rate=int(4E6)),
-                 min_recording: float=0, max_recording: float=0,
-                 classifier_params: ClassifierParams=None,
-                 auto_priority: bool=False, agc: bool=False,
-                 file_metadata: list[str] | None=None):
+    def __init__(self,
+                 config: MasterHam2MonConfig | None = None,
+                 frequency_params: FrequencyGroup | None = None):
+
+        if config is None:
+            config = MasterHam2MonConfig()
+        if frequency_params is None:
+            frequency_params = FrequencyGroup(sample_rate=int(config.hardware.sample_rate))
+
+        self.config = config
 
         # Default values
-        self.squelch_db = -60
-        self.volume_db = 0
-        self.threshold_db = 10
-        self.record = record
-        self.play = play
-        self.audio_bps = audio_bps
+        self.squelch_db = config.receiver.squelch_db
+        self.volume_db = config.audio.volume_db
+        self.threshold_db = config.receiver.threshold_db
+        self.record = config.audio.record
+        self.play = config.audio.play
+        self.audio_bps = config.audio.bit_depth
         self.samp_rate: int
         self.frequency_params = frequency_params
         self.spectrum: NDArray = np.empty(0)
         self.frequencies: FrequencyList = []    # needed for the UI
         self.channels: ChannelList = []
         self._channels: ChannelList = []
-        self.activity_params = activity_params
-        self.channel_spacing = channel_spacing
-        self.frequency_file_name = frequency_configuration.file_name  # used by the gui
+        self.activity_params = ActivityParams(
+            dest=config.channel_activity.dest,
+            type=config.channel_activity.type,
+            interval=config.channel_activity.interval_sec,
+        )
+        self.channel_spacing = config.receiver.channel_spacing
+        self.frequency_file_name = config.frequency_policies.file  # used by the gui
         self.log_timeout_last = int(time.time())
         self.log_mode = ""
         self.hang_time: float = 1.0
-        self.max_recording = max_recording
+        self.max_recording = config.audio.max_recording_sec
         self.xmit_stats: dict[float, ClassificationCount] = {}
-        self.auto_priority = auto_priority
-        self.file_metadata = file_metadata if file_metadata is not None else []
-        self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(num_demod)}
+        self.auto_priority = config.classification.auto_priority
+        self.file_metadata = list(config.audio.file_metadata)
+        self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(config.receiver.demodulators)}
         self.mismatched_freqs: dict[float, float] = {}
 
-        self.activity_logger = ActivityLogger.get_logger(activity_params,
+        self.activity_logger = ActivityLogger.get_logger(self.activity_params,
                                                         get_ctcss=self.get_matched_ctcss)
 
+        frequency_configuration = FrequencyConfiguration(
+            file_name=config.frequency_policies.file,
+            disable_lockout=config.frequency_policies.disable_lockout,
+            disable_priority=config.frequency_policies.disable_priority,
+            max_ctcss_tones=config.receiver.max_ctcss_tones,
+        )
         self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
 
-        # Create receiver object
-        self.receiver = recvr.Receiver(ask_samp_rate, num_demod, type_demod,
-                                       hw_args, freq_correction, record, play,
-                                       audio_bps, min_recording, classifier_params,
-                                       self.got_channel_activity, agc,
-                                       file_metadata=self.file_metadata,
-                                       get_priority_info=self.frequency_manager.get_priority_info,
-                                       # kept the kwarg name get_ctcss_info (see BaseTuner) even
-                                       # though it now points at get_ctcss_tones() and returns a
-                                       # list of valid tones rather than a single one.
-                                       get_ctcss_info=self.frequency_manager.get_ctcss_tones,
-                                       max_ctcss_tones=frequency_configuration.max_ctcss_tones)
+        # Create receiver object using Option B: pass specific sub-config objects
+        self.receiver = recvr.Receiver(
+            hardware_config=config.hardware,
+            receiver_config=config.receiver,
+            audio_config=config.audio,
+            gain_config=config.gains,
+            classification_config=config.classification,
+            notify_scanner=self.got_channel_activity,
+            get_priority_info=self.frequency_manager.get_priority_info,
+            get_ctcss_info=self.frequency_manager.get_ctcss_tones,
+        )
 
         # Get the hardware sample rate
         self.samp_rate = self.receiver.samp_rate
@@ -415,13 +424,15 @@ class Scanner(object):
         # Recreate baseband lockout since frequency is changing
         self.frequency_manager.set_center(self.center_freq)
 
-    def filter_and_set_gains(self, all_gains: list[dict]) -> list[dict]:
-        """Set the supported gains and return them
+    def filter_and_set_gains(self, gain_config: GainConfig) -> list[dict]:
+        """Validate, filter, and set gains from a GainConfig against hardware support.
 
         Args:
-            all_gains (list of dictionary): Supported gains in dB
+            gain_config: GainConfig instance from CLParser
+        Returns:
+            list of dicts with hardware-confirmed {name, value} entries
         """
-        self.gains = self.receiver.filter_and_set_gains(all_gains)
+        self.gains = self.receiver.filter_and_set_gains(gain_config)
         return self.gains
 
     def set_gains(self, gains: list[dict]) -> list[dict]:
@@ -573,38 +584,18 @@ async def main() -> None:
         raise SystemExit(1)
 
     # Create scanner object
-    ask_samp_rate = parser.ask_samp_rate
-    num_demod = parser.num_demod
-    type_demod = parser.type_demod
-    hw_args = parser.hw_args
-    freq_correction = parser.freq_correction
-    record = parser.record
-    frequency_configuration = parser.frequency_configuration
-    activity_params = parser.activity_params
-    play = parser.play
-    audio_bps = parser.audio_bps
-    channel_spacing = parser.channel_spacing
-    frequency_params = parser.frequency_params
-    min_recording = 0
-    max_recording = 0
-    classifier_params = parser.classifier_params
-    scanner = Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
-                        freq_correction, record, frequency_configuration,
-                        activity_params, play,
-                        audio_bps, channel_spacing, frequency_params,
-                        min_recording, max_recording,
-                        classifier_params)
+    scanner = Scanner(parser.master_config, parser.frequency_params)
 
     # Set frequency, gain, squelch, and volume
     print("\n")
-    print("Started %s at %.3f Msps" % (hw_args, scanner.samp_rate/1E6))
-    scanner.filter_and_set_gains(parser.gains)
+    print("Started %s at %.3f Msps" % (parser.master_config.hardware.args, scanner.samp_rate/1E6))
+    scanner.filter_and_set_gains(parser.master_config.gains)
     for gain in scanner.gains:
         print("gain %s at %d dB" % (gain["name"], gain["value"]))
-    scanner.set_squelch(parser.squelch_db)
-    scanner.set_volume(parser.volume_db)
+    scanner.set_squelch(parser.master_config.receiver.squelch_db)
+    scanner.set_volume(parser.master_config.audio.volume_db)
     print("%d demods of type %d at %d dB squelch and %d dB volume" % \
-        (num_demod, type_demod, scanner.squelch_db, scanner.volume_db))
+        (parser.master_config.receiver.demodulators, parser.master_config.receiver.mode, scanner.squelch_db, scanner.volume_db))
 
     # Create this empty list to allow printing to screen
     old_freqs: list[float] = []

@@ -16,7 +16,8 @@ import errors as err
 import logging
 import logging.handlers
 import traceback
-#from pathlib import Path
+from classification import ClassifierParams
+from pathlib import Path
 from os.path import realpath, dirname
 
 import _curses
@@ -98,7 +99,7 @@ class MyDisplay():
             self.stdscr, num_demod=num_demod)
 
         # Get the initial settings for GUI
-        self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.gains)
+        self.rxwin.gains = self.scanner.filter_and_set_gains(PARSER.master_config.gains)
         self.rxwin.center_freq = self.scanner.center_freq
         self.rxwin.step = self.scanner.step
         self.rxwin.steps = self.scanner.steps
@@ -107,7 +108,7 @@ class MyDisplay():
         self.rxwin.squelch_db = self.scanner.squelch_db
         self.rxwin.volume_db = self.scanner.volume_db
         self.rxwin.record = self.scanner.record
-        self.rxwin.type_demod = PARSER.type_demod
+        self.rxwin.type_demod = PARSER.master_config.receiver.mode
         self.rxwin.frequency_file_name = self.scanner.frequency_file_name
         self.rxwin.activity_type = self.scanner.activity_params.type
         # not all activity types use a dest
@@ -117,9 +118,16 @@ class MyDisplay():
             dest = None
         self.rxwin.activity_dest = dest
 
-        self.specwin.max_db = PARSER.max_db
-        self.specwin.min_db = PARSER.min_db
-        self.rxwin.classifier_params = PARSER.classifier_params
+        self.specwin.max_db = PARSER.master_config.display.max_db
+        self.specwin.min_db = PARSER.master_config.display.min_db
+        self.rxwin.classifier_params = ClassifierParams(
+            wanted={
+                'V': PARSER.master_config.classification.wanted.voice,
+                'D': PARSER.master_config.classification.wanted.data,
+                'S': PARSER.master_config.classification.wanted.skip,
+            },
+            model_file_name=PARSER.master_config.classification.model_path or Path(""),
+        )
         self.specwin.threshold_db = self.scanner.threshold_db
 
         # Update virtual representation of root screen first
@@ -152,46 +160,17 @@ class MyDisplay():
         curses.doupdate()
 
     async def init_scanner(self) -> scnr.Scanner:
-        # Create scanner object
-        ask_samp_rate = PARSER.ask_samp_rate
-        num_demod = PARSER.num_demod
-        type_demod = PARSER.type_demod
-        hw_args = PARSER.hw_args
-        record = PARSER.record
-        play = PARSER.play
-        frequency_configuration = PARSER.frequency_configuration
-        activity_params = PARSER.activity_params
-        freq_correction = PARSER.freq_correction
-        audio_bps = PARSER.audio_bps
-        channel_spacing = PARSER.channel_spacing
-
         frequency_params = PARSER.frequency_params
         frequency_params.notify_interface = self.center_freq_changed
 
-        agc = PARSER.agc
-
-        min_recording = PARSER.min_recording
-        max_recording = PARSER.max_recording
-
-        classifier_params = PARSER.classifier_params
-
-        auto_priority = PARSER.auto_priority
-        file_metadata = PARSER.file_metadata
-
-        scanner = scnr.Scanner(ask_samp_rate, num_demod, type_demod, hw_args,
-                               freq_correction, record, frequency_configuration,
-                               activity_params,
-                               play, audio_bps, channel_spacing,
-                               frequency_params, min_recording, max_recording,
-                               classifier_params, auto_priority, agc,
-                               file_metadata=file_metadata)
+        scanner = scnr.Scanner(PARSER.master_config, frequency_params)
 
         await scanner.load_frequencies()
         # Set the parameters
         scanner.set_center_freq(scanner.center_freq)
-        scanner.set_squelch(PARSER.squelch_db)
-        scanner.set_volume(PARSER.volume_db)
-        scanner.set_threshold(PARSER.threshold_db)
+        scanner.set_squelch(PARSER.master_config.receiver.squelch_db)
+        scanner.set_volume(PARSER.master_config.audio.volume_db)
+        scanner.set_threshold(PARSER.master_config.receiver.threshold_db)
 
         return scanner
 
@@ -212,7 +191,7 @@ class MyDisplay():
         # Send keystroke to RX window and update scanner if True
         if self.rxwin.proc_keyb_hard(keyb):
             # Set and update frequency
-            self.scanner.set_center_freq(self.rxwin.center_freq)
+            self.scanner.set_center_freq(int(self.rxwin.center_freq))
             self.rxwin.center_freq = self.scanner.center_freq
 
         if self.rxwin.proc_keyb_soft(keyb):
@@ -250,30 +229,31 @@ if __name__ == '__main__':
         # Do this since curses wrapper won't let parser write to screen
         PARSER = h2m_parser.CLParser()
 
-        if PARSER.log_dest != 'none':
+        log_cfg = PARSER.master_config.logging
+        if log_cfg.dest != 'none':
             log_level_map = {
                 'debug': logging.DEBUG,
                 'info': logging.INFO,
                 'warn': logging.WARNING,
                 'error': logging.ERROR
             }
-            level = log_level_map.get(PARSER.log_level, logging.WARNING)
+            level = log_level_map.get(log_cfg.level, logging.WARNING)
 
             logger.setLevel(level)
             logger.propagate = False
 
             formatter = logging.Formatter('%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 
-            if PARSER.log_dest == 'syslog':
+            if log_cfg.dest == 'syslog':
                 syslog_handler = logging.handlers.SysLogHandler(address='/dev/log')
                 syslog_handler.setFormatter(logging.Formatter('ham2mon[%(process)d]: [%(name)s] %(levelname)s: %(message)s'))
                 logger.addHandler(syslog_handler)
-            elif PARSER.log_dest == 'stderr':
+            elif log_cfg.dest == 'stderr':
                 stream_handler = logging.StreamHandler()
                 stream_handler.setFormatter(formatter)
                 logger.addHandler(stream_handler)
-            elif PARSER.log_dest == 'file':
-                log_file_path = PARSER.log_file
+            elif log_cfg.dest == 'file':
+                log_file_path = log_cfg.file
                 if not log_file_path:
                     script_dir = realpath(dirname(__file__))
                     log_file_path = '%s/ham2mon.log' % (script_dir)

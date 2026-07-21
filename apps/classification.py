@@ -68,7 +68,7 @@ class Classifier(object):
         self._proc = subprocess.Popen(
             [sys.executable, service_script.as_posix(),
              "--model", self.model_path.absolute().as_posix(),
-             "--audio_rate", str(self.audio_rate)],
+             "--audio-rate", str(self.audio_rate)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
