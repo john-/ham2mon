@@ -133,6 +133,10 @@ This application uses the [uv](https://github.com/astral-sh/uv) package manager 
       ```bash
       uv sync --extra ai-edge-litert
       ```
+    * **ONNX Runtime (for Silero VAD):** High-performance ONNX inference engine (~16MB):
+      ```bash
+      uv sync --extra onnxruntime
+      ```
     * **TensorFlow:** The legacy heavyweight runtime (~500MB+). It has a much longer startup/import time:
       ```bash
       uv sync --extra tensorflow
@@ -708,6 +712,12 @@ Modules can be tested by executing the main module directly:
 ```bash
 uv --directory apps run python scanner.py -a "rtl" -f 145
 ```
+
+### Component Users Guide
+
+`ham2mon` includes a modular component system for audio evaluation gatekeepers and transmission notification subscribers.
+
+For a list of available built-in components and detailed instructions on how to configure and use them (including model downloads and configuration examples), see the [Available Components Guide](doc/components/available_components.md).
 
 ### Component Architecture & Development
 
