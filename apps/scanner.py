@@ -27,6 +27,7 @@ from frequency_manager import (
     FrequencyConfiguration,
     FrequencyList,
     FrequencyManager,
+    TransmissionRecord,
 )
 from numpy.typing import NDArray
 from utilities import (
@@ -37,6 +38,8 @@ from utilities import (
     format_freq_mhz,
     format_timestamp,
     frequency_to_baseband,
+    wav_bytes_per_sec,
+    wav_duration_sec,
 )
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
@@ -513,15 +516,21 @@ class Scanner:
 
     def _process_completed_transmission(
             self, msg: ChannelMessage
-    ) -> tuple[ChannelMessage, None]:
+    ) -> tuple[ChannelMessage, TransmissionRecord | None]:
         """Apply keep/discard decisions to a completed tmp WAV recording.
 
         Called from got_channel_activity() AFTER msg.label and msg.priority
         have been embellished by FrequencyManager.
 
+        On success, builds an immutable TransmissionRecord capturing all
+        transmission metadata and returns it as the second element of the
+        tuple.  On discard (CTCSS mismatch, short recording, unwanted
+        classification) the record is None.
+
         Returns:
-            (msg, record): msg updated in-place with final file/classification;
-            record is None in Phase 1 (populated in Phase 2).
+            (msg, record): msg updated in-place with final file path and
+            duration_sec; record is a populated TransmissionRecord when the
+            WAV was kept, or None when discarded.
         """
 
         tmp_path = msg.wav_tmp_path
@@ -537,9 +546,11 @@ class Scanner:
             msg.detail = 'Discarded mismatched CTCSS'
             return msg, None
 
-        # 2. Minimum duration check (moved from _persist_wavfile)
-        min_size = 44 + self.config.audio.bit_depth * 1000 \
-                   * self.config.audio.min_recording_sec
+        # 2. Minimum duration check: reject recordings shorter than min_recording_sec.
+        # wav_bytes_per_sec encapsulates DEFAULT_AUDIO_RATE and bit-depth, keeping
+        # this formula consistent with the duration_sec calculation below.
+        bytes_per_sec = wav_bytes_per_sec(self.config.audio.bit_depth)
+        min_size = 44 + bytes_per_sec * self.config.audio.min_recording_sec
         if os.stat(tmp_path).st_size <= min_size:
             _delete_file(tmp_path, "short recording")
             msg.detail = 'Discarded short recording'
@@ -576,7 +587,28 @@ class Scanner:
         final_path = f'{self._wav_dir}/{"_".join(name_parts)}.wav'
         os.rename(tmp_path, final_path)
         msg.file = final_path
-        return msg, None
+
+        # Compute duration from final WAV file size via shared utility helper.
+        duration_sec = wav_duration_sec(
+            os.stat(final_path).st_size, self.config.audio.bit_depth
+        )
+        msg.duration_sec = duration_sec
+
+        record = TransmissionRecord(
+            rf=msg.rf,
+            bb_hz=msg.bb,
+            channel=msg.channel,
+            label=msg.label,
+            priority=msg.priority,
+            matched_ctcss_hz=msg.matched_ctcss,
+            signal_db=msg.signal_db,
+            classification=classification,
+            wav_path=final_path,
+            started_at=started_at,
+            duration_sec=duration_sec,
+            metadata={},
+        )
+        return msg, record
 
     async def got_channel_activity(self, msg: ChannelMessage) -> None:
         '''
@@ -598,11 +630,12 @@ class Scanner:
         msg.priority = self.frequency_manager.is_priority(msg.bb)
 
         # 2. Process recording persistence / classification SECOND
+        record: TransmissionRecord | None = None
         if msg.wav_tmp_path is not None:
-            msg, _ = self._process_completed_transmission(msg)
+            msg, record = self._process_completed_transmission(msg)
 
         logger.debug(str(msg))
-        await self.activity_logger.log(msg)
+        await self.activity_logger.log(msg, record)
 
         if self.interesting(msg):
             await self.frequency_provider.interesting_activity()
