@@ -1074,13 +1074,7 @@ class RxWindow(object):
 
         self.volume_db_field.set(f'{self.volume_db:d} ')
 
-        text = ''
-        for key in self.classifier_params.wanted.keys():
-            if self.classifier_params.wanted[key]:
-                text = text + key
-        if text == '':
-            text = str(self.record)
-        self.record_field.set(text)
+        self.record_field.set(str(self.record))
 
         text = self.demod_map[self.type_demod]
         self.type_demod_field.set(text)

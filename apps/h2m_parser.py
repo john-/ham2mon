@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 from channel_loggers import ActivityParams
-from classification import ClassifierParams
 from center_frequency_provider import FrequencyRangeParams, FrequencySingleParams, FrequencyGroup
 from frequency_manager import FrequencyConfiguration
 from config import build_config_from_dict, load_raw_yaml, resolve_config_path, MasterHam2MonConfig, ConfigError, GainConfig
@@ -69,11 +68,7 @@ CLI_OPTION_MAP: list[CliMapping] = [
                lambda v: [f.strip().lower() for f in v.split(",") if f.strip()]
                          if isinstance(v, str) else list(v)),
 
-    # Classification (with nested wanted subsection)
-    CliMapping("voice",            "classification", "voice",         bool, subsection="wanted"),
-    CliMapping("data",             "classification", "data",          bool, subsection="wanted"),
-    CliMapping("skip",             "classification", "skip",          bool, subsection="wanted"),
-    CliMapping("model_file_name",  "classification", "model_path",    Path),
+    # Scanner Options
     CliMapping("auto_priority",    "scanner",        "auto_priority", bool),
 
     # Frequency Policies
@@ -127,7 +122,6 @@ class CLParser(object):
         channel_spacing (int): Channel spacing (spectrum bin size) for identification of channels
         min_recording (float): Minimum length of a recording in seconds
         max_recording (float): Maximum length of a recording in seconds
-        classifier_params (ClassifierParams): Signal classification settings
         log_level (str): Log verbosity level
         log_dest (str): Log destination
         log_file (str): Log file path
@@ -291,18 +285,7 @@ class CLParser(object):
         parser.add_argument("--theme-file", type=str, dest="theme_file",
                           default=None, help="Curses UI theme configuration file name")
 
-        parser.add_argument("--voice", dest="voice", action="store_true", default=None,
-                          help="Record voice")
 
-        parser.add_argument("--data", dest="data", action="store_true", default=None,
-                          help="Record data")
-
-        parser.add_argument("--skip", dest="skip", action="store_true", default=None,
-                          help="Record skip")
-
-        parser.add_argument("--model", type=Path,
-                          dest="model_file_name", default=None,
-                          help="Classification model file in tflite format")
 
         parser.add_argument("--log-level", dest="log_level",
                           choices=["debug", "info", "warn", "error"], default=None,
@@ -423,10 +406,6 @@ def main():
     print("channel_spacing:     " + str(cfg.receiver.channel_spacing))
     print("min_recording:       " + str(cfg.audio.min_recording_sec))
     print("max_recording:       " + str(cfg.audio.max_recording_sec))
-    print("voice:               " + str(cfg.classification.wanted.voice))
-    print("data:                " + str(cfg.classification.wanted.data))
-    print("skip:                " + str(cfg.classification.wanted.skip))
-    print("model_file_name:     " + str(cfg.classification.model_path))
     print("auto_priority:       " + str(cfg.scanner.auto_priority))
     print("disable_lockout:     " + str(cfg.frequency_policies.disable_lockout))
     print("disable_priority:    " + str(cfg.frequency_policies.disable_priority))

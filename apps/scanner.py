@@ -5,6 +5,7 @@ Created on Fri Jul  3 13:38:36 2015
 @author: madengr
 """
 # import yaml
+import json
 import logging
 import os
 import sys
@@ -17,10 +18,12 @@ import estimate
 import h2m_parser as prsr
 import numpy as np
 import receiver as recvr
+from components.base import ChannelInfo
+from components.manager import ComponentManager
 from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from channel_loggers import ActivityLogger, ActivityParams, ChannelMessage
-from classification import ClassificationNotWanted, Classifier, ClassifierParams
 from config import GainConfig, MasterHam2MonConfig
+
 from frequency_manager import (
     ChannelFrequency,
     ChannelList,
@@ -31,7 +34,6 @@ from frequency_manager import (
 )
 from numpy.typing import NDArray
 from utilities import (
-    DEFAULT_AUDIO_RATE,
     baseband_to_bin,
     baseband_to_frequency,
     bin_to_baseband,
@@ -41,6 +43,7 @@ from utilities import (
     wav_bytes_per_sec,
     wav_duration_sec,
 )
+
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -83,7 +86,6 @@ class Scanner:
         spacing (int): granularity of frequency quantization
         min_recording (float): Minimum length of a recording in seconds
         max_recording (float): Maximum length of a recording in seconds
-        classifier_params (ClassifierParams): Parameters for channel classification
         auto_priority (bool): Automatically set priority channels
         agc (bool): Automatic gain control
 
@@ -156,20 +158,9 @@ class Scanner:
 
         self._wav_dir = config.audio.wav_dir
 
-        try:
-            self._classifier = Classifier(
-                ClassifierParams(
-                    wanted={
-                        'V': config.classification.wanted.voice,
-                        'D': config.classification.wanted.data,
-                        'S': config.classification.wanted.skip,
-                    },
-                    model_file_name=config.classification.model_path or Path(""),
-                ),
-                audio_rate=DEFAULT_AUDIO_RATE,
-            )
-        except ClassificationNotWanted:
-            self._classifier = None
+        self._component_manager = ComponentManager(config)
+        self._component_manager.start_all()
+
 
         # Create receiver object using Option B: pass specific sub-config objects
         self.receiver = recvr.Receiver(
@@ -556,14 +547,33 @@ class Scanner:
             msg.detail = 'Discarded short recording'
             return msg, None
 
-        # 3. Classification (existing Classifier, unchanged for now)
+        # 3. Component evaluation (WavGatekeeper)
         classification: str | None = None
-        if self._classifier:
-            is_wanted, classification = self._classifier.is_wanted(tmp_path)
+        comp_metadata: dict[str, object] = {}
+        if self._component_manager.has_wav_component():
+
+            info = ChannelInfo(
+                rf=msg.rf,
+                bb_hz=msg.bb,
+                channel=msg.channel,
+                label=msg.label,
+                priority=msg.priority,
+                matched_ctcss_hz=msg.matched_ctcss,
+                signal_db=msg.signal_db,
+                timestamp=msg.started_at or time.time(),
+                wav_tmp_path=tmp_path,
+            )
+            res = self._component_manager.process_wav(tmp_path, info)
+            classification = res.classification
             msg.classification = classification
-            if not is_wanted:
+            if res.detail:
+                msg.detail = res.detail
+            if res.metadata:
+                comp_metadata = res.metadata
+            if not res.keep:
                 _delete_file(tmp_path, "unwanted classification")
-                msg.detail = 'Discarded unwanted classification'
+                if not msg.detail:
+                    msg.detail = "Discarded unwanted classification"
                 return msg, None
 
         # 4. Build final filename using Scanner's config & shared helpers
@@ -594,6 +604,23 @@ class Scanner:
         )
         msg.duration_sec = duration_sec
 
+        # Write sidecar JSON file if component returned metadata
+        if comp_metadata:
+            sidecar_path = os.path.splitext(final_path)[0] + ".json"
+            try:
+                sidecar_payload = {
+                    "rf": msg.rf,
+                    "channel": msg.channel,
+                    "label": msg.label,
+                    "classification": classification,
+                    "duration_sec": duration_sec,
+                    "metadata": comp_metadata,
+                }
+                with open(sidecar_path, "w", encoding="utf-8") as sf:
+                    json.dump(sidecar_payload, sf, indent=2)
+            except Exception as se:
+                logger.warning("Failed to write sidecar JSON %s: %s", sidecar_path, se)
+
         record = TransmissionRecord(
             rf=msg.rf,
             bb_hz=msg.bb,
@@ -606,7 +633,7 @@ class Scanner:
             wav_path=final_path,
             started_at=started_at,
             duration_sec=duration_sec,
-            metadata={},
+            metadata=comp_metadata,
         )
         return msg, record
 
@@ -639,6 +666,8 @@ class Scanner:
 
         if self.interesting(msg):
             await self.frequency_provider.interesting_activity()
+            if record is not None:
+                await self._component_manager.dispatch_transmission(record)
 
         await self.priority_assess(msg.rf, msg.classification)
 
@@ -700,9 +729,9 @@ class Scanner:
                 self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': None, 'mode': 'add'})
 
     async def clean_up(self) -> None:
-        if self._classifier:
-            self._classifier.clean_up()
+        self._component_manager.stop_all()
         # cleanup terminating all demodulators
+
         for idx, demod in enumerate(self.receiver.demodulators):
             curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
             avg_signal = int(np.round(curr_sum / curr_count)) if curr_count > 0 else None

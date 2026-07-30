@@ -16,7 +16,6 @@ import errors as err
 import logging
 import logging.handlers
 import traceback
-from classification import ClassifierParams
 from pathlib import Path
 from os.path import realpath, dirname
 
@@ -120,14 +119,6 @@ class MyDisplay():
 
         self.specwin.max_db = PARSER.master_config.display.max_db
         self.specwin.min_db = PARSER.master_config.display.min_db
-        self.rxwin.classifier_params = ClassifierParams(
-            wanted={
-                'V': PARSER.master_config.classification.wanted.voice,
-                'D': PARSER.master_config.classification.wanted.data,
-                'S': PARSER.master_config.classification.wanted.skip,
-            },
-            model_file_name=PARSER.master_config.classification.model_path or Path(""),
-        )
         self.specwin.threshold_db = self.scanner.threshold_db
 
         # Update virtual representation of root screen first

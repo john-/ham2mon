@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 from config import (
     AudioConfig,
-    ClassificationConfig,
     GainConfig,
     HardwareConfig,
     MasterHam2MonConfig,
@@ -189,12 +188,33 @@ def make_test_scanner(
     scanner = Scanner.__new__(Scanner)
     scanner.config = config
     scanner._wav_dir = wav_dir
-    scanner._classifier = classifier
+    from components.manager import ComponentManager
+
+
+    scanner._component_manager = ComponentManager(config)
+    if classifier is not None:
+        from components.base import ComponentResult
+
+        mock_gatekeeper = MagicMock()
+
+        def _process(path: str, info: object) -> ComponentResult:
+            wanted, cls_label = classifier.is_wanted(path)
+            return ComponentResult(
+                keep=wanted,
+                classification=cls_label,
+                metadata={},
+                detail=None if wanted else "Discarded unwanted classification",
+            )
+
+        mock_gatekeeper.process.side_effect = _process
+        scanner._component_manager.wav_gatekeeper = mock_gatekeeper
+
     scanner.frequency_manager = MagicMock()
     scanner.frequency_manager.get_priority_info = (
         get_priority_info if get_priority_info is not None else (lambda bb: (None, False))
     )
     return scanner
+
 
 
 @pytest.fixture
