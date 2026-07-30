@@ -212,6 +212,41 @@ def test_persist_filename_short_recording() -> None:
     assert not os.path.exists(temp_file)
 
 
+def test_persist_filename_zero_recording_header_only_discard() -> None:
+    """Test that when min_recording=0.0, a 44-byte file (WAV header only, 0 audio bytes) is discarded."""
+    tuner = MockTuner(None, lambda msg: None, file_metadata=[])
+    tuner.min_recording = 0.0  # Default value; min_size = 44 + 8 * 1000 * 0.0 = 44 bytes
+
+    temp_file = "wav/tmp/460.1250_20260719_163000.000.wav"
+    with open(temp_file, "wb") as f:
+        f.write(b"RIFF" + b"\x00" * 40)  # Exactly 44 bytes
+
+    tuner.set_temp_file(temp_file)
+
+    msg = tuner._persist_wavfile(rf_center_freq=460000000)
+    assert msg is not None
+    assert msg.file is None
+    assert msg.detail == "Discarded short recording"
+    assert not os.path.exists(temp_file)
+
+
+def test_persist_filename_zero_recording_with_audio_retained() -> None:
+    """Test that when min_recording=0.0, a file with >44 bytes (has audio payload) is retained."""
+    tuner = MockTuner(None, lambda msg: None, file_metadata=[])
+    tuner.min_recording = 0.0  # Default value; min_size = 44 bytes
+
+    temp_file = "wav/tmp/460.1250_20260719_163000.000.wav"
+    with open(temp_file, "wb") as f:
+        f.write(b"RIFF" + b"\x00" * 100)  # 104 bytes (> 44 bytes)
+
+    tuner.set_temp_file(temp_file)
+
+    msg = tuner._persist_wavfile(rf_center_freq=460000000)
+    assert msg is not None
+    assert msg.file is not None
+    assert msg.detail is None
+
+
 def test_persist_filename_unwanted_classification() -> None:
     # Test discarding when classification indicates it is unwanted (using 'S' for static/noise)
     class MockClassifier:

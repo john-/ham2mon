@@ -261,4 +261,3 @@ def test_all_config_fields_have_cli_mapping_or_are_allowlisted():
                             assert (section_name, sub_f.name) in mapped, f"{section_name}.{sub_f.name} (nested) has no CLI mapping"
                     continue
                 assert (section_name, f.name) in mapped, f"{section_name}.{f.name} has no CLI mapping"
-
