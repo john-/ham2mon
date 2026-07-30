@@ -149,6 +149,33 @@ async def test_min_recording_duration_discard(receiver_factory, tmp_path):
     assert len(wav_files) == 0, f"Expected 0 WAV files in {rx._wav_dir}, found {wav_files}."
     assert len(tmp_files) == 0, f"Short recording was not discarded/cleaned, found in tmp/: {tmp_files}"
 
+
+@pytest.mark.asyncio
+async def test_zero_min_recording_empty_wav_discard(receiver_factory, tmp_path):
+    """Test that when min_recording=0.0, an empty WAV file (header only) is discarded as short recording."""
+    iq_file = tmp_path / "signal_empty.iq"
+    iq_data = np.zeros(100_000, dtype=np.complex64)  # Quiet IQ noise
+    iq_data.tofile(iq_file)
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        center_freq=144_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.0,
+        record=True
+    )
+
+    # Assign tuner and immediately de-tune without audio payload
+    await rx.demodulators[0].set_center_freq(50_000, 144_000_000)
+    await rx.demodulators[0].set_center_freq(0, 144_000_000)
+
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    tmp_files = glob.glob(os.path.join(rx._wav_dir, "tmp", "*.wav"))
+    assert len(wav_files) == 0, f"Expected 0 WAV files in {rx._wav_dir}, found {wav_files}."
+    assert len(tmp_files) == 0, f"0-byte audio WAV was not discarded from tmp/: {tmp_files}"
+
 @pytest.mark.asyncio
 async def test_multi_channel_separation(receiver_factory, tmp_path):
     """Test processing multiple parallel channels simultaneously."""

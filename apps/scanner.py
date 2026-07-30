@@ -491,7 +491,7 @@ class Scanner(object):
 
         # NOTE: msg is a mutable dataclass reference. Log it before passing to activity_logger
         # so that any in-place field mutation by a logger does not silently alter the debug record.
-        logger.debug(msg)
+        logger.debug(str(msg))
 
         await self.activity_logger.log(msg)  # off events or nothing to note
 

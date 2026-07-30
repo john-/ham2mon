@@ -231,6 +231,7 @@ if __name__ == '__main__':
 
         log_cfg = PARSER.master_config.logging
         if log_cfg.dest != 'none':
+            logging.raiseExceptions = False
             log_level_map = {
                 'debug': logging.DEBUG,
                 'info': logging.INFO,

@@ -8,6 +8,7 @@ TODO: Save function
 from dataclasses import dataclass, field
 from typing import Optional, TypeAlias  # TypeAlias needed for python < 3.12
 from pathlib import Path
+import os
 import yaml
 import logging
 from utilities import frequency_to_baseband
@@ -212,6 +213,29 @@ class ChannelMessage(FrequencyInfo):
     detail: Optional[str] = None
     signal_db: Optional[int] = None
     matched_ctcss: float | None = field(default=None)  # CTCSS tone that matched and opened squelch for this transmission
+
+    def __str__(self) -> str:
+        rf_mhz = f"{self.rf:.3f} MHz" if self.rf else "?"
+        ch_str = f"Ch {self.channel}"
+        state_str = f"{self.state.upper():<3}"
+
+        parts = [f"{ch_str}: {state_str}", rf_mhz]
+
+        if self.label:
+            parts.append(f"[{self.label}]")
+
+        if self.file:
+            parts.append(f"Saved: {os.path.basename(self.file)}")
+        elif self.detail:
+            parts.append(self.detail)
+
+        if self.classification:
+            parts.append(f"({self.classification})")
+
+        if self.signal_db is not None:
+            parts.append(f"[{self.signal_db} dB]")
+
+        return " | ".join(parts)
 
 
 FrequencyList: TypeAlias = list[ConfigFrequency]
