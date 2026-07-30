@@ -1,8 +1,10 @@
-import pytest
-import os
-import glob
 import asyncio
+import glob
+import os
+from unittest.mock import MagicMock
+
 import numpy as np
+import pytest
 from signal_generator import generate_test_iq
 
 @pytest.mark.asyncio
@@ -410,6 +412,7 @@ async def test_volume_clamping(receiver_factory, tmp_path):
 
 from config import GainConfig
 
+
 @pytest.mark.asyncio
 async def test_file_mode_hardware_guards(receiver_factory, tmp_path):
     """Test that hardware getters and gain setters handle file source gracefully."""
@@ -563,8 +566,8 @@ async def test_fft_spectrum_probe(receiver_factory, tmp_path):
 @pytest.mark.asyncio
 async def test_ctcss_match(receiver_factory, tmp_path, monkeypatch):
     """Test that NBFM squelch opens when the correct CTCSS tone is present and saves a WAV file."""
-    from receiver import Receiver
     from gnuradio import blocks, gr
+    from receiver import Receiver
 
     # Throttled file source for real-time timing verification
     def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
@@ -637,7 +640,8 @@ async def test_ctcss_match(receiver_factory, tmp_path, monkeypatch):
 async def test_ctcss_matching_logic_mocked():
     """Unit test for the sticky CTCSS matching and mismatch logic using mocked states."""
     import time
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
+
     from demodulators.BaseTuner import BaseTuner
 
     # Create a dummy object representing BaseTuner
@@ -664,7 +668,7 @@ async def test_ctcss_matching_logic_mocked():
         squelch.unmuted.return_value = False
 
     self.notify_scanner = AsyncMock()
-    self._persist_wavfile = MagicMock(return_value=None)
+    self._close_recording = MagicMock(return_value=None)
     self.freq_xlating_fir_filter_ccc = MagicMock()
     self.get_ctcss_info = None
 
@@ -787,9 +791,8 @@ async def test_ctcss_mismatch(receiver_factory, tmp_path):
 @pytest.mark.asyncio
 async def test_ctcss_mismatch_suppression(tmp_path):
     """Test that a mismatched CTCSS channel gets detuned and suppressed from reassignment."""
-    from scanner import Scanner
-    from frequency_manager import FrequencyManager, FrequencyConfiguration
-    from scanner import ChannelFrequency
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+    from scanner import ChannelFrequency, Scanner
 
     class MockScanner(Scanner):
         def __init__(self, config, channel_spacing):
@@ -1145,8 +1148,8 @@ async def test_ctcss_dynamic_routing(receiver_factory, tmp_path):
 @pytest.mark.asyncio
 async def test_ctcss_wbfm_match(receiver_factory, tmp_path, monkeypatch):
     """Test that WBFM squelch opens when the correct CTCSS tone is present and saves a WAV file."""
-    from receiver import Receiver
     from gnuradio import blocks, gr
+    from receiver import Receiver
 
     # Throttled file source for real-time timing verification
     def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
@@ -1219,8 +1222,9 @@ async def test_ctcss_wbfm_match(receiver_factory, tmp_path, monkeypatch):
 async def test_ctcss_recording_contamination(receiver_factory, tmp_path, monkeypatch):
     """Test that the tail of a previous CTCSS transmission does not contaminate a subsequent recording."""
     import wave
-    from receiver import Receiver
+
     from gnuradio import blocks, gr
+    from receiver import Receiver
 
     # Monkeypatch Receiver._init_file_source to add a throttle block so we can tune/detune in real-time
     def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
@@ -1339,8 +1343,8 @@ async def test_ctcss_sustained_match(receiver_factory, tmp_path, monkeypatch):
     Test that CTCSS tone detection remains active/sustained throughout the transmission,
     and correctly goes back to False when the tone stops, using a throttled real-time source.
     """
-    from receiver import Receiver
     from gnuradio import blocks, gr
+    from receiver import Receiver
 
     # Monkeypatch Receiver._init_file_source to add a throttle block for real-time simulation
     def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
@@ -1434,8 +1438,8 @@ async def test_ctcss_adjacent_tone_rejection(receiver_factory, tmp_path, monkeyp
     standard tone (e.g. 97.4 Hz, just 2.6 Hz away) is transmitted, proving the frequency
     selectivity of the larger Goertzel filter.
     """
-    from receiver import Receiver
     from gnuradio import blocks, gr
+    from receiver import Receiver
 
     # Throttled file source for real-time timing verification
     def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
@@ -1512,8 +1516,8 @@ async def test_ctcss_matched_tone_filename_metadata(receiver_factory, tmp_path, 
     Test that if 'ctcss' is included in file_metadata, the matched tone is appended
     to the persisted filename (e.g. _100.0Hz.wav) and returned in ChannelMessage.
     """
-    from receiver import Receiver
     from gnuradio import blocks, gr
+    from receiver import Receiver
 
     def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
         file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
@@ -1562,6 +1566,13 @@ async def test_ctcss_matched_tone_filename_metadata(receiver_factory, tmp_path, 
     messages = []
     async def custom_notify(msg):
         if msg is not None:
+            if msg.wav_tmp_path is not None:
+                from config import MasterHam2MonConfig
+                from conftest import make_test_scanner
+                cfg = MasterHam2MonConfig()
+                cfg.audio.file_metadata = ["ctcss"]
+                scanner = make_test_scanner(config=cfg, wav_dir=rx._wav_dir)
+                scanner._process_completed_transmission(msg)
             messages.append(msg)
     demod.notify_scanner = custom_notify
 

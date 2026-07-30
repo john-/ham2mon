@@ -1,37 +1,35 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Created on Fri Jul  3 13:38:36 2015
 
 @author: madengr
 """
 
-from gnuradio import gr  # type: ignore
-from gnuradio import blocks
-from gnuradio import fft
-from gnuradio.fft import window  # type: ignore
-from gnuradio import audio
-import os
 import glob
-import errno
-import time
-import numpy as np
 import logging
-from pathlib import Path
-from typing import Callable
+import os
+from collections.abc import Callable
 
-from demodulators.NBFM import TunerDemodNBFM
-from demodulators.AM import TunerDemodAM
-from demodulators.WBFM import TunerDemodWBFM
-from classification import ClassificationNotWanted, Classifier, ClassifierParams
+import numpy as np
 from config import (
-    GainConfig,
     GAIN_FIELDS,
+    AudioConfig,
+    GainConfig,
     HardwareConfig,
     ReceiverConfig,
-    AudioConfig,
-    ClassificationConfig,
 )
+from demodulators.AM import TunerDemodAM
+from demodulators.NBFM import TunerDemodNBFM
+from demodulators.WBFM import TunerDemodWBFM
+from gnuradio import (
+    audio,
+    blocks,
+    fft,
+    gr,  # type: ignore
+)
+from gnuradio.fft import window  # type: ignore
+
+from utilities import DEFAULT_AUDIO_RATE
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -66,9 +64,7 @@ class Receiver(gr.top_block):
                  receiver_config: ReceiverConfig,
                  audio_config: AudioConfig,
                  gain_config: GainConfig,
-                 classification_config: ClassificationConfig,
                  notify_scanner: Callable,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
                  get_ctcss_info: Callable[[float], list[float]] | None = None,
                  source_type: str = "hardware", source_file: str | None = None,
                  wav_dir: str = "wav", center_freq: int = int(144E6)):
@@ -99,7 +95,7 @@ class Receiver(gr.top_block):
         self.squelch_db = -60
         self.volume_db = 0
         self.gains: list[dict] = []
-        audio_rate = 8000
+        audio_rate = DEFAULT_AUDIO_RATE
 
         # Extract configuration attributes from sub-domain config objects
         ask_samp_rate = int(hardware_config.sample_rate)
@@ -109,8 +105,6 @@ class Receiver(gr.top_block):
         freq_correction = hardware_config.freq_correction
         record = audio_config.record
         play = audio_config.play
-        audio_bps = audio_config.bit_depth
-        min_recording = audio_config.min_recording_sec
         agc = gain_config.agc
 
         # Setup the USRP source, or use the USRP sim
@@ -169,26 +163,6 @@ class Receiver(gr.top_block):
                      fft_vcc, complex_to_mag_squared,
                      integrate_ff, self.probe_signal_vf)
 
-        classifier_params = ClassifierParams(
-            wanted={
-                'V': classification_config.wanted.voice,
-                'D': classification_config.wanted.data,
-                'S': classification_config.wanted.skip,
-            },
-            model_file_name=classification_config.model_path or Path(""),
-        )
-        classifier: Classifier | None
-        try:
-          classifier = Classifier(classifier_params, audio_rate)
-        except ClassificationNotWanted:
-            classifier = None
-        except Exception as error:
-            msg = f'Could not create classifier ({error})'
-            logger.error(msg)
-            raise Exception(msg)
-
-        self.file_metadata = list(audio_config.file_metadata)
-        self.get_priority_info = get_priority_info
         self.get_ctcss_info = get_ctcss_info
         self.max_ctcss_tones = receiver_config.max_ctcss_tones
 
@@ -201,36 +175,21 @@ class Receiver(gr.top_block):
             if type_demod == 0:
                 self.demodulators.append(TunerDemodNBFM(self.samp_rate,
                                                         audio_rate, record,
-                                                        audio_bps,
-                                                        min_recording,
-                                                        classifier,
                                                         notify_scanner,
-                                                        file_metadata=self.file_metadata,
-                                                        get_priority_info=self.get_priority_info,
                                                         get_ctcss_info=self.get_ctcss_info,
                                                         max_ctcss_tones=self.max_ctcss_tones,
                                                         wav_dir=self._wav_dir))
             elif type_demod == 1:
                 self.demodulators.append(TunerDemodAM(self.samp_rate,
                                                       audio_rate, record,
-                                                      audio_bps,
-                                                      min_recording,
-                                                      classifier,
                                                       notify_scanner,
-                                                      file_metadata=self.file_metadata,
-                                                      get_priority_info=self.get_priority_info,
                                                       get_ctcss_info=self.get_ctcss_info,
                                                       max_ctcss_tones=self.max_ctcss_tones,
                                                       wav_dir=self._wav_dir))
             elif type_demod == 2:
                 self.demodulators.append(TunerDemodWBFM(self.samp_rate,
                                                         audio_rate, record,
-                                                        audio_bps,
-                                                        min_recording,
-                                                        classifier,
                                                         notify_scanner,
-                                                        file_metadata=self.file_metadata,
-                                                        get_priority_info=self.get_priority_info,
                                                         get_ctcss_info=self.get_ctcss_info,
                                                         max_ctcss_tones=self.max_ctcss_tones,
                                                         wav_dir=self._wav_dir))

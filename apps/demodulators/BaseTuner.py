@@ -2,24 +2,21 @@
 @author: madengr
 """
 
-from gnuradio import gr  # type: ignore
-from gnuradio import filter as grfilter
-from gnuradio import analog
-from gnuradio import blocks
-from gnuradio.fft import window
-from asyncio import Task
-
-import time
-import threading
-import numpy as np
-import os
 import logging
-from typing import Callable
-
+import threading
+import time
+from asyncio import Task
+from collections.abc import Callable
 
 from frequency_manager import ChannelMessage
-from utilities import baseband_to_frequency
-from classification import Classifier
+from gnuradio import (
+    analog,
+    blocks,
+    gr,  # type: ignore
+)
+from gnuradio import filter as grfilter
+from gnuradio.fft import window
+from utilities import baseband_to_frequency, format_freq_mhz, format_timestamp
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -34,16 +31,13 @@ class BaseTuner(gr.hier_block2):
     _channel_lock = threading.Lock()
     _channel_counter: int = 0  # incremented for each new demodulator
 
-    def __init__(self, classify: Classifier | None, notify_scanner: Callable,
-                 file_metadata: list[str] | None = None,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+    def __init__(self, notify_scanner: Callable,
                  get_ctcss_info: Callable[[float], list[float]] | None = None,
                  wav_dir: str = "wav", audio_rate: int = 8000,
                  max_ctcss_tones: int = 0) -> None:
         with BaseTuner._channel_lock:
             BaseTuner._channel_counter += 1
             self.channel = BaseTuner._channel_counter
-        self.classify = classify
         self.notify_scanner = notify_scanner
         self.last_heard: float = 0.0
         self.time_stamp: float = 0.0
@@ -51,8 +45,6 @@ class BaseTuner(gr.hier_block2):
         self.log_task: Task | None = None
         self.center_freq: int
 
-        self.file_metadata: list[str] = file_metadata if file_metadata is not None else []
-        self.get_priority_info = get_priority_info
         # NOTE: kept the name `get_ctcss_info` (rather than renaming to
         # get_ctcss_tones) to avoid cascading the rename through receiver.py,
         # the NBFM/AM/WBFM subclasses, and all their test fixtures. The
@@ -157,9 +149,8 @@ class BaseTuner(gr.hier_block2):
                 # Fallback safety belt: if CTCSS was enabled and checked, but never matched before we tuned away,
                 # discard the recording. The primary check is performed in scanner.py.
                 self.discard_current = True
-            # Move file from tmp directory if it is long enough
-            # and classified appropriately
-            results = self._persist_wavfile(rf_center_freq, avg_signal=avg_signal)   # also get activity logging information
+            # Close active WAV recording if recording
+            results = self._close_recording(rf_center_freq, avg_signal=avg_signal)   # also get activity logging information
         else:
             self.discard_current = False
             if self.center_freq != 0:
@@ -213,9 +204,9 @@ class BaseTuner(gr.hier_block2):
                                                          channel=int(self.channel)))
 
     def set_file_name(self, rf_center_freq: int) -> None:
-        self.tstamp_str = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "{:.3f}".format(self.time_stamp % 1)[1:]
-        file_freq = (rf_center_freq + self.center_freq) / 1E6
-        self.freq_str = f"{np.round(file_freq, 4):.4f}"
+        rf_freq = baseband_to_frequency(self.center_freq, rf_center_freq) * 1e6
+        self.tstamp_str = format_timestamp(self.time_stamp)
+        self.freq_str = format_freq_mhz(rf_freq)
         self.file_name = f'{self.wav_dir}/tmp/{self.freq_str}_{self.tstamp_str}.wav'
 
     def connect_wav_sink(self, src_block) -> None:
@@ -233,7 +224,12 @@ class BaseTuner(gr.hier_block2):
             null_sink = blocks.null_sink(gr.sizeof_float)
             self.connect(src_block, null_sink)
 
-    def _persist_wavfile(self, rf_center_freq: int, avg_signal: int | None = None) -> ChannelMessage | None:
+    def _close_recording(self, rf_center_freq: int, avg_signal: int | None = None) -> ChannelMessage | None:
+        """Close the active WAV file and return a pending ChannelMessage.
+
+        Returns None if no recording was in progress.
+        Returns a ChannelMessage with state='off', wav_tmp_path, and started_at set.
+        """
         if not self.file_name:
             return None
 
@@ -245,64 +241,18 @@ class BaseTuner(gr.hier_block2):
 
         self.blocks_wavfile_sink.close()
 
-        xmit_msg = ChannelMessage(state='off',
-                                rf=float(baseband_to_frequency(self.center_freq, rf_center_freq)),
-                                bb=int(self.center_freq),
-                                channel=int(self.channel),
-                                signal_db=int(avg_signal) if avg_signal is not None else None,
-                                matched_ctcss=float(self.matched_ctcss_tone) if self.matched_ctcss_tone is not None else None)
+        return ChannelMessage(
+            state='off',
+            rf=float(baseband_to_frequency(self.center_freq, rf_center_freq)),
+            bb=int(self.center_freq),
+            channel=int(self.channel),
+            signal_db=int(avg_signal) if avg_signal is not None else None,
+            matched_ctcss=float(self.matched_ctcss_tone) if self.matched_ctcss_tone is not None else None,
+            wav_tmp_path=self.file_name,
+            discard=self.discard_current,
+            started_at=self.time_stamp,
+        )
 
-        # Discard the file if flagged as mismatched CTCSS
-        if self.discard_current:
-            self.discard_current = False
-            if self.file_name and os.path.exists(self.file_name):
-                try:
-                    os.unlink(self.file_name)
-                except OSError as e:
-                    logger.warning("Failed to delete mismatched CTCSS file %s: %s", self.file_name, e)
-            xmit_msg.detail = 'Discarded mismatched CTCSS'
-            return xmit_msg
-
-        min_size = 44 + self.audio_bps * 1000 * self.min_recording
-        if os.stat(self.file_name).st_size <= min_size:
-            try:
-                os.unlink(self.file_name)
-            except OSError as e:
-                logger.warning("Failed to delete short recording file %s: %s", self.file_name, e)
-            xmit_msg.detail = 'Discarded short recording'
-            return xmit_msg
-
-        # Classify if enabled — determines whether file is wanted and adds label
-        classification: str | None = None
-        if self.classify:
-            is_wanted, classification = self.classify.is_wanted(self.file_name)
-            xmit_msg.classification = classification
-            if not is_wanted:
-                try:
-                    os.unlink(self.file_name)
-                except OSError as e:
-                    logger.warning("Failed to delete unwanted classification file %s: %s", self.file_name, e)
-                xmit_msg.detail = 'Discarded unwanted classification'
-                return xmit_msg
-
-        # Build final filename from stored components
-        name_parts: list[str] = [self.freq_str]
-        if classification is not None:
-            name_parts.append(classification)
-        if 'priority' in self.file_metadata and self.get_priority_info:
-            priority, is_auto = self.get_priority_info(self.center_freq)
-            if priority is not None:
-                name_parts.append("PA" if is_auto else f"P{priority}")
-        if 'strength' in self.file_metadata and avg_signal is not None:
-            name_parts.append(f"{avg_signal}dB")
-        if 'ctcss' in self.file_metadata and self.matched_ctcss_tone is not None:
-            name_parts.append(f"{self.matched_ctcss_tone:.1f}Hz")
-        name_parts.append(self.tstamp_str)
-
-        new_name = f'{self.wav_dir}/{"_".join(name_parts)}.wav'
-        os.rename(self.file_name, new_name)
-        xmit_msg.file = new_name
-        return xmit_msg
 
     def set_squelch(self, squelch_db: int) -> None:
         """Sets the threshold for both squelches

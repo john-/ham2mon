@@ -1,17 +1,20 @@
-import pytest
-import os
-import shutil
 import glob
+import os
 import re
+import shutil
+from collections.abc import Callable
+from typing import Any
+from unittest.mock import MagicMock
+
 import numpy as np
-from typing import Callable
-from classification import ClassifierParams
+import pytest
 from config import (
-    HardwareConfig,
-    ReceiverConfig,
     AudioConfig,
-    GainConfig,
     ClassificationConfig,
+    GainConfig,
+    HardwareConfig,
+    MasterHam2MonConfig,
+    ReceiverConfig,
 )
 from receiver import Receiver
 
@@ -48,7 +51,7 @@ def plot_spectrogram(iq_filepath, png_filepath, sample_rate=1.0e6):
         import matplotlib
         matplotlib.use('Agg')  # Headless mode
         import matplotlib.pyplot as plt
-        import scipy.signal as signal
+        from scipy import signal
     except ImportError as e:
         print(f"\n[Warning] Could not import matplotlib or scipy. Spectrogram plot skipped. Error: {e}")
         return
@@ -172,12 +175,38 @@ def test_wav_dir(tmp_path, request):
     if wav_dir.exists():
         shutil.rmtree(wav_dir)
 
+def make_test_scanner(
+    config: MasterHam2MonConfig | None = None,
+    wav_dir: str = "wav",
+    classifier: Any = None,
+    get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
+) -> Any:
+    """Factory function to build a minimal uninitialized Scanner for testing."""
+    from scanner import Scanner
+    if config is None:
+        config = MasterHam2MonConfig()
+    config.audio.wav_dir = wav_dir
+    scanner = Scanner.__new__(Scanner)
+    scanner.config = config
+    scanner._wav_dir = wav_dir
+    scanner._classifier = classifier
+    scanner.frequency_manager = MagicMock()
+    scanner.frequency_manager.get_priority_info = (
+        get_priority_info if get_priority_info is not None else (lambda bb: (None, False))
+    )
+    return scanner
+
+
 @pytest.fixture
 def mock_notify_scanner():
-    """No-op callback for scanner notifications."""
-    async def _noop(msg):
-        pass
-    return _noop
+    """Notify scanner callback that processes completed transmissions."""
+    async def _notify(msg):
+        if msg is not None and msg.wav_tmp_path is not None:
+            wav_dir = os.path.dirname(os.path.dirname(msg.wav_tmp_path)) or "wav"
+            scanner = make_test_scanner(wav_dir=wav_dir)
+            scanner._process_completed_transmission(msg)
+    return _notify
+
 
 @pytest.fixture
 def mock_get_priority_info():
@@ -186,8 +215,9 @@ def mock_get_priority_info():
         return None, False
     return _stub
 
+
 @pytest.fixture
-def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
+def receiver_factory(test_wav_dir, mock_get_priority_info):
     """Factory fixture to instantiate Receiver with a mock file source."""
     created_receivers = []
 
@@ -220,16 +250,25 @@ def receiver_factory(test_wav_dir, mock_notify_scanner, mock_get_priority_info):
             file_metadata=file_metadata if file_metadata is not None else [],
         )
         gain_config = GainConfig(agc=agc)
-        class_config = ClassificationConfig()
+
+        async def _notify(msg):
+            if msg is not None and msg.wav_tmp_path is not None:
+                cfg = MasterHam2MonConfig(
+                    hardware=hw_config,
+                    receiver=recv_config,
+                    audio=audio_config,
+                    gains=gain_config,
+                )
+                scanner = make_test_scanner(config=cfg, wav_dir=test_wav_dir)
+                scanner._process_completed_transmission(msg)
+
 
         rx = Receiver(
             hardware_config=hw_config,
             receiver_config=recv_config,
             audio_config=audio_config,
             gain_config=gain_config,
-            classification_config=class_config,
-            notify_scanner=mock_notify_scanner,
-            get_priority_info=mock_get_priority_info,
+            notify_scanner=_notify,
             get_ctcss_info=get_ctcss_info,
             source_type="file",
             source_file=source_file,

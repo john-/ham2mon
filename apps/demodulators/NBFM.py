@@ -2,16 +2,19 @@
 @author: madengr
 """
 
-from gnuradio import gr  # type: ignore
-from gnuradio import filter as grfilter # Don't redefine Python's filter()
+from collections.abc import Callable
+
+from gnuradio import (
+    analog,
+    blocks,
+    gr,  # type: ignore
+)
+from gnuradio import filter as grfilter  # Don't redefine Python's filter()
 from gnuradio.fft import window  # type: ignore
-from gnuradio import analog
 from gnuradio.filter import pfb  # type: ignore
-from gnuradio import blocks
-from typing import Callable
 
 from demodulators.BaseTuner import BaseTuner
-from classification import Classifier
+
 
 class TunerDemodNBFM(BaseTuner):
     """Tuner, demodulator, and recorder chain for narrow band FM demodulation
@@ -34,7 +37,7 @@ class TunerDemodNBFM(BaseTuner):
     This 8 ksps audio stream may be added to other demod streams
     The audio is run through an additional blocking squelch at -200 dB
     This stops the sample flow so squelched audio is not recorded to file
-    The wav file sink stores 8-bit samples (default/grainy quality but compact)
+    The wav file sink stores 16-bit samples
     Default demodulator center frequency is 0 Hz
     This is desired since hardware DC removal reduces sensitivity at 0 Hz
     NBFM demod of LO leakage will just be 0 amplitude
@@ -43,8 +46,6 @@ class TunerDemodNBFM(BaseTuner):
         samp_rate (int): Input baseband sample rate in sps (1E6 minimum)
         audio_rate (int): Output audio sample rate in sps (8 kHz minimum)
         record (bool): Record audio to file if True
-        audio_bps (int): Audio bit depth in bps (bits/samples)
-        min_recording (float): Minimum length of a recording in seconds
 
     Attributes:
         center_freq (int): Baseband center frequency in Hz
@@ -53,10 +54,7 @@ class TunerDemodNBFM(BaseTuner):
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, samp_rate: int, audio_rate: int, record: bool,
-                 audio_bps: int, min_recording: float, classify: Classifier | None,
                  notify_scanner: Callable,
-                 file_metadata: list[str] | None = None,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
                  get_ctcss_info: Callable[[float], list[float]] | None = None,
                  max_ctcss_tones: int = 0,
                  wav_dir: str = "wav"):
@@ -64,8 +62,7 @@ class TunerDemodNBFM(BaseTuner):
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, notify_scanner, file_metadata=file_metadata,
-                         get_priority_info=get_priority_info, get_ctcss_info=get_ctcss_info,
+        super().__init__(notify_scanner, get_ctcss_info=get_ctcss_info,
                          wav_dir=wav_dir, audio_rate=audio_rate, max_ctcss_tones=max_ctcss_tones)
 
         # Default values
@@ -74,8 +71,6 @@ class TunerDemodNBFM(BaseTuner):
         self.quad_demod_gain = 0.050
         self.file_name = None
         self.record = record
-        self.audio_bps = audio_bps
-        self.min_recording = min_recording
 
         # Decimation values for four stages of decimation
         decims = (5, int(samp_rate/1E6))

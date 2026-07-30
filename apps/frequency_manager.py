@@ -5,12 +5,13 @@ TODO: Save function
 """
 
 
-from dataclasses import dataclass, field
-from typing import Optional, TypeAlias  # TypeAlias needed for python < 3.12
-from pathlib import Path
-import os
-import yaml
 import logging
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TypeAlias  # TypeAlias needed for python < 3.12
+
+import yaml
 from utilities import frequency_to_baseband
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
@@ -208,11 +209,14 @@ class ChannelMessage(FrequencyInfo):
     rf: float
     bb: int
     channel: int    # demodulator number (0-N)
-    file: Optional[str] = None
-    classification: Optional[str] = None
-    detail: Optional[str] = None
-    signal_db: Optional[int] = None
+    file: str | None = None
+    classification: str | None = None
+    detail: str | None = None
+    signal_db: int | None = None
     matched_ctcss: float | None = field(default=None)  # CTCSS tone that matched and opened squelch for this transmission
+    wav_tmp_path: str | None = None
+    discard: bool = False
+    started_at: float | None = None
 
     def __str__(self) -> str:
         rf_mhz = f"{self.rf:.3f} MHz" if self.rf else "?"
@@ -247,7 +251,7 @@ class FrequencyConfiguration:
     '''
     Used to load the freqency configuration file.
     '''
-    file_name: Optional[Path] = None
+    file_name: Path | None = None
     disable_lockout: bool
     disable_priority: bool
     max_ctcss_tones: int = 0

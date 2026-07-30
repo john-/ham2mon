@@ -64,6 +64,7 @@ CLI_OPTION_MAP: list[CliMapping] = [
     CliMapping("audio_bps",       "audio", "bit_depth",         int),
     CliMapping("min_recording",   "audio", "min_recording_sec", float),
     CliMapping("max_recording",   "audio", "max_recording_sec", float),
+    CliMapping("wav_dir",         "audio", "wav_dir",           str),
     CliMapping("file_metadata",   "audio", "file_metadata",
                lambda v: [f.strip().lower() for f in v.split(",") if f.strip()]
                          if isinstance(v, str) else list(v)),
@@ -81,8 +82,9 @@ CLI_OPTION_MAP: list[CliMapping] = [
     CliMapping("disable_priority",    "frequency_policies", "disable_priority", bool),
 
     # Display
-    CliMapping("max_db", "display", "max_db", float),
-    CliMapping("min_db", "display", "min_db", float),
+    CliMapping("max_db",     "display", "max_db",     float),
+    CliMapping("min_db",     "display", "min_db",     float),
+    CliMapping("theme_file", "display", "theme_file", str),
 
     # Channel Activity
     CliMapping("activity_type",     "channel_activity", "type",         str),
@@ -282,6 +284,12 @@ class CLParser(object):
 
         parser.add_argument("--max-recording", type=float, dest="max_recording",
                           default=None, help="Maximum length of a recording in seconds")
+
+        parser.add_argument("--wav-dir", type=str, dest="wav_dir",
+                          default=None, help="Directory where recorded audio WAV files are saved")
+
+        parser.add_argument("--theme-file", type=str, dest="theme_file",
+                          default=None, help="Spectrum visualizer display theme file name")
 
         parser.add_argument("--voice", dest="voice", action="store_true", default=None,
                           help="Record voice")

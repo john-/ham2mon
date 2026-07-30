@@ -2,17 +2,19 @@
 @author: madengr
 """
 
-from gnuradio import gr  # type: ignore
-from gnuradio import filter as grfilter # Don't redefine Python's filter()
+from collections.abc import Callable
+
+from gnuradio import (
+    analog,
+    blocks,
+    gr,  # type: ignore
+)
+from gnuradio import filter as grfilter  # Don't redefine Python's filter()
 from gnuradio.fft import window  # type: ignore
-from gnuradio import analog
 from gnuradio.filter import pfb  # type: ignore
-from gnuradio import blocks
-import logging
-from typing import Callable
 
 from demodulators.BaseTuner import BaseTuner
-from classification import Classifier
+
 
 class TunerDemodWBFM(BaseTuner):
     """Tuner, demodulator, and recorder chain for wide band FM demodulation
@@ -22,13 +24,12 @@ class TunerDemodWBFM(BaseTuner):
     Frequency translating FIR filter tunes from -samp_rate/2 to +samp_rate/2
     The following sample rates assume 1 Msps input
     First two stages of decimation are 4 each for a total of 16
-    Thus first two stages brings 1 Msps down to 40 ksps
+    Thus first two stages brings 1 Msps down to 62.5 ksps
     The third stage decimates by int(samp_rate/1E6)
-    Thus output rate will vary from 40 ksps to 79.99 ksps
     The channel is filtered to 25.0 KHz bandwidth followed by squelch
     The squelch is non-blocking since samples will be added with other demods
     The quadrature demod is followed by a fourth stage of decimation by 4
-    This brings the sample rate down to 8 ksps to 15.98 ksps
+    This brings the sample rate down to roughly 15.6 ksps for a 1 Msps input
     The audio is low-pass filtered to 3.5 kHz bandwidth
     The polyphase resampler resamples by samp_rate/(decims[1] * decims[0]**3)
     Audio rate is configurable at 8 or 16 ksps
@@ -38,37 +39,25 @@ class TunerDemodWBFM(BaseTuner):
     This 8/16 ksps audio stream may be added to other demod streams
     The audio is run through an additional blocking squelch at -200 dB
     This stops the sample flow so squelched audio is not recorded to file
-    The wav file sink stores 8-bit samples (default/grainy quality but compact)
+    The wav file sink stores 16-bit samples
     Default demodulator center frequency is 0 Hz
     This is desired since hardware DC removal reduces sensitivity at 0 Hz
     WBFM demod of LO leakage will just be 0 amplitude
 
     Args:
-        samp_rate (float): Input baseband sample rate in sps (1E6 minimum)
-        audio_rate (float): Output audio sample rate in sps (8 kHz minimum)
+        samp_rate (int): Input baseband sample rate in sps (1E6 minimum)
+        audio_rate (int): Output audio sample rate in sps (8 kHz minimum)
         record (bool): Record audio to file if True
-        audio_bps (int): Audio bit depth in bps (bits/samples)
-        min_file_size (int): Minimum saved wav file size
-        ctcss_filter (bool): Filter on set CTCSS tone if True
-        ctcss_tone_block (bool): Prevent CTCSS tones in audio output if True
 
     Attributes:
-        center_freq (float): Baseband center frequency in Hz
+        center_freq (int): Baseband center frequency in Hz
         record (bool): Record audio to file if True
         time_stamp (int): Time stamp of demodulator start for timing run length
-        ctcss_filter (bool): Filter on set CTCSS tone if True
-        ctcss_tone (float): CTCSS tone frequency for filter in Hz
-        ctcss_index (int): CTCSS tone list index for selected tone
-        ctcss_tone_block (bool): Prevent CTCSS tones in audio output if True
-        ctcss_level (float): CTCSS tone level required to break squelch (open)
     """
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, samp_rate: int, audio_rate: int, record: bool,
-                 audio_bps: int, min_recording: float, classify: Classifier | None,
                  notify_scanner: Callable,
-                 file_metadata: list[str] | None = None,
-                 get_priority_info: Callable[[int], tuple[int | None, bool]] | None = None,
                  get_ctcss_info: Callable[[float], list[float]] | None = None,
                  max_ctcss_tones: int = 0,
                  wav_dir: str = "wav"):
@@ -77,8 +66,7 @@ class TunerDemodWBFM(BaseTuner):
                                 gr.io_signature(1, 1, gr.sizeof_gr_complex),
                                 gr.io_signature(1, 1, gr.sizeof_float))
 
-        super().__init__(classify, notify_scanner, file_metadata=file_metadata,
-                         get_priority_info=get_priority_info, get_ctcss_info=get_ctcss_info,
+        super().__init__(notify_scanner, get_ctcss_info=get_ctcss_info,
                          wav_dir=wav_dir, audio_rate=audio_rate, max_ctcss_tones=max_ctcss_tones)
 
 
@@ -89,25 +77,23 @@ class TunerDemodWBFM(BaseTuner):
         self.quad_demod_gain = 0.050
         self.file_name = None
         self.record = record
-        self.audio_bps = audio_bps
-        self.min_recording = min_recording
 
 
         # Decimation values for four stages of decimation
         decims = (4, int(samp_rate/1E6))
 
-        # Low pass filter taps for decimation by 5
+        # Low pass filter taps for decimation by 4
         low_pass_filter_taps_0 = \
             grfilter.firdes.low_pass(1, 1, 0.090, 0.010,
                     window.WIN_HAMMING)
 
-        # Frequency translating FIR filter decimating by 5
+        # Frequency translating FIR filter decimating by 4
         self.freq_xlating_fir_filter_ccc = \
             grfilter.freq_xlating_fir_filter_ccc(decims[0],
                                                  low_pass_filter_taps_0,
                                                  self.center_freq, samp_rate)
 
-        # FIR filter decimating by 5
+        # FIR filter decimating by 4
         fir_filter_ccc_0 = grfilter.fir_filter_ccc(decims[0],
                                                    low_pass_filter_taps_0)
 
@@ -135,7 +121,8 @@ class TunerDemodWBFM(BaseTuner):
                         samp_rate/(decims[1] * decims[0]**2),\
                         3.5E3, 500, window.WIN_HAMMING)
 
-        # FIR filter decimating by 5 from 40-79.9 ksps to 8-15.98 ksps
+        # FIR filter decimating by 4 from 62.5 ksps to roughly 15.6 ksps
+        # (rates shown for a 1 Msps input)
         fir_filter_fff_0 = grfilter.fir_filter_fff(decims[0],
                                                    low_pass_filter_taps_2)
 

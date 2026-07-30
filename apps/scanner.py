@@ -1,27 +1,43 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Created on Fri Jul  3 13:38:36 2015
 
 @author: madengr
 """
-import receiver as recvr
-import estimate
-import h2m_parser as prsr
-import time
-import numpy as np
-import sys
-import threading
 # import yaml
 import logging
-from numpy.typing import NDArray
-from channel_loggers import ActivityParams, ChannelMessage, ActivityLogger
-from classification import ClassifierParams
-from center_frequency_provider import FrequencyGroup, FrequencyProvider
-from frequency_manager import FrequencyManager, FrequencyList, FrequencyConfiguration, ChannelFrequency, ChannelList
-from utilities import baseband_to_frequency, frequency_to_baseband, baseband_to_bin, bin_to_baseband
+import os
+import sys
+import threading
+import time
 from dataclasses import dataclass, field
-from config import MasterHam2MonConfig, GainConfig
+from pathlib import Path
+
+import estimate
+import h2m_parser as prsr
+import numpy as np
+import receiver as recvr
+from center_frequency_provider import FrequencyGroup, FrequencyProvider
+from channel_loggers import ActivityLogger, ActivityParams, ChannelMessage
+from classification import ClassificationNotWanted, Classifier, ClassifierParams
+from config import GainConfig, MasterHam2MonConfig
+from frequency_manager import (
+    ChannelFrequency,
+    ChannelList,
+    FrequencyConfiguration,
+    FrequencyList,
+    FrequencyManager,
+)
+from numpy.typing import NDArray
+from utilities import (
+    DEFAULT_AUDIO_RATE,
+    baseband_to_bin,
+    baseband_to_frequency,
+    bin_to_baseband,
+    format_freq_mhz,
+    format_timestamp,
+    frequency_to_baseband,
+)
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -31,7 +47,16 @@ class ClassificationCount:
     D: int = field(default=0)
     S: int = field(default=0)
 
-class Scanner(object):
+def _delete_file(path: str | None, context: str = "") -> None:
+    if path and os.path.exists(path):
+        try:
+            os.unlink(path)
+        except OSError as e:
+            msg_prefix = f"Failed to delete {context} file" if context else "Failed to delete file"
+            logger.warning("%s %s: %s", msg_prefix, path, e)
+
+
+class Scanner:
     """Scanner that controls receiver
 
     Estimates channels from FFT power spectrum that are above threshold
@@ -94,7 +119,7 @@ class Scanner(object):
         self.audio_bps = config.audio.bit_depth
         self.samp_rate: int
         self.frequency_params = frequency_params
-        self.spectrum: NDArray = np.empty(0)
+        self.spectrum: NDArray[np.float64] = np.empty(0)
         self.frequencies: FrequencyList = []    # needed for the UI
         self.channels: ChannelList = []
         self._channels: ChannelList = []
@@ -126,16 +151,32 @@ class Scanner(object):
         )
         self.frequency_manager = FrequencyManager(frequency_configuration, self.channel_spacing)
 
+        self._wav_dir = config.audio.wav_dir
+
+        try:
+            self._classifier = Classifier(
+                ClassifierParams(
+                    wanted={
+                        'V': config.classification.wanted.voice,
+                        'D': config.classification.wanted.data,
+                        'S': config.classification.wanted.skip,
+                    },
+                    model_file_name=config.classification.model_path or Path(""),
+                ),
+                audio_rate=DEFAULT_AUDIO_RATE,
+            )
+        except ClassificationNotWanted:
+            self._classifier = None
+
         # Create receiver object using Option B: pass specific sub-config objects
         self.receiver = recvr.Receiver(
             hardware_config=config.hardware,
             receiver_config=config.receiver,
             audio_config=config.audio,
             gain_config=config.gains,
-            classification_config=config.classification,
             notify_scanner=self.got_channel_activity,
-            get_priority_info=self.frequency_manager.get_priority_info,
             get_ctcss_info=self.frequency_manager.get_ctcss_tones,
+            wav_dir=self._wav_dir,
         )
 
         # Get the hardware sample rate
@@ -226,7 +267,7 @@ class Scanner(object):
         # logging.debug(f'{self._channels=}')
 
 
-    def _get_raw_channels(self) -> NDArray:
+    def _get_raw_channels(self) -> NDArray[np.float64]:
         # Grab the FFT data, set threshold, and estimate baseband channels
         self.spectrum = self.receiver.probe_signal_vf.level()
         threshold = 10**(self.threshold_db/10.0)
@@ -470,30 +511,98 @@ class Scanner(object):
         """
         self.threshold_db = threshold_db
 
+    def _process_completed_transmission(
+            self, msg: ChannelMessage
+    ) -> tuple[ChannelMessage, None]:
+        """Apply keep/discard decisions to a completed tmp WAV recording.
+
+        Called from got_channel_activity() AFTER msg.label and msg.priority
+        have been embellished by FrequencyManager.
+
+        Returns:
+            (msg, record): msg updated in-place with final file/classification;
+            record is None in Phase 1 (populated in Phase 2).
+        """
+
+        tmp_path = msg.wav_tmp_path
+        msg.wav_tmp_path = None   # consumed
+
+        if not tmp_path or not os.path.exists(tmp_path):
+            return msg, None
+
+        # 1. Pre-flagged discard (CTCSS mismatch set by BaseTuner)
+        if msg.discard:
+            msg.discard = False
+            _delete_file(tmp_path, "mismatched CTCSS")
+            msg.detail = 'Discarded mismatched CTCSS'
+            return msg, None
+
+        # 2. Minimum duration check (moved from _persist_wavfile)
+        min_size = 44 + self.config.audio.bit_depth * 1000 \
+                   * self.config.audio.min_recording_sec
+        if os.stat(tmp_path).st_size <= min_size:
+            _delete_file(tmp_path, "short recording")
+            msg.detail = 'Discarded short recording'
+            return msg, None
+
+        # 3. Classification (existing Classifier, unchanged for now)
+        classification: str | None = None
+        if self._classifier:
+            is_wanted, classification = self._classifier.is_wanted(tmp_path)
+            msg.classification = classification
+            if not is_wanted:
+                _delete_file(tmp_path, "unwanted classification")
+                msg.detail = 'Discarded unwanted classification'
+                return msg, None
+
+        # 4. Build final filename using Scanner's config & shared helpers
+        freq_str = format_freq_mhz(msg.rf)
+        started_at = msg.started_at or time.time()
+        tstamp_str = format_timestamp(started_at)
+
+        name_parts = [freq_str]
+        if classification:
+            name_parts.append(classification)
+        if 'priority' in self.config.audio.file_metadata:
+            priority, is_auto = self.frequency_manager.get_priority_info(msg.bb)
+            if priority is not None:
+                name_parts.append("PA" if is_auto else f"P{priority}")
+        if 'strength' in self.config.audio.file_metadata and msg.signal_db is not None:
+            name_parts.append(f"{msg.signal_db}dB")
+        if 'ctcss' in self.config.audio.file_metadata and msg.matched_ctcss is not None:
+            name_parts.append(f"{msg.matched_ctcss:.1f}Hz")
+        name_parts.append(tstamp_str)
+
+        final_path = f'{self._wav_dir}/{"_".join(name_parts)}.wav'
+        os.rename(tmp_path, final_path)
+        msg.file = final_path
+        return msg, None
+
     async def got_channel_activity(self, msg: ChannelMessage) -> None:
         '''
         This callback is to let the demodulators inform us about a
         transmission.
 
-        1. Log the activity via the currently configured channel logger
-        2. If the channel is interesting, let the frequency provider know
-            - It will hold the current center frequency open a bit longer
-        3. assess if the channel should be an auto priority channel
+        1. Embellish metadata FIRST (label/priority)
+        2. Process recording persistence / classification SECOND
+        3. Log activity via channel logger
+        4. If channel is interesting, notify frequency provider
+        5. Assess if channel should be auto-priority
         '''
 
         if msg is None:
             return
 
-        # embellish the message with frequency information
+        # 1. Embellish metadata FIRST so label/priority are present for persistence & classification
         msg.label = self.frequency_manager.get_label(msg.rf, msg.matched_ctcss)
+        msg.priority = self.frequency_manager.is_priority(msg.bb)
 
-        msg.priority = self.frequency_manager.is_priority(msg.bb)   # TODO: is_priority only takes base band frequency
+        # 2. Process recording persistence / classification SECOND
+        if msg.wav_tmp_path is not None:
+            msg, _ = self._process_completed_transmission(msg)
 
-        # NOTE: msg is a mutable dataclass reference. Log it before passing to activity_logger
-        # so that any in-place field mutation by a logger does not silently alter the debug record.
         logger.debug(str(msg))
-
-        await self.activity_logger.log(msg)  # off events or nothing to note
+        await self.activity_logger.log(msg)
 
         if self.interesting(msg):
             await self.frequency_provider.interesting_activity()
@@ -526,7 +635,7 @@ class Scanner(object):
         self.receiver.stop()
         self.receiver.wait()
 
-    async def priority_assess(self, freq: float, classification: str) -> None:
+    async def priority_assess(self, freq: float, classification: str | None) -> None:
         '''
         Track classification of transmisions and use the ratio of wanted/unwanted to
         set the priority.
@@ -558,6 +667,8 @@ class Scanner(object):
                 self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': None, 'mode': 'add'})
 
     async def clean_up(self) -> None:
+        if self._classifier:
+            self._classifier.clean_up()
         # cleanup terminating all demodulators
         for idx, demod in enumerate(self.receiver.demodulators):
             curr_sum, curr_count = self._demod_signal_stats.get(idx, (0.0, 0))
