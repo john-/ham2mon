@@ -300,9 +300,12 @@ options:
                         Minimum length of a recording in seconds
   --max-recording MAX_RECORDING
                         Maximum length of a recording in seconds
+  --wav-dir WAV_DIR     Directory where recorded audio WAV files are saved
+  --theme-file THEME_FILE
+                        Curses UI theme configuration file name
   --voice               Record voice
-  --data                Record voice
-  --skip                Record voice
+  --data                Record data
+  --skip                Record skip
   --model MODEL_FILE_NAME
                         Classification model file in tflite format
   --log-level {debug,info,warn,error}
