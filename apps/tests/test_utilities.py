@@ -1,5 +1,53 @@
 import numpy as np
-from utilities import baseband_to_bin, bin_to_baseband, build_column_edges, index_to_column
+from utilities import (
+    DEFAULT_AUDIO_RATE,
+    WAV_HEADER_BYTES,
+    baseband_to_bin,
+    bin_to_baseband,
+    build_column_edges,
+    index_to_column,
+    wav_bytes_per_sec,
+    wav_duration_sec,
+)
+
+
+def test_wav_bytes_per_sec_standard() -> None:
+    """16-bit mono at DEFAULT_AUDIO_RATE should yield 16000 bytes/sec."""
+    assert wav_bytes_per_sec(16) == DEFAULT_AUDIO_RATE * 2
+    assert wav_bytes_per_sec(16) == 16_000
+
+
+def test_wav_bytes_per_sec_8bit() -> None:
+    """8-bit mono at DEFAULT_AUDIO_RATE should yield 8000 bytes/sec."""
+    assert wav_bytes_per_sec(8) == DEFAULT_AUDIO_RATE * 1
+    assert wav_bytes_per_sec(8) == 8_000
+
+
+def test_wav_duration_sec_exact() -> None:
+    """file_size = header + N seconds of 16-bit audio should return exactly N seconds."""
+    bps = wav_bytes_per_sec(16)  # 16000
+    for seconds in [1, 2, 10]:
+        file_size = WAV_HEADER_BYTES + bps * seconds
+        assert wav_duration_sec(file_size, 16) == seconds
+
+
+def test_wav_duration_sec_empty_file() -> None:
+    """A file containing only the WAV header (no audio data) must return 0.0."""
+    assert wav_duration_sec(WAV_HEADER_BYTES, 16) == 0.0
+
+
+def test_wav_duration_sec_smaller_than_header() -> None:
+    """Files smaller than the header are clamped to 0.0, not negative."""
+    assert wav_duration_sec(0, 16) == 0.0
+    assert wav_duration_sec(WAV_HEADER_BYTES - 1, 16) == 0.0
+
+
+def test_wav_duration_sec_fractional() -> None:
+    """Fractional durations should be computed correctly."""
+    bps = wav_bytes_per_sec(16)  # 16000
+    half_second_size = WAV_HEADER_BYTES + bps // 2
+    assert wav_duration_sec(half_second_size, 16) == 0.5
+
 
 def test_baseband_to_bin_center_and_edges() -> None:
     # center of spectrum is bb=0

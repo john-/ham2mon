@@ -1,8 +1,16 @@
-import pytest
 import asyncio
 from unittest.mock import MagicMock
-from channel_loggers import ActivityParams, FixedField, JsonToServer, ActivityLogger, NoOp
-from frequency_manager import ChannelMessage
+
+import pytest
+from channel_loggers import (
+    ActivityLogger,
+    ActivityParams,
+    FixedField,
+    JsonToServer,
+    NoOp,
+)
+from frequency_manager import ChannelMessage, TransmissionRecord
+
 
 @pytest.mark.asyncio
 async def test_fixed_field_logger(tmp_path):
@@ -62,7 +70,7 @@ async def test_json_to_server_logger():
 
     # Mock requests post directly on the instance's requests object
     mock_post = MagicMock()
-    setattr(logger.requests, "post", mock_post)
+    logger.requests.post = mock_post
 
     msg = ChannelMessage(
         state="on",
@@ -94,10 +102,11 @@ class SpyLogger(ActivityLogger):
         self.interval = params.interval
         self.logged_messages = []
 
-    async def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None,
+                  record: TransmissionRecord | None = None) -> None:
         if msg is None:
             return
-        await super().log(msg)
+        await super().log(msg, record)
         self.logged_messages.append(msg)
         self.handle_channel_state(msg)
 

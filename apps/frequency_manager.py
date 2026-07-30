@@ -217,6 +217,8 @@ class ChannelMessage(FrequencyInfo):
     wav_tmp_path: str | None = None
     discard: bool = False
     started_at: float | None = None
+    duration_sec: float | None = None
+    """Duration in seconds, populated by Scanner after the final WAV file is written."""
 
     def __str__(self) -> str:
         rf_mhz = f"{self.rf:.3f} MHz" if self.rf else "?"
@@ -240,6 +242,58 @@ class ChannelMessage(FrequencyInfo):
             parts.append(f"[{self.signal_db} dB]")
 
         return " | ".join(parts)
+
+
+@dataclass(frozen=True, kw_only=True)
+class TransmissionRecord:
+    """Immutable snapshot of a completed, kept transmission.
+
+    Built by Scanner._process_completed_transmission() after os.rename() succeeds
+    and passed to ActivityLogger.log() alongside the updated ChannelMessage.
+
+    Attributes:
+        rf: RF centre frequency in MHz (e.g. 460.1250).
+        bb_hz:  Baseband offset from SDR centre in Hz.
+        channel: Demodulator index (0-N).
+        label: Frequency label from frequency-policy file, or None.
+        priority: Numeric priority level, or None.
+        matched_ctcss_hz: Matched CTCSS tone in Hz, or None.
+        signal_db: Average signal strength in dB, or None.
+        classification: Classifier result code (e.g. 'V', 'D', 'S'), or None.
+        wav_path: Final absolute path to the saved WAV file.
+        started_at: Unix timestamp when the transmission started.
+        duration_sec: Duration of the transmission in seconds.
+        metadata: Free-form dict populated by Phase 4 TransmissionComponent processors
+            (e.g. transcription text, classifier confidence scores). Empty by default.
+    """
+    rf: float
+    bb_hz: int
+    channel: int
+    label: str | None
+    priority: int | None
+    matched_ctcss_hz: float | None
+    signal_db: int | None
+    classification: str | None
+    wav_path: str
+    started_at: float
+    duration_sec: float
+    metadata: dict = field(default_factory=dict)  # type: ignore[reportGeneralTypeIssues]
+    """Free-form metadata populated by TransmissionComponent processors in Phase 4
+    (e.g. transcription text, classifier confidence scores)."""
+
+
+    def __str__(self) -> str:
+        """Return a concise human-readable summary of the transmission."""
+        parts = [f"{self.rf:.4f} MHz", f"{self.duration_sec:.1f}s"]
+        if self.label:
+            parts.append(f"[{self.label}]")
+        if self.priority is not None:
+            parts.append(f"P{self.priority}")
+        if self.classification:
+            parts.append(self.classification)
+        if self.matched_ctcss_hz is not None:
+            parts.append(f"{self.matched_ctcss_hz:.1f}Hz")
+        return " ".join(parts)
 
 
 FrequencyList: TypeAlias = list[ConfigFrequency]

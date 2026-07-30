@@ -9,14 +9,47 @@ from typing import overload
 import numpy as np
 from numpy.typing import NDArray
 
-
 DEFAULT_AUDIO_RATE: int = 8000
+"""Sample rate (Hz) used when writing audio WAV files (mono PCM, decimated from SDR rate)."""
+
+WAV_HEADER_BYTES: int = 44
+"""Size of a standard PCM WAV file header in bytes."""
+
+
+def wav_bytes_per_sec(bit_depth: int) -> int:
+    """Return bytes per second for a mono PCM WAV file recorded at DEFAULT_AUDIO_RATE.
+
+    Args:
+        bit_depth: Sample bit depth (e.g. 16 for 16-bit PCM).
+
+    Returns:
+        Bytes per second of audio data (header not included).
+    """
+    return DEFAULT_AUDIO_RATE * (bit_depth // 8)
+
+
+def wav_duration_sec(file_size: int, bit_depth: int) -> float:
+    """Return duration in seconds for a mono PCM WAV file given its total size on disk.
+
+    Subtracts the standard WAV_HEADER_BYTES (44) before dividing by bytes-per-second.
+    Returns 0.0 if the file is smaller than or equal to the header (empty recording).
+
+    Args:
+        file_size: Total file size in bytes, as returned by os.stat().st_size.
+        bit_depth: Sample bit depth (e.g. 16 for 16-bit PCM).
+
+    Returns:
+        Duration in seconds, clamped to >= 0.0.
+    """
+    bps = wav_bytes_per_sec(bit_depth)
+    if bps <= 0:
+        return 0.0
+    return max(0.0, (file_size - WAV_HEADER_BYTES) / bps)
 
 
 def format_freq_mhz(rf_mhz: float) -> str:
     """Format RF frequency in MHz to MHz string with 4 decimal places (e.g. 460.125 -> '460.1250')."""
     return f"{np.round(rf_mhz, 4):.4f}"
-
 
 
 def format_timestamp(timestamp: float) -> str:

@@ -1,14 +1,15 @@
 '''
 Log channel activity in various formats and provide channel activity to scanner.
 '''
-import logging
-import datetime
-from frequency_manager import ChannelMessage
-from abc import ABC
-from dataclasses import dataclass, asdict
-from importlib import import_module
 import asyncio
-from typing import Callable
+import datetime
+import logging
+from abc import ABC
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from importlib import import_module
+
+from frequency_manager import ChannelMessage, TransmissionRecord
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -33,12 +34,16 @@ class ActivityLogger(ABC):
         self.params = params
         self.get_ctcss = get_ctcss  # optional callback: bb_freq -> matched ctcss tone or None
 
-    async def log(self, msg: ChannelMessage | None) -> None:
-        '''
-        Abstract method to log an event.  Also provide message to scanner
-        with receiver details (files created and/or classified)
+    async def log(self, msg: ChannelMessage | None,
+                  record: TransmissionRecord | None = None) -> None:
+        '''Abstract method to log a channel event.
 
-        Overridden in each child class for specific loggers
+        ``msg`` carries the channel state and embellished metadata (label,
+        priority, file, classification, etc.).  ``record`` is populated only
+        when a WAV file was successfully kept; it is ``None`` for non-off
+        events and for discarded transmissions.
+
+        Overridden in each subclass for format-specific logging.
         '''
         if msg is None:
             return
@@ -109,7 +114,8 @@ class NoOp(ActivityLogger):
 
         self.interval: int = 0
 
-    async def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None,
+                  record: TransmissionRecord | None = None) -> None:
         if msg is None:
             return
 
@@ -126,7 +132,8 @@ class FixedField(ActivityLogger):
         self.file_name = params.dest
         self.interval = params.interval
 
-    async def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None,
+                  record: TransmissionRecord | None = None) -> None:
         if msg is None:
             return
 
@@ -158,7 +165,8 @@ class JsonToServer(ActivityLogger):
         self.requests = import_module('requests')
         # urllib3 log suppression is configured at application startup in ham2mon.py
 
-    async def log(self, msg: ChannelMessage | None) -> None:
+    async def log(self, msg: ChannelMessage | None,
+                  record: TransmissionRecord | None = None) -> None:
         if msg is None:
             return
 
