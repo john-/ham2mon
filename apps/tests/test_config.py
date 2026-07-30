@@ -16,6 +16,47 @@ def test_default_config_build():
     assert config.hardware.sample_rate == 4.0e6
     assert config.receiver.demodulators == 4
     assert config.audio.bit_depth == 16
+    assert config.scanner.quiet_timeout == 12
+    assert config.scanner.active_timeout == 20
+    assert config.scanner.auto_priority is False
+
+
+def test_scanner_config_custom_override(tmp_path: Path):
+    model_file = tmp_path / "test.tflite"
+    model_file.touch()
+
+    config = build_config_from_dict({
+        "scanner": {
+            "quiet_timeout": 5,
+            "active_timeout": 30,
+            "auto_priority": True,
+        },
+        "classification": {
+            "model_path": model_file,
+        }
+    })
+    assert config.scanner.quiet_timeout == 5
+    assert config.scanner.active_timeout == 30
+    assert config.scanner.auto_priority is True
+
+
+def test_scanner_config_non_dict_fallback():
+    """Non-dict scanner entry (e.g. null in YAML) falls back defensively to ScannerConfig defaults."""
+    config = build_config_from_dict({"scanner": None})
+    assert config.scanner.quiet_timeout == 12
+
+
+def test_auto_priority_warning_when_disable_priority_set(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    model_file = tmp_path / "test.tflite"
+    model_file.touch()
+
+    with caplog.at_level("WARNING"):
+        _ = build_config_from_dict({
+            "scanner": {"auto_priority": True},
+            "classification": {"model_path": model_file},
+            "frequency_policies": {"disable_priority": True},
+        })
+    assert "disable_priority is True" in caplog.text
 
 
 def test_auto_priority_cascades_voice(tmp_path: Path):
@@ -23,11 +64,14 @@ def test_auto_priority_cascades_voice(tmp_path: Path):
     model_file.touch()
 
     config = build_config_from_dict({
+        "scanner": {
+            "auto_priority": True
+        },
         "classification": {
             "model_path": model_file,
-            "auto_priority": True
         }
     })
+    assert config.scanner.auto_priority is True
     assert config.classification.wanted.voice is True
     assert config.audio.record is True
 

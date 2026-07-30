@@ -138,7 +138,7 @@ class Scanner:
         self.hang_time: float = 1.0
         self.max_recording = config.audio.max_recording_sec
         self.xmit_stats: dict[float, ClassificationCount] = {}
-        self.auto_priority = config.classification.auto_priority
+        self.auto_priority = config.scanner.auto_priority
         self.file_metadata = list(config.audio.file_metadata)
         self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(config.receiver.demodulators)}
         self.mismatched_freqs: dict[float, float] = {}

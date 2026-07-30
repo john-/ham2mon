@@ -2,11 +2,14 @@
 Typed configuration models and centralized validation for ham2mon.
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, List, Optional
 
 import yaml
+
+logger = logging.getLogger(f"ham2mon.{__name__}")
 
 
 class ConfigError(Exception):
@@ -112,6 +115,15 @@ GAIN_FIELDS: list[tuple[str, str]] = [
 
 
 @dataclass(kw_only=True)
+class ScannerConfig:
+    """Scanner loop timing and priority-promotion behavior."""
+
+    quiet_timeout: int = 12
+    active_timeout: int = 20
+    auto_priority: bool = False
+
+
+@dataclass(kw_only=True)
 class ReceiverConfig:
     """Receiver DSP, demodulator, squelch, and channel timeout settings."""
 
@@ -120,8 +132,6 @@ class ReceiverConfig:
     squelch_db: int = -60
     threshold_db: int = 10
     channel_spacing: int = 5000
-    quiet_timeout: int = 12
-    active_timeout: int = 20
     max_ctcss_tones: int = 0
 
     def __post_init__(self):
@@ -170,17 +180,12 @@ class WantedFlags:
 
 @dataclass(kw_only=True)
 class ClassificationConfig:
-    """Signal classification model path, wanted flag mappings, and auto-priority settings."""
+    """Signal classification model path and wanted flag mappings."""
 
     model_path: Optional[Path] = None
     wanted: WantedFlags = field(default_factory=WantedFlags)
-    auto_priority: bool = False
 
     def __post_init__(self):
-        # Auto_priority forces voice
-        if self.auto_priority:
-            self.wanted.voice = True
-
         # Classification requires a valid model file on disk
         if self.wanted.voice or self.wanted.data or self.wanted.skip:
             if not self.model_path:
@@ -256,6 +261,7 @@ class MasterHam2MonConfig:
 
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     gains: GainConfig = field(default_factory=GainConfig)
+    scanner: ScannerConfig = field(default_factory=ScannerConfig)
     receiver: ReceiverConfig = field(default_factory=ReceiverConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     classification: ClassificationConfig = field(default_factory=ClassificationConfig)
@@ -265,6 +271,15 @@ class MasterHam2MonConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     def __post_init__(self):
+        if self.scanner.auto_priority:
+            self.classification.wanted.voice = True
+
+        if self.scanner.auto_priority and self.frequency_policies.disable_priority:
+            logger.warning(
+                "scanner.auto_priority is enabled, but frequency_policies.disable_priority is True. "
+                "Auto-promoted priority channels will be ignored by frequency manager."
+            )
+
         # Classification forces audio recording
         if (
             self.classification.wanted.voice
@@ -272,6 +287,7 @@ class MasterHam2MonConfig:
             or self.classification.wanted.skip
         ):
             self.audio.record = True
+            self.classification.__post_init__()
 
 
 def load_raw_yaml(yaml_path: Path | str) -> dict[str, object]:
@@ -339,6 +355,11 @@ def build_config_from_dict(raw: dict[str, object]) -> MasterHam2MonConfig:
             gains_data["if_gain"] = val
     gains = GainConfig(**gains_data)
 
+    scanner_data = raw.get("scanner", {})
+    scanner = (
+        ScannerConfig(**scanner_data) if isinstance(scanner_data, dict) else ScannerConfig()
+    )
+
     recv_data = raw.get("receiver", {})
     receiver = (
         ReceiverConfig(**recv_data) if isinstance(recv_data, dict) else ReceiverConfig()
@@ -397,6 +418,7 @@ def build_config_from_dict(raw: dict[str, object]) -> MasterHam2MonConfig:
     return MasterHam2MonConfig(
         hardware=hardware,
         gains=gains,
+        scanner=scanner,
         receiver=receiver,
         audio=audio,
         classification=classification,

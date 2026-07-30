@@ -53,8 +53,8 @@ CLI_OPTION_MAP: list[CliMapping] = [
     CliMapping("squelch_db",      "receiver", "squelch_db",     int),
     CliMapping("threshold_db",    "receiver", "threshold_db",   int),
     CliMapping("channel_spacing", "receiver", "channel_spacing",int),
-    CliMapping("quiet_timeout",   "receiver", "quiet_timeout",  int),
-    CliMapping("active_timeout",  "receiver", "active_timeout", int),
+    CliMapping("quiet_timeout",   "scanner",  "quiet_timeout",  int),
+    CliMapping("active_timeout",  "scanner",  "active_timeout", int),
     CliMapping("max_ctcss_tones", "receiver", "max_ctcss_tones",int),
 
     # Audio
@@ -74,7 +74,7 @@ CLI_OPTION_MAP: list[CliMapping] = [
     CliMapping("data",             "classification", "data",          bool, subsection="wanted"),
     CliMapping("skip",             "classification", "skip",          bool, subsection="wanted"),
     CliMapping("model_file_name",  "classification", "model_path",    Path),
-    CliMapping("auto_priority",    "classification", "auto_priority", bool),
+    CliMapping("auto_priority",    "scanner",        "auto_priority", bool),
 
     # Frequency Policies
     CliMapping("frequency_file_name", "frequency_policies", "file",             Path),
@@ -289,7 +289,7 @@ class CLParser(object):
                           default=None, help="Directory where recorded audio WAV files are saved")
 
         parser.add_argument("--theme-file", type=str, dest="theme_file",
-                          default=None, help="Spectrum visualizer display theme file name")
+                          default=None, help="Curses UI theme configuration file name")
 
         parser.add_argument("--voice", dest="voice", action="store_true", default=None,
                           help="Record voice")
@@ -382,8 +382,8 @@ class CLParser(object):
             ranges=range_params,
             singles=single_params,
             sample_rate=int(cfg.hardware.sample_rate),
-            quiet_timeout=cfg.receiver.quiet_timeout,
-            active_timeout=cfg.receiver.active_timeout
+            quiet_timeout=cfg.scanner.quiet_timeout,
+            active_timeout=cfg.scanner.active_timeout
         )
 
 
@@ -399,8 +399,8 @@ def main():
     range_freqs = [f'{range.lower_freq}-{range.upper_freq}' for range in parser.frequency_params.ranges]
     print("single frequencies:  " + str(single_freqs))
     print("range frequencies:   " + str(range_freqs))
-    print("quiet timeout:       " + str(cfg.receiver.quiet_timeout))
-    print("active timeout:      " + str(cfg.receiver.active_timeout))
+    print("quiet timeout:       " + str(cfg.scanner.quiet_timeout))
+    print("active timeout:      " + str(cfg.scanner.active_timeout))
     print("ask_samp_rate:       " + str(cfg.hardware.sample_rate))
     from config import GAIN_FIELDS
     for field_name, hw_name in GAIN_FIELDS:
@@ -427,7 +427,7 @@ def main():
     print("data:                " + str(cfg.classification.wanted.data))
     print("skip:                " + str(cfg.classification.wanted.skip))
     print("model_file_name:     " + str(cfg.classification.model_path))
-    print("auto_priority:       " + str(cfg.classification.auto_priority))
+    print("auto_priority:       " + str(cfg.scanner.auto_priority))
     print("disable_lockout:     " + str(cfg.frequency_policies.disable_lockout))
     print("disable_priority:    " + str(cfg.frequency_policies.disable_priority))
     print("log_level:           " + str(cfg.logging.level))
