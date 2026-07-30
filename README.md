@@ -232,8 +232,7 @@ usage: ham2mon.py [-h] [-a HW_ARGS] [-n NUM_DEMOD] [-d TYPE_DEMOD]
                   [-c FREQ_CORRECTION] [-m] [-b AUDIO_BPS] [-M MAX_DB]
                   [-N MIN_DB] [-B CHANNEL_SPACING]
                   [--min-recording MIN_RECORDING]
-                  [--max-recording MAX_RECORDING] [--voice] [--data] [--skip]
-                  [--model MODEL_FILE_NAME]
+                  [--max-recording MAX_RECORDING]
                   [--log-level {debug,info,warn,error}]
                   [--log-dest {none,file,syslog,stderr}] [--log-file LOG_FILE]
                   [--file-metadata FILE_METADATA]
@@ -307,11 +306,6 @@ options:
   --wav-dir WAV_DIR     Directory where recorded audio WAV files are saved
   --theme-file THEME_FILE
                         Curses UI theme configuration file name
-  --voice               Record voice
-  --data                Record data
-  --skip                Record skip
-  --model MODEL_FILE_NAME
-                        Classification model file in tflite format
   --log-level {debug,info,warn,error}
                         Log verbosity level; only has effect if --log-dest is
                         not 'none' (default: warn)
@@ -453,7 +447,7 @@ There are two timeouts.  If there is no activity on a channel the scanner will m
 
 An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) classified as voice 2) at least 2 seconds long 3) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
 
-uv run apps/ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --voice --min-recording 2 --max-recording 10 --quiet-timeout 20 --active-timeout 60
+uv run apps/ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --min-recording 2 --max-recording 10 --quiet-timeout 20 --active-timeout 60
 
 When range scanning, the RECEIVER section will show current step, number of steps and the percent complete.
 
@@ -538,7 +532,7 @@ With the `-P` option, channels that meet specific conditions will automatically 
 
 If the number of voice transmissions is less than the number of data/skip transmissions, then the priority flag will be removed for that frequency.  This will override any priorities assigned in the [priority file](#priority-handling).
 
-Auto priority currently requires audio classification so `--voice` will automatically be enabled if this option is selected.  Therefore, `--model` must also be specified when using auto priority.
+Auto priority evaluates channel activity over time to automatically promote active voice frequencies.
 
 ## Logging
 Application logging events can be configured using the `--log-level` and `--log-dest` options. By default, logging is disabled (`--log-dest=none`). If enabled with `--log-dest=file`, logs are written to `ham2mon.log` (or a custom path specified with `--log-file`).
@@ -547,18 +541,14 @@ Application logging events can be configured using the `--log-level` and `--log-
 * When `--log-level=debug` is enabled, all channel detection messages (e.g. tuning on, tuning off, periodic active updates) are automatically outputted to the standard logs.
 * Third-party dependency logs (such as `urllib3` or `gnuradio`) are isolated so they do not pollute the debug output files or standard streams.
 
-## Audio Classification
-*Note: The classification is not 100% accurate.  There will be both false positives and negatives.*
+## Audio Classification & Gatekeepers
+*Note: Audio evaluation models and classification are not 100% accurate; false positives and negatives may occur.*
 
-Recorded audio can be classified using a pre-trained model.  The model is an optional artifact not included in the repository when cloned (see releases).  You must separately download it and add it to your system. The optional tensorflow python module must also be installed (see installation instructions).
+Recorded audio can be evaluated and classified using `ham2mon`'s modular Component Architecture (such as `SileroVadComponent` for voice activity detection or `TfliteClassifierComponent` for ML classification).
 
-The model file must be specified using the `--model <path>` option.
+Component evaluation gatekeepers (`WavGatekeeper`) determine whether recorded audio should be kept or discarded. When kept, classification designators (e.g. `V` for Voice, `D` for Data) and metadata sidecar files (`<wav_filename>.json`) are automatically generated.
 
-At least one of the command line options (`--voice`, `--data`, and `--skip`) must be specified to indicate what recordings are saved.  All others will be discarded.  The classification feature does not impact what is heard over the speaker.  If no options are provided then classification is disabled (this is the default).  If any of the options are provided then record mode (`-w`) will be automatically enabled.
-
-The classification designator will be added after the frequency (e.g. 460.1250_V_20231102_140010.123.wav for voice).  Only 16-bit audio is currently supported so enable it with `-b 16`.
-
-No capability is provided to train the model.  Training data will not be provided.  Those interested in training their own model can review [xmits_train](https://gitlab.com/john---/xmits_train) for what was done to train the available model.
+For full details on configuring evaluation components and models in your `config.yaml`, see the [Available Components Guide](doc/components/available_components.md).
 
 ## Filename Metadata
 
@@ -590,7 +580,7 @@ Examples:
 - With priority, strength, and ctcss requested: `460.1250_P1_-48dB_100.0Hz_20231102_140010.123.wav`
 - With strength requested but unavailable (e.g. no signal stats): `460.1250_20231102_140010.123.wav`
 
-If audio classification is enabled (e.g., via `--voice`, which adds a classification segment such as `V` or `D`), it will be inserted directly after the frequency:
+When audio evaluation is performed by a `WavGatekeeper` component (which adds a classification segment such as `V` or `D`), it is inserted directly after the frequency:
 - With classification, priority, strength, and CTCSS: `460.1250_V_P1_-48dB_100.0Hz_20231102_140010.123.wav`
 
 ## CTCSS Squelch and Tone Filtering

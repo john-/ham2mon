@@ -58,10 +58,10 @@ components:
    ```
 
 2. **Manual Model Download**:
-   Download the official `silero_vad.onnx` model file manually into the component directory:
+   Download the official `silero_vad.onnx` model file manually into the component model directory:
    ```bash
-   mkdir -p apps/components/silero
-   curl -L -o apps/components/silero/silero_vad.onnx https://raw.githubusercontent.com/snakers4/silero-vad/v4.0/files/silero_vad.onnx
+   mkdir -p apps/components/silero/model
+   curl -L -o apps/components/silero/model/silero_vad.onnx https://raw.githubusercontent.com/snakers4/silero-vad/v4.0/files/silero_vad.onnx
    ```
 
 ### Configuration
@@ -74,13 +74,15 @@ components:
     class_path: components.silero.component.SileroVadComponent
     timeout_sec: 5.0
     config:
-      model_path: apps/components/silero/silero_vad.onnx
+      model_path: apps/components/silero/model/silero_vad.onnx
       threshold: 0.5  # Confidence threshold (0.0 to 1.0)
 ```
 
 #### Options:
-* `model_path`: Relative or absolute path to `silero_vad.onnx` (defaults to `apps/components/silero/silero_vad.onnx`).
+* `model_path`: Relative or absolute path to `silero_vad.onnx` (defaults to `apps/components/silero/model/silero_vad.onnx`).
 * `threshold`: Floating point confidence threshold between `0.0` and `1.0` (defaults to `0.5`). Higher values make voice detection stricter; lower values make it more sensitive.
+* `min_voice_chunks`: Minimum number of 32ms frames required above threshold for voice decision (defaults to `3`). Higher values improve static noise and data burst rejection.
+* `max_eval_sec`: Maximum seconds of audio evaluated per file (defaults to `3.0`). Limits long files to a centered evaluation window for faster inference. Set to `0.0` for full file evaluation.
 
 ---
 
