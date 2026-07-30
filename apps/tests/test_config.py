@@ -245,9 +245,17 @@ def test_gain_config_set_value():
     assert config.gains.is_explicit("rf") is True
 
 
+def test_clparser_wav_dir_and_theme_file_cli_flags():
+    """Verify --wav-dir and --theme-file CLI flags map end-to-end into master_config."""
+    parser = CLParser(args=["--wav-dir", "/tmp/custom_wavs", "--theme-file", "my_theme.yaml"])
+    assert parser.master_config.audio.wav_dir == "/tmp/custom_wavs"
+    assert parser.master_config.display.theme_file == "my_theme.yaml"
+
+
 def test_all_config_fields_have_cli_mapping_or_are_allowlisted():
-    intentionally_yaml_only = {("display", "theme_file"), ("audio", "wav_dir")}
-    mapped = {(m.section, m.key) for m in CLI_OPTION_MAP} | intentionally_yaml_only
+    # Plain scalar fields MUST have a corresponding CLI option mapping in CLI_OPTION_MAP.
+    structurally_yaml_only: set[tuple[str, str]] = set()
+    mapped = {(m.section, m.key) for m in CLI_OPTION_MAP} | structurally_yaml_only
 
     for section_field in dataclasses.fields(MasterHam2MonConfig):
         section_name = section_field.name

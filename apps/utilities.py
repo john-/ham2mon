@@ -4,9 +4,25 @@ Created on Thu Mar 7 2024
 @author: john
 """
 import bisect
+import time
 from typing import overload
 import numpy as np
 from numpy.typing import NDArray
+
+
+DEFAULT_AUDIO_RATE: int = 8000
+
+
+def format_freq_mhz(rf_mhz: float) -> str:
+    """Format RF frequency in MHz to MHz string with 4 decimal places (e.g. 460.125 -> '460.1250')."""
+    return f"{np.round(rf_mhz, 4):.4f}"
+
+
+
+def format_timestamp(timestamp: float) -> str:
+    """Format epoch timestamp float to 'YYYYMMDD_HHMMSS.sss' string."""
+    return time.strftime("%Y%m%d_%H%M%S", time.localtime(timestamp)) + f"{timestamp % 1:.3f}"[1:]
+
 
 def frequency_to_baseband(freq: float, center_freq: int, channel_spacing: int) -> int:
     """Returns baseband frequency in Hz
