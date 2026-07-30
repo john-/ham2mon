@@ -16,6 +16,9 @@ tensorflow = [
 "ai-edge-litert" = [
     "ai-edge-litert>=1.0.0",
 ]
+onnxruntime = [
+    "onnxruntime>=1.14.0",
+]
 
 [dependency-groups]
 dev = [
