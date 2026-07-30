@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 LiteRT/TensorFlow Classification Service.
 Runs as a separate subprocess to isolate signal handlers and threads.
@@ -9,45 +8,70 @@ import argparse
 import sys
 import wave
 from pathlib import Path
+from typing import Literal, Protocol, cast
 
 import numpy as np
 
-# Try importing LiteRT or TFLite runtimes
+
+class InterpreterInstance(Protocol):
+    """Protocol defining the structural interface of a TFLite/LiteRT Interpreter."""
+
+    def allocate_tensors(self) -> None: ...
+    def get_input_details(self) -> list[dict[str, object]]: ...
+    def get_output_details(self) -> list[dict[str, object]]: ...
+    def set_tensor(self, tensor_index: object, value: np.ndarray) -> None: ...
+    def invoke(self) -> None: ...
+    def get_tensor(self, tensor_index: object) -> np.ndarray: ...
+
+
+InterpreterClass: object = None
+
 try:
     import ai_edge_litert.interpreter as litert
 
-    Interpreter = litert.Interpreter
+    InterpreterClass = litert.Interpreter
 except ImportError:
     try:
         import tflite_runtime.interpreter as tflite
 
-        Interpreter = tflite.Interpreter
+        InterpreterClass = tflite.Interpreter
     except ImportError:
         try:
             import tensorflow.lite as tflite
 
-            Interpreter = tflite.Interpreter
+            InterpreterClass = tflite.Interpreter
         except ImportError:
-            print(
+            _ = sys.stderr.write(
                 "Could not load any LiteRT/TFLite interpreter runtime. "
-                "Please install one of: 'ai-edge-litert', 'tflite-runtime', or 'tensorflow'.",
-                file=sys.stderr,
+                + "Please install an optional extra (e.g. `uv sync --extra ai-edge-litert` or `uv sync --extra tensorflow`).\n"
             )
             sys.exit(1)
 
 
 class ServiceClassifier:
-    def __init__(self, model_path: Path, audio_rate: int):
+    """Subprocess TFLite classifier service wrapper."""
+
+    audio_rate: int
+    model: InterpreterInstance
+    input_details: list[dict[str, object]]
+    output_details: list[dict[str, object]]
+
+    def __init__(self, model_path: Path, audio_rate: int) -> None:
+        if not callable(InterpreterClass):
+            raise TypeError("TFLite Interpreter class is not available")
         self.audio_rate = audio_rate
-        self.model = Interpreter(model_path=model_path.absolute().as_posix())
+        # Instantiating dynamic interpreter class
+        interpreter_obj: object = InterpreterClass(model_path=model_path.absolute().as_posix())
+        self.model = cast(InterpreterInstance, interpreter_obj)
         self.model.allocate_tensors()
         self.input_details = self.model.get_input_details()
         self.output_details = self.model.get_output_details()
 
-    def get_spectrogram(self, file_path: str):
+    def get_spectrogram(self, file_path: str) -> np.ndarray:
+        """Decode WAV file and compute spectrogram matching TFLite model specs."""
         # 1. Decode WAV audio file using standard library wave module
         with wave.open(file_path, "rb") as w:
-            nchannels, sampwidth, framerate, nframes = w.getparams()[:4]
+            nchannels, sampwidth, _framerate, nframes = w.getparams()[:4]
             data = w.readframes(nframes)
             if sampwidth == 2:
                 audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
@@ -70,9 +94,7 @@ class ServiceClassifier:
         total_samples = len(audio)
         target_samples = self.audio_rate * 2  # 2 second clip
         middle = total_samples / 2
-        start = int(middle - target_samples / 2)
-        if start < 0:
-            start = 0
+        start = max(int(middle - target_samples / 2), 0)
         end = int(middle + target_samples / 2)
         waveform = audio[start:end]
 
@@ -82,21 +104,21 @@ class ServiceClassifier:
             waveform = np.pad(waveform, (0, pad_width), "constant")
 
         # 4. Compute STFT (Short-Time Fourier Transform) matching TF's behavior.
-        # tf.signal.stft's default window_fn is a periodic Hann window of length M.
+        # tf.signal.stft's default window_fn is a periodic Hann window of length m_window.
         # We mirror TF's parity-dependent raised_cosine_window quirk (where periodic
         # and symmetric coincide for odd window lengths) to remain compatible if
-        # M is ever changed to an even number in the future.
-        M = 255
-        even = 1 - (M % 2)
-        n = M + even - 1
-        window = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(M) / n)
+        # m_window is ever changed to an even number in the future.
+        m_window = 255
+        even = 1 - (m_window % 2)
+        n = m_window + even - 1
+        window = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(m_window) / n)
 
         hop_length = 128
-        num_frames = (len(waveform) - M) // hop_length + 1
-        frames = []
+        num_frames = (len(waveform) - m_window) // hop_length + 1
+        frames: list[np.ndarray] = []
         for i in range(num_frames):
             start_idx = i * hop_length
-            frame = waveform[start_idx : start_idx + M]
+            frame = waveform[start_idx : start_idx + m_window]
             windowed_frame = frame * window
             # 256-point RFFT returns 129 bins
             rfft_out = np.fft.rfft(windowed_frame, n=256)
@@ -106,33 +128,38 @@ class ServiceClassifier:
         spectro = np.expand_dims([spectrogram], axis=-1)
         return spectro
 
-    def predict(self, spectrogram):
+    def predict(self, spectrogram: np.ndarray | None) -> Literal["V", "D", "S"] | None:
+        """Run prediction on precomputed spectrogram."""
         if spectrogram is None:
             return None
         self.model.set_tensor(self.input_details[0]["index"], spectrogram)
         self.model.invoke()
         prediction = self.model.get_tensor(self.output_details[0]["index"])
-        types = ("V", "D", "S")
-        return types[np.argmax(prediction[0])]
+        types: tuple[Literal["V"], Literal["D"], Literal["S"]] = ("V", "D", "S")
+        pred_idx = int(np.argmax(cast(np.ndarray, prediction[0])))
+        return types[pred_idx]
 
 
-def main():
+def main() -> None:
+    """Subprocess main command loop."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True, help="Path to model")
-    parser.add_argument(
+    _ = parser.add_argument("--model", type=str, required=True, help="Path to model")
+    _ = parser.add_argument(
         "--audio-rate", type=int, required=True, help="Audio sample rate"
     )
     args = parser.parse_args()
 
+    model_arg = str(cast(str, args.model))
+    rate_arg = int(cast(int, args.audio_rate))
     try:
-        classifier = ServiceClassifier(Path(args.model), args.audio_rate)
+        classifier = ServiceClassifier(Path(model_arg), rate_arg)
     except Exception as e:
-        print(f"Could not initialize ServiceClassifier: {e}", file=sys.stderr)
+        _ = sys.stderr.write(f"Could not initialize ServiceClassifier: {e}\n")
         sys.exit(1)
 
     # Ready signal to parent process
-    sys.stdout.write("READY\n")
-    sys.stdout.flush()
+    _ = sys.stdout.write("READY\n")
+    _ = sys.stdout.flush()
 
     # Simple command loop: read filename, output classification
     while True:
@@ -148,12 +175,12 @@ def main():
                 spectrogram = classifier.get_spectrogram(file_path)
                 result = classifier.predict(spectrogram)
             except Exception as pe:
-                print(f"Prediction error for file '{file_path}': {pe}", file=sys.stderr)
-                sys.stderr.flush()
+                _ = sys.stderr.write(f"Prediction error for file '{file_path}': {pe}\n")
+                _ = sys.stderr.flush()
                 result = "S"  # default fallback to Skip if prediction fails
 
-            sys.stdout.write(f"{result}\n")
-            sys.stdout.flush()
+            _ = sys.stdout.write(f"{result}\n")
+            _ = sys.stdout.flush()
         except KeyboardInterrupt:
             break
         except Exception:

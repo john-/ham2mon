@@ -708,3 +708,47 @@ Modules can be tested by executing the main module directly:
 ```bash
 uv --directory apps run python scanner.py -a "rtl" -f 145
 ```
+
+### Component Architecture & Development
+
+`ham2mon` includes an extensible Component Architecture for audio evaluation and transmission event subscriptions.
+
+#### Supported In-Tree Component Development
+All supported custom components must be authored directly within the `apps/components/` directory (In-Tree workflow), either as single-file modules (e.g., `apps/components/activity_logger_component.py`) or as isolated subpackages (e.g., `apps/components/tflite/`). This ensures proper module resolution and environment compatibility across installs:
+
+1. **Subclassing Base Protocols:**
+   Component base protocols live in `components.base`:
+   - `WavGatekeeper`: Decision-making components (`process(wav_path, channel_info) -> ComponentResult`).
+   - `TransmissionNotifier`: Subscription/logging components (`async on_transmission(record)`).
+
+2. **Single-File vs. Subpackaged Layout:**
+   - **Single-file components**: Placed directly at `apps/components/<name>_component.py` (e.g., `components.activity_logger_component.ActivityLoggerComponent`).
+   - **Isolated subpackaged components**: Placed in `apps/components/<name>/` with an `__init__.py` re-exporting the primary class (e.g., `from .component import TfliteClassifierComponent` in `apps/components/tflite/__init__.py`), allowing 3-segment dot paths like `components.tflite.TfliteClassifierComponent`. Subpackages encapsulate private sub-modules, helper scripts, and model artifacts (e.g., `apps/components/tflite/model/`).
+
+3. **Accessing Core Utilities:**
+   Components run with `apps/` on `sys.path` and can import core `ham2mon` utilities directly:
+   ```python
+   from components.base import ChannelInfo, ComponentResult, WavGatekeeper
+   from frequency_manager import TransmissionRecord
+   from utilities import baseband_to_frequency, format_freq_mhz, wav_duration_sec
+   ```
+
+4. **YAML Configuration:**
+   Components are registered in `ham2mon.yaml` under the `components` key:
+   ```yaml
+   components:
+     wav_gatekeeper:
+       class_path: "components.tflite.TfliteClassifierComponent"
+       timeout_sec: 5.0
+       config:
+         model_path: "apps/components/tflite/model/model_1.tflite"
+     notifiers:
+       - class_path: "components.activity_logger_component.ActivityLoggerComponent"
+         config: {}
+   ```
+
+5. **Metadata Sidecar Files:**
+   When a `WavGatekeeper` component evaluates a transmission and decides to keep it (`keep=True`), `ham2mon` automatically writes a JSON sidecar file (`<wav_filename>.json`) containing transmission metrics and component classification metadata alongside the saved WAV recording. Discarded transmissions do not generate sidecar files.
+
+> [!NOTE]
+> **Out-of-Tree Components:** While dynamic loading via arbitrary Python dot-paths is technically possible if modules are placed in `PYTHONPATH` or editable installations, out-of-tree component loading is **unsupported**. Developers are strongly encouraged to submit components in-tree under `apps/components/`.

@@ -6,6 +6,7 @@ from config import (
     ConfigError,
     MasterHam2MonConfig,
     build_config_from_dict,
+    resolve_app_relative_path,
     resolve_config_path,
 )
 from h2m_parser import CLI_OPTION_MAP, CLParser
@@ -21,18 +22,12 @@ def test_default_config_build():
     assert config.scanner.auto_priority is False
 
 
-def test_scanner_config_custom_override(tmp_path: Path):
-    model_file = tmp_path / "test.tflite"
-    model_file.touch()
-
+def test_scanner_config_custom_override():
     config = build_config_from_dict({
         "scanner": {
             "quiet_timeout": 5,
             "active_timeout": 30,
             "auto_priority": True,
-        },
-        "classification": {
-            "model_path": model_file,
         }
     })
     assert config.scanner.quiet_timeout == 5
@@ -46,54 +41,13 @@ def test_scanner_config_non_dict_fallback():
     assert config.scanner.quiet_timeout == 12
 
 
-def test_auto_priority_warning_when_disable_priority_set(tmp_path: Path, caplog: pytest.LogCaptureFixture):
-    model_file = tmp_path / "test.tflite"
-    model_file.touch()
-
+def test_auto_priority_warning_when_disable_priority_set(caplog: pytest.LogCaptureFixture):
     with caplog.at_level("WARNING"):
         _ = build_config_from_dict({
             "scanner": {"auto_priority": True},
-            "classification": {"model_path": model_file},
             "frequency_policies": {"disable_priority": True},
         })
     assert "disable_priority is True" in caplog.text
-
-
-def test_auto_priority_cascades_voice(tmp_path: Path):
-    model_file = tmp_path / "test.tflite"
-    model_file.touch()
-
-    config = build_config_from_dict({
-        "scanner": {
-            "auto_priority": True
-        },
-        "classification": {
-            "model_path": model_file,
-        }
-    })
-    assert config.scanner.auto_priority is True
-    assert config.classification.wanted.voice is True
-    assert config.audio.record is True
-
-
-def test_classification_requires_model():
-    with pytest.raises(ConfigError, match="model_path"):
-        _ = build_config_from_dict({
-            "classification": {
-                "wanted": {"voice": True}
-            }
-        })
-
-
-def test_classification_model_must_exist(tmp_path: Path):
-    missing_model = tmp_path / "nonexistent.tflite"
-    with pytest.raises(ConfigError, match="not found"):
-        _ = build_config_from_dict({
-            "classification": {
-                "model_path": missing_model,
-                "wanted": {"voice": True}
-            }
-        })
 
 
 def test_sample_rate_floor():
@@ -158,11 +112,9 @@ def test_theme_file_none_normalization():
     """display.theme_file and logging.file string-normalization is unchanged."""
     for val in ("None", "none", "null", ""):
         config = build_config_from_dict({
-            "classification": {"model_path": val},
             "display": {"theme_file": val},
             "logging": {"file": val}
         })
-        assert config.classification.model_path is None
         assert config.display.theme_file == ""
         assert config.logging.file == ""
 
@@ -197,6 +149,14 @@ def test_resolve_config_path_exact_hit(tmp_path: Path):
     f = tmp_path / "my.config.yaml"
     f.touch()
     assert resolve_config_path(f, ".config.yaml") == f
+
+
+def test_resolve_app_relative_path_basic(tmp_path: Path):
+    """Absolute or existing relative paths resolve directly."""
+    f = tmp_path / "test.file"
+    f.touch()
+    assert resolve_app_relative_path(f) == f
+    assert resolve_app_relative_path("/nonexistent/abs/path") == Path("/nonexistent/abs/path")
 
 
 def test_resolve_config_path_suffix_hit(tmp_path: Path):
@@ -296,9 +256,35 @@ def test_clparser_wav_dir_and_theme_file_cli_flags():
     assert parser.master_config.display.theme_file == "my_theme.yaml"
 
 
+def test_components_config_parsing():
+    cfg = build_config_from_dict({
+        "components": {
+            "wav_gatekeeper": {
+                "class_path": "components.tflite.TfliteClassifierComponent",
+                "timeout_sec": 4.5,
+                "config": {"wanted": {"voice": True}},
+            },
+            "notifiers": [
+                {
+                    "class_path": "components.activity_logger_component.ActivityLoggerComponent",
+                    "config": {},
+                }
+            ],
+        }
+    })
+    assert cfg.components.wav_gatekeeper is not None
+    assert cfg.components.wav_gatekeeper.class_path == "components.tflite.TfliteClassifierComponent"
+    assert cfg.components.wav_gatekeeper.timeout_sec == 4.5
+    assert len(cfg.components.notifiers) == 1
+    assert cfg.components.notifiers[0].class_path == "components.activity_logger_component.ActivityLoggerComponent"
+
+
 def test_all_config_fields_have_cli_mapping_or_are_allowlisted():
     # Plain scalar fields MUST have a corresponding CLI option mapping in CLI_OPTION_MAP.
-    structurally_yaml_only: set[tuple[str, str]] = set()
+    structurally_yaml_only: set[tuple[str, str]] = {
+        ("components", "wav_gatekeeper"),
+        ("components", "notifiers"),
+    }
     mapped = {(m.section, m.key) for m in CLI_OPTION_MAP} | structurally_yaml_only
 
     for section_field in dataclasses.fields(MasterHam2MonConfig):
@@ -313,3 +299,4 @@ def test_all_config_fields_have_cli_mapping_or_are_allowlisted():
                             assert (section_name, sub_f.name) in mapped, f"{section_name}.{sub_f.name} (nested) has no CLI mapping"
                     continue
                 assert (section_name, f.name) in mapped, f"{section_name}.{f.name} has no CLI mapping"
+

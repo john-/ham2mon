@@ -169,34 +169,6 @@ class AudioConfig:
             )
 
 
-@dataclass(kw_only=True)
-class WantedFlags:
-    """ML signal wanted flags (voice, data, skip classification targets)."""
-
-    voice: bool = False
-    data: bool = False
-    skip: bool = False
-
-
-@dataclass(kw_only=True)
-class ClassificationConfig:
-    """Signal classification model path and wanted flag mappings."""
-
-    model_path: Optional[Path] = None
-    wanted: WantedFlags = field(default_factory=WantedFlags)
-
-    def __post_init__(self):
-        # Classification requires a valid model file on disk
-        if self.wanted.voice or self.wanted.data or self.wanted.skip:
-            if not self.model_path:
-                raise ConfigError(
-                    "Classification enabled (voice/data/skip/auto_priority), but 'model_path' is missing."
-                )
-            model_p = Path(self.model_path)
-            if not model_p.exists():
-                raise ConfigError(
-                    f"Classification model file not found at: {self.model_path}"
-                )
 
 
 @dataclass(kw_only=True)
@@ -256,38 +228,48 @@ class LoggingConfig:
 
 
 @dataclass(kw_only=True)
+class ComponentEntryConfig:
+    """Config entry for one component in the YAML configuration file."""
+
+    class_path: str
+    timeout_sec: float = 10.0
+    config: dict[str, object] = field(default_factory=dict)
+    name: str = ""
+
+
+@dataclass(kw_only=True)
+class ComponentsConfig:
+    """Container for active component configurations."""
+
+    wav_gatekeeper: ComponentEntryConfig | None = None
+    notifiers: list[ComponentEntryConfig] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
 class MasterHam2MonConfig:
-    """Master configuration container wrapping all individual sub-configurations."""
+    """Root configuration tree combining all domain sub-configs."""
 
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     gains: GainConfig = field(default_factory=GainConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     receiver: ReceiverConfig = field(default_factory=ReceiverConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
-    classification: ClassificationConfig = field(default_factory=ClassificationConfig)
     frequency_policies: FrequencyPoliciesConfig = field(default_factory=FrequencyPoliciesConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
     channel_activity: ActivityConfig = field(default_factory=ActivityConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    components: ComponentsConfig = field(default_factory=ComponentsConfig)
 
     def __post_init__(self):
-        if self.scanner.auto_priority:
-            self.classification.wanted.voice = True
-
         if self.scanner.auto_priority and self.frequency_policies.disable_priority:
             logger.warning(
                 "scanner.auto_priority is enabled, but frequency_policies.disable_priority is True. "
                 "Auto-promoted priority channels will be ignored by frequency manager."
             )
 
-        # Classification forces audio recording
-        if (
-            self.classification.wanted.voice
-            or self.classification.wanted.data
-            or self.classification.wanted.skip
-        ):
+        # WavGatekeeper forces audio recording so temporary files can be evaluated
+        if self.components.wav_gatekeeper is not None:
             self.audio.record = True
-            self.classification.__post_init__()
 
 
 def load_raw_yaml(yaml_path: Path | str) -> dict[str, object]:
@@ -299,44 +281,57 @@ def load_raw_yaml(yaml_path: Path | str) -> dict[str, object]:
         return yaml.safe_load(f) or {}
 
 
+def resolve_app_relative_path(given_path: str | Path) -> Path:
+    """Resolve a path against current working directory and project root (`apps/`).
+
+    Resolution order:
+    1. If `given_path` is absolute or exists as specified, return it.
+    2. If `given_path` starts with 'apps/' and doesn't exist, try stripping 'apps/'
+       (for execution inside apps/).
+    3. If `given_path` doesn't start with 'apps/' and doesn't exist, try prefixing 'apps/'
+       (for execution from repo root).
+    4. Return `given_path` as Path object.
+    """
+    path = Path(given_path)
+    if path.is_absolute() or path.exists():
+        return path
+
+    path_str = str(given_path)
+    if path_str.startswith("apps/"):
+        stripped = Path(path_str[5:])
+        if stripped.exists():
+            return stripped
+    else:
+        prefixed = Path("apps") / path
+        if prefixed.exists():
+            return prefixed
+
+    return path
+
+
 def resolve_config_path(given_path: str | Path, domain_ext: str) -> Path:
     """Resolve a config path for one domain (e.g. ".config.yaml" or ".freqs.yaml").
 
     Resolution order:
-    1. If *given_path* exists exactly as specified, return it.
+    1. If *given_path* exists exactly as specified (or via app root fallback), return it.
     2. Else append *domain_ext* and check again
        (e.g. ``"site-ra"`` → ``"site-ra.config.yaml"``).
     3. If neither exists, raise :exc:`ConfigError` naming both paths tried.
-
-    A relative *given_path* is resolved against the current working directory
-    (standard CLI-argument behaviour).  An absolute path is used as-is.
-    There is no search-directory list — if the path is not found by step 2,
-    resolution fails immediately with a clear error message.
-
-    Args:
-        given_path: The path string or :class:`~pathlib.Path` supplied by the
-            user (e.g. from a ``-C`` / ``-F`` argument).
-        domain_ext: The double-extension suffix to append when the bare name
-            does not resolve on its own (e.g. ``".config.yaml"`` or
-            ``".freqs.yaml"``).
-
-    Returns:
-        The resolved, existing :class:`~pathlib.Path`.
-
-    Raises:
-        :exc:`ConfigError`: If neither *given_path* nor
-            *given_path* + *domain_ext* exists on disk.
     """
-    candidate = Path(given_path)
+    candidate = resolve_app_relative_path(given_path)
     if candidate.exists():
         return candidate
-    with_ext = Path(str(given_path) + domain_ext)
+
+    with_ext = resolve_app_relative_path(str(given_path) + domain_ext)
     if with_ext.exists():
         return with_ext
+
+    raw_cand = Path(given_path)
+    raw_ext = Path(str(given_path) + domain_ext)
     raise ConfigError(
         f"Configuration file not found. Tried:\n"
-        f"  {candidate}\n"
-        f"  {with_ext}"
+        f"  {raw_cand}\n"
+        f"  {raw_ext}"
     )
 
 
@@ -368,22 +363,7 @@ def build_config_from_dict(raw: dict[str, object]) -> MasterHam2MonConfig:
     audio_data = raw.get("audio", {})
     audio = AudioConfig(**audio_data) if isinstance(audio_data, dict) else AudioConfig()
 
-    class_val = raw.get("classification")
-    class_data = dict(class_val) if isinstance(class_val, dict) else {}
-    wanted_data = class_data.pop("wanted", {}) if "wanted" in class_data else {}
-    wanted = (
-        WantedFlags(**wanted_data) if isinstance(wanted_data, dict) else WantedFlags()
-    )
-    model_val = class_data.get("model_path")
-    if model_val is not None and str(model_val).strip().lower() not in (
-        "none",
-        "null",
-        "",
-    ):
-        class_data["model_path"] = Path(model_val)
-    else:
-        class_data["model_path"] = None
-    classification = ClassificationConfig(wanted=wanted, **class_data)
+
 
     freq_val = raw.get("frequency_policies")
     freq_data = dict(freq_val) if isinstance(freq_val, dict) else {}
@@ -415,15 +395,32 @@ def build_config_from_dict(raw: dict[str, object]) -> MasterHam2MonConfig:
         log_data["file"] = ""
     logging = LoggingConfig(**log_data)
 
+    comp_val = raw.get("components")
+    comp_data = dict(comp_val) if isinstance(comp_val, dict) else {}
+    gk_val = comp_data.get("wav_gatekeeper")
+    wav_gatekeeper = ComponentEntryConfig(**gk_val) if isinstance(gk_val, dict) else None
+
+    notif_list = comp_data.get("notifiers", [])
+    notifiers = []
+    if isinstance(notif_list, list):
+        for n_item in notif_list:
+            if isinstance(n_item, dict):
+                notifiers.append(ComponentEntryConfig(**n_item))
+
+    components = ComponentsConfig(
+        wav_gatekeeper=wav_gatekeeper, notifiers=notifiers
+    )
+
     return MasterHam2MonConfig(
         hardware=hardware,
         gains=gains,
         scanner=scanner,
         receiver=receiver,
         audio=audio,
-        classification=classification,
         frequency_policies=frequency_policies,
         display=display,
         channel_activity=channel_activity,
         logging=logging,
+        components=components,
     )
+

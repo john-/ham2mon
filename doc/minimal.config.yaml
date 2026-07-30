@@ -55,14 +55,6 @@ hardware:
 #   max_recording_sec: 0.0
 #   file_metadata: []
 
-# classification:
-#   model_path: none         # Path to classification model (.tflite)
-#   wanted:
-#     voice: false
-#     data: false
-#     skip: false
-#   auto_priority: false
-
 # frequency_policies:
 #   disable_lockout: false
 #   disable_priority: false
