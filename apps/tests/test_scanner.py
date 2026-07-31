@@ -230,3 +230,64 @@ def test_transmission_record_str() -> None:
     assert "P1" in s
     assert "V" in s
     assert "100.0Hz" in s
+
+
+# ---------------------------------------------------------------------------
+# hold_scan_on / Scanner.interesting matrix tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "record, state, msg_file, classification, hold_scan_on, expected_interesting",
+    [
+        # Non-recording mode tests
+        (False, "on", None, None, None, True),
+        (False, "off", None, None, None, False),
+        (False, "on", None, "V", {"V"}, True),
+        (False, "off", None, "V", {"V"}, False),
+        # Recording mode with hold_scan_on = None (default: hold on all saved wav files)
+        (True, "on", "test.wav", "V", None, True),
+        (True, "on", "test.wav", "D", None, True),
+        (True, "on", "test.wav", "S", None, True),
+        (True, "on", "test.wav", None, None, True),
+        (True, "on", None, "V", None, False),
+        # Recording mode with hold_scan_on = {"V"}
+        (True, "on", "test.wav", "V", {"V"}, True),
+        (True, "on", "test.wav", "D", {"V"}, False),
+        (True, "on", "test.wav", "S", {"V"}, False),
+        (True, "on", "test.wav", None, {"V"}, False),
+        # Recording mode with hold_scan_on = set() (empty set: never hold on any classification)
+        (True, "on", "test.wav", "V", set(), False),
+        (True, "on", "test.wav", "D", set(), False),
+        (True, "on", "test.wav", "S", set(), False),
+        (True, "on", "test.wav", None, set(), False),
+        # Recording mode with hold_scan_on = {"V", "D"}
+        (True, "on", "test.wav", "V", {"V", "D"}, True),
+        (True, "on", "test.wav", "D", {"V", "D"}, True),
+        (True, "on", "test.wav", "S", {"V", "D"}, False),
+    ],
+)
+def test_scanner_interesting_matrix(
+    tmp_path: Path,
+    record: bool,
+    state: str,
+    msg_file: str | None,
+    classification: str | None,
+    hold_scan_on: set[str] | None,
+    expected_interesting: bool,
+) -> None:
+    wav_dir = str(tmp_path / "wav")
+    os.makedirs(wav_dir, exist_ok=True)
+    scanner = make_test_scanner(wav_dir=wav_dir)
+    scanner.record = record
+    scanner.hold_scan_on = hold_scan_on
+
+    msg = ChannelMessage(
+        state=state,
+        rf=145_000_000.0,
+        bb=0,
+        channel=0,
+        file=msg_file,
+        classification=classification,
+    )
+
+    assert scanner.interesting(msg) is expected_interesting

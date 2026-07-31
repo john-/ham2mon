@@ -36,14 +36,18 @@ hardware:
 #   pga: 8.0
 #   lb: 8.0
 
+# scanner:
+#   quiet_timeout: 12
+#   active_timeout: 20
+#   auto_priority: false
+#   hold_scan_on: ["V"]     # Classifications to hold range scanning on (e.g., ["V"] for Voice only, ["V", "D"] for Voice & Data; [] to never hold)
+
 # receiver:
 #   demodulators: 4
 #   mode: 0                  # 0 = NBFM, 1 = AM, 2 = WBFM
 #   squelch_db: -60
 #   threshold_db: 10
 #   channel_spacing: 5000
-#   quiet_timeout: 12
-#   active_timeout: 20
 #   max_ctcss_tones: 0
 
 # audio:

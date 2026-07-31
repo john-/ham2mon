@@ -284,6 +284,8 @@ options:
   --disable-lockout     Disable locking out of channels
   --disable-priority    Disable prioritization of channels
   -P, --auto-priority   Automatically add voice channels as priority channels
+  --hold-scan-on HOLD_SCAN_ON
+                        Comma-separated transmission classifications to hold range scanning on (e.g. V,D)
   -T, --activity-type ACTIVITY_TYPE
                         Log file type for channel activity detection
   -L, --activity-dest ACTIVITY_DEST
@@ -445,7 +447,7 @@ The completion of the recording does not occur until after the channel is closed
 
 There are two timeouts.  If there is no activity on a channel the scanner will move to next step when `--quiet-timeout` is reached.  With activity, the scanner will hold until `--active-timeout` is reached.
 
-An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) classified as voice 2) at least 2 seconds long 3) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
+An example use case:  Private Land Mobile Radio Service operates in the 150-174 MHz and 421-512 MHz bands.  This invocation will monitor these bands and record audio files when transmissions are 1) at least 2 seconds long 2) and no more than 10 seconds long.  If something is recorded at a specific point in these ranges the scanner will hold 60 seconds.  Otherwise, it will progress through each step every 20 seconds.
 
 uv run apps/ham2mon.py -a "airspy" -r 3E6 -t 0 -d 0 -s -70 -v 20 -w -m -b 16 -n 3 -f 150.0-174 421.0-512.0 --min-recording 2 --max-recording 10 --quiet-timeout 20 --active-timeout 60
 
@@ -547,6 +549,12 @@ Application logging events can be configured using the `--log-level` and `--log-
 Recorded audio can be evaluated and classified using `ham2mon`'s modular Component Architecture (such as `SileroVadComponent` for voice activity detection or `TfliteClassifierComponent` for ML classification).
 
 Component evaluation gatekeepers (`WavGatekeeper`) determine whether recorded audio should be kept or discarded. When kept, classification designators (e.g. `V` for Voice, `D` for Data) and metadata sidecar files (`<wav_filename>.json`) are automatically generated.
+
+### Restricting Scan Holds by Classification (`--hold-scan-on`)
+By default (when unconfigured or `None`), any saved audio transmission causes range scanning to hold/pause on the active step. You can restrict scan holds to specific classifications using `--hold-scan-on` (or `scanner.hold_scan_on` in YAML):
+- `--hold-scan-on V` (or `hold_scan_on: ["V"]` in YAML): Hold/pause range scanning **only** on Voice transmissions (`V`). Telemetry (`D`) and noise pops (`S`) are still saved to disk for logging, but range scanning immediately resumes.
+- `--hold-scan-on V,D`: Hold range scanning on both Voice (`V`) and Data (`D`) transmissions.
+- `hold_scan_on: []` in YAML: Never hold/pause range scanning for any classification (sweeps continuously while still logging/recording to disk).
 
 For full details on configuring evaluation components and models in your `config.yaml`, see the [Available Components Guide](doc/components/available_components.md).
 
