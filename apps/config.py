@@ -121,6 +121,7 @@ class ScannerConfig:
     quiet_timeout: int = 12
     active_timeout: int = 20
     auto_priority: bool = False
+    hold_scan_on: set[str] | None = None  # None = hold on all recorded types
 
 
 @dataclass(kw_only=True)
@@ -267,6 +268,14 @@ class MasterHam2MonConfig:
                 "Auto-promoted priority channels will be ignored by frequency manager."
             )
 
+        if self.scanner.hold_scan_on is not None and self.components.wav_gatekeeper is None:
+            logger.warning(
+                "scanner.hold_scan_on is configured (%s), but no components.wav_gatekeeper "
+                "classifier is configured. Unclassified transmissions (classification=None) "
+                "will not match hold_scan_on, so range scanning will not hold.",
+                self.scanner.hold_scan_on,
+            )
+
         # WavGatekeeper forces audio recording so temporary files can be evaluated
         if self.components.wav_gatekeeper is not None:
             self.audio.record = True
@@ -350,10 +359,19 @@ def build_config_from_dict(raw: dict[str, object]) -> MasterHam2MonConfig:
             gains_data["if_gain"] = val
     gains = GainConfig(**gains_data)
 
-    scanner_data = raw.get("scanner", {})
-    scanner = (
-        ScannerConfig(**scanner_data) if isinstance(scanner_data, dict) else ScannerConfig()
-    )
+    scanner_val = raw.get("scanner")
+    scanner_data = dict(scanner_val) if isinstance(scanner_val, dict) else {}
+    if "hold_scan_on" in scanner_data and scanner_data["hold_scan_on"] is not None:
+        hso = scanner_data["hold_scan_on"]
+        if isinstance(hso, str):
+            scanner_data["hold_scan_on"] = {x.strip() for x in hso.split(",") if x.strip()}
+        elif isinstance(hso, (list, tuple, set)):
+            scanner_data["hold_scan_on"] = {str(item).strip() for item in hso if str(item).strip()}
+        else:
+            raise ConfigError(
+                f"Invalid scanner.hold_scan_on type: {type(hso).__name__}. Expected string or list of classification codes."
+            )
+    scanner = ScannerConfig(**scanner_data)
 
     recv_data = raw.get("receiver", {})
     receiver = (

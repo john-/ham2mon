@@ -141,6 +141,7 @@ class Scanner:
         self.max_recording = config.audio.max_recording_sec
         self.xmit_stats: dict[float, ClassificationCount] = {}
         self.auto_priority = config.scanner.auto_priority
+        self.hold_scan_on = config.scanner.hold_scan_on
         self.file_metadata = list(config.audio.file_metadata)
         self._demod_signal_stats: dict[int, tuple[float, int]] = {i: (0.0, 0) for i in range(config.receiver.demodulators)}
         self.mismatched_freqs: dict[float, float] = {}
@@ -680,16 +681,24 @@ class Scanner:
         return d.matched_ctcss_tone if d is not None else None
 
     def interesting(self, msg: ChannelMessage) -> bool:
-        '''
+        """
         What is interesting?
-        1.  If recording and a wav file was created
-        2.  If not recording and channel was set to active
-        '''
-        if (self.record and msg.file is not None) or \
-            (not self.record and msg.state == 'on'):
-            return True
-        else:
+        1. If recording and a wav file was created
+        2. If not recording (no classification), any active channel transmission
+           (msg.state == 'on') is considered interesting
+        3. AND (if recording and configured) the audio classification is in hold_scan_on
+        """
+        base_interesting = (self.record and msg.file is not None) or \
+            (not self.record and msg.state == 'on')
+
+        if not base_interesting:
             return False
+
+        if self.record and self.hold_scan_on is not None and \
+                msg.classification not in self.hold_scan_on:
+            return False
+
+        return True
 
     def stop(self) -> None:
         """Stop the receiver

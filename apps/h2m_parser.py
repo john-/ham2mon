@@ -70,6 +70,8 @@ CLI_OPTION_MAP: list[CliMapping] = [
 
     # Scanner Options
     CliMapping("auto_priority",    "scanner",        "auto_priority", bool),
+    CliMapping("hold_scan_on",     "scanner",        "hold_scan_on",
+               lambda v: {x.strip() for x in v.split(",") if x.strip()} if isinstance(v, str) else v),
 
     # Frequency Policies
     CliMapping("frequency_file_name", "frequency_policies", "file",             Path),
@@ -241,6 +243,9 @@ class CLParser(object):
 
         parser.add_argument("-P", "--auto-priority", action="store_true", default=None,
                           dest="auto_priority", help="Automatically add voice channels as priority channels")
+
+        parser.add_argument("--hold-scan-on", type=str, dest="hold_scan_on", default=None,
+                          help="Comma-separated transmission classifications to hold range scanning on (e.g. V,D)")
 
         parser.add_argument("-T", "--activity-type", type=str,
                           dest="activity_type", default=None,

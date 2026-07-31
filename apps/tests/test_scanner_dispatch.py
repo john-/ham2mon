@@ -204,6 +204,7 @@ async def test_got_channel_activity_dispatches_notifiers_only_when_interesting(
     scanner.frequency_provider = AsyncMock()
     scanner._component_manager = cm
     scanner.record = True
+    scanner.hold_scan_on = None
 
 
     from channel_loggers import ChannelMessage

@@ -50,6 +50,41 @@ def test_auto_priority_warning_when_disable_priority_set(caplog: pytest.LogCaptu
     assert "disable_priority is True" in caplog.text
 
 
+def test_hold_scan_on_warning_when_no_wav_gatekeeper(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level("WARNING"):
+        _ = build_config_from_dict({
+            "scanner": {"hold_scan_on": ["V"]},
+        })
+    assert "scanner.hold_scan_on is configured" in caplog.text
+
+
+def test_hold_scan_on_no_warning_when_wav_gatekeeper_present(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level("WARNING"):
+        _ = build_config_from_dict({
+            "scanner": {"hold_scan_on": ["V"]},
+            "components": {
+                "wav_gatekeeper": {"class_path": "dummy"}
+            }
+        })
+    assert "scanner.hold_scan_on is configured" not in caplog.text
+
+
+def test_hold_scan_on_cli_flag_parsing():
+    parser = CLParser(["--hold-scan-on", "V,D"])
+    assert parser.master_config.scanner.hold_scan_on == {"V", "D"}
+
+
+def test_hold_scan_on_yaml_scalar_string_and_invalid_type():
+    cfg_scalar = build_config_from_dict({"scanner": {"hold_scan_on": "V"}})
+    assert cfg_scalar.scanner.hold_scan_on == {"V"}
+
+    cfg_comma = build_config_from_dict({"scanner": {"hold_scan_on": "V, D"}})
+    assert cfg_comma.scanner.hold_scan_on == {"V", "D"}
+
+    with pytest.raises(ConfigError, match="Invalid scanner.hold_scan_on type"):
+        _ = build_config_from_dict({"scanner": {"hold_scan_on": 123}})
+
+
 def test_sample_rate_floor():
     with pytest.raises(ConfigError, match="sample_rate"):
         _ = build_config_from_dict({
