@@ -84,6 +84,15 @@ class Component(ABC):
     def stop(self) -> None:
         """Called on orderly shutdown."""
 
+    async def stop_async(self) -> None:
+        """Async teardown hook; defaults to the synchronous ``stop()``.
+
+        Components with async-only teardown (e.g. an MQTT session close)
+        override this. Invoked by ``ComponentManager.stop_all_async()`` on
+        orderly shutdown.
+        """
+        self.stop()
+
     def recover(self) -> None:
         """Attempt orderly recovery by restarting the component."""
         try:

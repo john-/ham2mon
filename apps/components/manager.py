@@ -192,28 +192,30 @@ class ComponentManager:
         tasks = [_safe_dispatch(n) for n in self.notifiers]
         _ = await asyncio.gather(*tasks, return_exceptions=True)
 
-    def stop_all(self) -> None:
-        """Synchronously stop all components and clean up thread pools."""
+    async def stop_all_async(self) -> None:
+        """Asynchronously stop all components and clean up thread pools.
+
+        Calls each component's ``stop_async()`` (which defaults to the
+        synchronous ``stop()`` for components that do not override it), so
+        components requiring async teardown (e.g. an MQTT session close) get
+        their graceful shutdown path on an orderly exit.
+        """
+        components: list[Component] = list(self.notifiers)
         if self.wav_gatekeeper:
-            try:
-                self.wav_gatekeeper.stop()
-            except Exception as e:  # noqa: BLE001
+            components.append(self.wav_gatekeeper)
+
+        results = await asyncio.gather(
+            *(component.stop_async() for component in components),
+            return_exceptions=True,
+        )
+        for component, result in zip(components, results, strict=False):
+            if isinstance(result, BaseException):
                 logger.warning(
-                    "Error stopping WavGatekeeper component %s: %s",
-                    self.wav_gatekeeper.name,
-                    e,
+                    "Error stopping component %s asynchronously: %s",
+                    component.name,
+                    result,
                 )
 
         if self._executor:
             self._executor.shutdown(wait=False)
             self._executor = None
-
-        for notif in self.notifiers:
-            try:
-                notif.stop()
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "Error stopping TransmissionNotifier component %s: %s",
-                    notif.name,
-                    e,
-                )

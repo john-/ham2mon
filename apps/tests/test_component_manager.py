@@ -76,6 +76,29 @@ class CrashingNotifier(TransmissionNotifier):
         pass
 
 
+class AsyncStopNotifier(TransmissionNotifier):
+    def __init__(self, config: dict[str, object]) -> None:
+        super().__init__(config)
+        self.stop_calls: int = 0
+        self.stop_async_calls: int = 0
+
+    @override
+    def start(self) -> None:
+        pass
+
+    @override
+    async def on_transmission(self, record: TransmissionRecord) -> None:
+        pass
+
+    @override
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    @override
+    async def stop_async(self) -> None:
+        self.stop_async_calls += 1
+
+
 def test_load_component_class_validation():
     with pytest.raises(
         ConfigError,
@@ -87,7 +110,8 @@ def test_load_component_class_validation():
         load_component_class("nonexistent_module.Foo")
 
 
-def test_component_manager_timeout_isolation():
+@pytest.mark.asyncio
+async def test_component_manager_timeout_isolation():
     cfg = MasterHam2MonConfig()
     cfg.components.wav_gatekeeper = ComponentEntryConfig(
         class_path="tests.test_component_manager.HangingGatekeeper",
@@ -115,10 +139,11 @@ def test_component_manager_timeout_isolation():
     assert res.keep is True  # Safe default on timeout
     assert "timeout" in (res.detail or "").lower()
 
-    mgr.stop_all()
+    await mgr.stop_all_async()
 
 
-def test_component_manager_exception_fault_isolation():
+@pytest.mark.asyncio
+async def test_component_manager_exception_fault_isolation():
     cfg = MasterHam2MonConfig()
     cfg.components.wav_gatekeeper = ComponentEntryConfig(
         class_path="tests.test_component_manager.CrashingGatekeeper",
@@ -146,7 +171,7 @@ def test_component_manager_exception_fault_isolation():
     assert res.keep is True  # Safe default on exception
     assert "error" in (res.detail or "").lower()
 
-    mgr.stop_all()
+    await mgr.stop_all_async()
 
 
 @pytest.mark.asyncio
@@ -174,3 +199,27 @@ async def test_component_manager_dispatch_transmission():
 
     await mgr.dispatch_transmission(rec)
     assert n1.count == 1
+
+
+@pytest.mark.asyncio
+async def test_component_manager_stop_all_async_uses_async_teardown():
+    cfg = MasterHam2MonConfig()
+    async_stop = AsyncStopNotifier({})
+    sync_fallback = CountingNotifier({})
+    mgr = ComponentManager(cfg)
+    mgr.notifiers = [async_stop, sync_fallback]
+
+    await mgr.stop_all_async()
+
+    assert async_stop.stop_async_calls == 1
+    assert async_stop.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_component_manager_stop_all_async_defaults_to_sync_stop():
+    cfg = MasterHam2MonConfig()
+    n = CountingNotifier({})
+    mgr = ComponentManager(cfg)
+    mgr.notifiers = [n]
+
+    await mgr.stop_all_async()

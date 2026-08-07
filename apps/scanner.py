@@ -729,7 +729,7 @@ class Scanner:
                 self.frequencies = await self.frequency_manager.change({'single': freq, 'priority': None, 'mode': 'add'})
 
     async def clean_up(self) -> None:
-        self._component_manager.stop_all()
+        await self._component_manager.stop_all_async()
         # cleanup terminating all demodulators
 
         for idx, demod in enumerate(self.receiver.demodulators):
