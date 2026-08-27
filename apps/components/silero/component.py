@@ -5,10 +5,11 @@ Evaluates WAV recordings directly using Silero VAD (ONNX Runtime).
 
 import wave
 from pathlib import Path
-from typing import Protocol, cast, override
+from typing import Protocol, cast
 
 import numpy as np
 from config import resolve_app_relative_path
+from typing_extensions import override
 
 from components.base import ChannelInfo, ComponentResult, WavGatekeeper
 

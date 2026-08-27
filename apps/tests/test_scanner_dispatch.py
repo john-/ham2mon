@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-from typing import override
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,6 +15,7 @@ from frequency_manager import (
     TransmissionRecord,
 )
 from scanner import Scanner
+from typing_extensions import override
 
 
 class MockGatekeeper(WavGatekeeper):

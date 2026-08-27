@@ -2,10 +2,9 @@
 TransmissionNotifier component wrapping ham2mon activity loggers.
 """
 
-from typing import override
-
 from channel_loggers import ActivityLogger
 from frequency_manager import TransmissionRecord
+from typing_extensions import override
 
 from components.base import TransmissionNotifier
 

@@ -2,8 +2,6 @@
 Unit tests for ham2mon component base classes and dataclasses.
 """
 
-from typing import override
-
 from components.base import (
     ChannelInfo,
     ComponentResult,
@@ -11,6 +9,7 @@ from components.base import (
     WavGatekeeper,
 )
 from frequency_manager import TransmissionRecord
+from typing_extensions import override
 
 
 class DummyGatekeeper(WavGatekeeper):

@@ -11,7 +11,9 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Literal, Self
+from typing import IO, Literal
+
+from typing_extensions import Self
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
