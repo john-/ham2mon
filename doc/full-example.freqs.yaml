@@ -1,0 +1,214 @@
+# ============================================================================
+# full-example.freqs.yaml
+# ----------------------------------------------------------------------------
+# A progressive, self-documented example of every way frequencies can be
+# configured in ham2mon. It builds up from the bare minimum to full-featured
+# entries so each option can be seen in isolation before being combined.
+#
+# Load it with the -F/--frequencies option, e.g.:
+#
+#     uv run apps/ham2mon.py -a "file=...,rate=1E6" -r 1E6 \
+#         -F doc/full-example.freqs.yaml
+#
+# Validation rules enforced when this file is loaded (see FrequencyManager):
+#   * All frequencies are in MHz and must include a decimal point
+#     (e.g. 450.100). A YAML integer such as "450" is rejected.
+#   * Each entry is either a single frequency (single:) or a range
+#     (lo: and hi:), never both.
+#   * For a range, both lo: and hi: are required and hi: must be larger.
+#   * Each frequency (or range) may be declared only once. Multiple CTCSS
+#     tones for one frequency must share a single entry under tones: [...];
+#     declaring the frequency again to add a tone is an error.
+#   * CTCSS tone frequencies are in Hz. Tones only load when
+#     max_ctcss_tones > 0 in the app configuration (receiver.max_ctcss_tones).
+#   * Banks are optional tags that filter which channels are demodulated
+#     (--banks or frequency_policies.active_banks); see README "Bank Filtering".
+#     A bank tag may also be written as a dict mapping the tag to a per-bank
+#     display label (see section 5), and an optional top-level ``banks:``
+#     section names tags for the RECEIVER panel Banks row (display only).
+#
+# The frequencies and labels below are schematic placeholders. Labels are
+# generic role names, not real organizations.
+# ============================================================================
+
+# Optional top-level banks: section (display only). It attaches a friendly
+# name to a bank tag for the RECEIVER panel "Banks" row, e.g.:
+#     Banks: DISPATCH (Dispatch), FIELD (Field operations)
+# It does NOT declare membership -- an entry belongs to a bank only when its
+# own banks: tag lists that bank.
+banks:
+  DISPATCH: "Dispatch"
+  LOG: "Logistics"
+  FIELD: "Field operations"
+
+frequencies:
+
+  # -------------------------------------------------------------------------
+  # 1. THE BARE MINIMUM
+  # -------------------------------------------------------------------------
+  # A single frequency with no metadata at all. The scanner treats it as a
+  # plain carrier-squelch (CSQ) channel: no label, no priority, no lockout.
+  - single: 450.100
+
+  # -------------------------------------------------------------------------
+  # 2. IDENTIFYING CHANNELS (labels)
+  # -------------------------------------------------------------------------
+  # A label is shown in the CHANNELS panel next to the frequency.
+  - label: "Dispatch supervisor"
+    single: 450.125
+
+  # A frequency range (lo: to hi:). Both bounds are required and the scanner
+  # sweeps every channel between them.
+  - label: "Field operations"
+    lo: 450.200
+    hi: 450.400
+
+  # -------------------------------------------------------------------------
+  # 3. SCANNING POLICIES (priority and lockout)
+  # -------------------------------------------------------------------------
+  # priority: 1 is the highest priority; larger numbers are lower. When a
+  # priority channel is active it preempts lower-priority ones.
+  - label: "Logistics coordinator"
+    single: 450.600
+    priority: 1
+
+  # Equal priorities are allowed.
+  - label: "Site technicians"
+    single: 450.650
+    priority: 2
+  - label: "Facilities engineer"
+    single: 450.700
+    priority: 2
+
+  # locked: true means the scanner will never tune a demodulator to it.
+  - label: "Maintenance crew"
+    single: 450.750
+    locked: true
+
+  # A range can carry both policies. locked: false is shown explicitly here,
+  # though it is the default.
+  - label: "Facilities engineering"
+    lo: 450.450
+    hi: 450.550
+    priority: 3
+    locked: false
+
+  # -------------------------------------------------------------------------
+  # 4. CTCSS TONES
+  # -------------------------------------------------------------------------
+  # A single tone as a bare frequency in Hz. This channel is in Tone Squelch
+  # mode: it only unmutes/records when the 100.0 Hz sub-audible tone is
+  # present.
+  - label: "Support line"
+    single: 450.800
+    tones: [100.0]
+
+  # Multiple valid tones on one entry, as bare frequencies.
+  - label: "Dispatch backup"
+    single: 450.850
+    tones: [100.0, 141.3]
+
+  # Tone rule dicts: an optional per-tone label (shown in the UI after the
+  # tone is matched). Bare floats and dicts can be mixed in one tones: list.
+  - label: "Operations net"
+    single: 450.900
+    tones:
+      - ctcss: 100.0
+        label: "Primary"
+      - ctcss: 141.3
+        label: "Backup"
+
+  # Tones on a range.
+  - label: "Regional field teams"
+    lo: 450.950
+    hi: 451.050
+    tones: [110.9]
+
+  # -------------------------------------------------------------------------
+  # 5. BANKS
+  # -------------------------------------------------------------------------
+  # A single bank tag may be written as a plain string or as a list.
+  - label: "Logistics net"
+    single: 451.200
+    banks: "LOG"
+
+  - label: "Dispatch and logistics"
+    single: 451.250
+    banks: ["DISPATCH", "LOG"]
+
+  # Bank tags on a range.
+  - label: "Field support band"
+    lo: 451.051
+    hi: 451.150
+    banks: ["FIELD"]
+
+  # Per-tone banks: each tone rule can carry its own banks, so the resolved
+  # tag depends on which tone opened squelch. The bare tone below inherits the
+  # entry-level banks when the entry has any (here it has none).
+  - label: "Multi-role repeater"
+    single: 451.350
+    tones:
+      - ctcss: 100.0
+        label: "Primary"
+        banks: ["DISPATCH"]
+      - 127.3
+
+  # Dict form: {bank tag: per-bank display label}. The keys are membership
+  # tags -- the channel belongs to every listed bank, exactly like the list
+  # form. The values are per-bank label overrides: when a hit resolves to one
+  # of these banks, that bank's label is shown instead of the entry label.
+  # This is how a single frequency reads differently per geographic area
+  # without per-tone labels. Precedence for a matched entry is per-bank label,
+  # then per-tone label, then the entry label.
+  - label: "Area repeater"
+    single: 451.275
+    banks:
+      AREA_A: "Net A"
+      AREA_B: "Net B"
+
+  # A range with per-area labels -- the whole span gets a different label in
+  # each area. No lo/hi reference keys are needed. The span is kept disjoint
+  # from the ranges above so every frequency matches at most one range.
+  - label: "Area field band"
+    lo: 451.160
+    hi: 451.199
+    banks:
+      AREA_A: "Net A"
+      AREA_B: "Net B"
+
+  # -------------------------------------------------------------------------
+  # 6. COMBINING OPTIONS
+  # -------------------------------------------------------------------------
+  # Entry-level banks, tones, and priority together. When filtering on
+  # DISPATCH, this channel is demodulated (100.0 Hz tone) and kept.
+  - label: "Priority dispatch net"
+    single: 451.400
+    priority: 1
+    banks: ["DISPATCH"]
+    tones: [100.0]
+
+  # -------------------------------------------------------------------------
+  # 7. FULL-FEATURED EXAMPLES
+  # -------------------------------------------------------------------------
+  # A single frequency exercising every option at once.
+  - label: "Command coordination"
+    single: 451.500
+    priority: 2
+    locked: false
+    banks: ["DISPATCH", "FIELD"]
+    tones:
+      - ctcss: 100.0
+        label: "Primary"
+        banks: ["DISPATCH"]
+      - ctcss: 141.3
+        label: "Field backup"
+        banks: ["FIELD"]
+
+  # A range exercising every option at once.
+  - label: "Wide-area field operations"
+    lo: 451.600
+    hi: 451.800
+    priority: 5
+    locked: false
+    banks: ["FIELD"]
+    tones: [110.9, 123.0]
