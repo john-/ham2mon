@@ -12,18 +12,16 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import estimate
 import h2m_parser as prsr
 import numpy as np
 import receiver as recvr
-from components.base import ChannelInfo
-from components.manager import ComponentManager
 from center_frequency_provider import FrequencyGroup, FrequencyProvider
 from channel_loggers import ActivityLogger, ActivityParams, ChannelMessage
+from components.base import ChannelInfo
+from components.manager import ComponentManager
 from config import GainConfig, MasterHam2MonConfig
-
 from frequency_manager import (
     ChannelFrequency,
     ChannelList,
@@ -43,7 +41,6 @@ from utilities import (
     wav_bytes_per_sec,
     wav_duration_sec,
 )
-
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
 
@@ -299,6 +296,11 @@ class Scanner:
 
         return 10.0 * np.log10(power) - 70.0
 
+    # TODO: active_banks is set once at startup (ham2mon.py) and never changes
+    # mid-session. If it ever becomes mutable at runtime, note that bank filtering
+    # only gates assignment in _assign_channels_to_demodulators(), so a demodulator
+    # already tuned to a now-inactive-bank channel would keep running here until
+    # the transmission ends naturally.
     async def _process_current_demodulators(self, channels: ChannelList) -> None:
 
         the_now = time.time()
@@ -361,6 +363,12 @@ class Scanner:
 
             # If channel not in demodulators
             if channel.bb not in self.receiver.get_demod_freqs() and not channel.locked:
+                # Skip if channel's resolved bank tags are not active in current bank filter
+                # selection.  Promiscuous mode (no --banks) is always active, so skip the whole
+                # check to avoid a per-cycle resolve_banks() scan for non-bank users.
+                if self.frequency_manager.active_banks and not self.frequency_manager.is_bank_active(
+                        self.frequency_manager.resolve_banks(channel.rf, channel.matched_ctcss)):
+                    continue
                 # Sequence through each demodulator
                 for idx in range(len(self.receiver.demodulators)):
                     demodulator = self.receiver.demodulators[idx]
@@ -538,6 +546,15 @@ class Scanner:
             msg.detail = 'Discarded mismatched CTCSS'
             return msg, None
 
+        # 1b. Active bank selection discard: if the final resolved bank tags for this transmission do not match active_banks
+        resolved_banks = msg.banks or self.frequency_manager.resolve_banks(msg.rf, msg.matched_ctcss)
+        if not self.frequency_manager.is_bank_active(resolved_banks):
+            _delete_file(tmp_path, "inactive bank selection")
+            msg.detail = 'Discarded inactive bank selection'
+            return msg, None
+
+
+
         # 2. Minimum duration check: reject recordings shorter than min_recording_sec.
         # wav_bytes_per_sec encapsulates DEFAULT_AUDIO_RATE and bit-depth, keeping
         # this formula consistent with the duration_sec calculation below.
@@ -551,6 +568,7 @@ class Scanner:
         # 3. Component evaluation (WavGatekeeper)
         classification: str | None = None
         comp_metadata: dict[str, object] = {}
+
         if self._component_manager.has_wav_component():
 
             info = ChannelInfo(
@@ -563,6 +581,7 @@ class Scanner:
                 signal_db=msg.signal_db,
                 timestamp=msg.started_at or time.time(),
                 wav_tmp_path=tmp_path,
+                banks=resolved_banks,
             )
             res = self._component_manager.process_wav(tmp_path, info)
             classification = res.classification
@@ -613,6 +632,7 @@ class Scanner:
                     "rf": msg.rf,
                     "channel": msg.channel,
                     "label": msg.label,
+                    "banks": resolved_banks,
                     "classification": classification,
                     "duration_sec": duration_sec,
                     "metadata": comp_metadata,
@@ -635,6 +655,7 @@ class Scanner:
             started_at=started_at,
             duration_sec=duration_sec,
             metadata=comp_metadata,
+            banks=resolved_banks,
         )
         return msg, record
 
@@ -643,7 +664,7 @@ class Scanner:
         This callback is to let the demodulators inform us about a
         transmission.
 
-        1. Embellish metadata FIRST (label/priority)
+        1. Embellish metadata FIRST (label/priority/banks)
         2. Process recording persistence / classification SECOND
         3. Log activity via channel logger
         4. If channel is interesting, notify frequency provider
@@ -653,9 +674,10 @@ class Scanner:
         if msg is None:
             return
 
-        # 1. Embellish metadata FIRST so label/priority are present for persistence & classification
+        # 1. Embellish metadata FIRST so label/priority/banks are present for persistence & classification
         msg.label = self.frequency_manager.get_label(msg.rf, msg.matched_ctcss)
         msg.priority = self.frequency_manager.is_priority(msg.bb)
+        msg.banks = self.frequency_manager.resolve_banks(msg.rf, msg.matched_ctcss)
 
         # 2. Process recording persistence / classification SECOND
         record: TransmissionRecord | None = None

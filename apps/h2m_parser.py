@@ -77,6 +77,7 @@ CLI_OPTION_MAP: list[CliMapping] = [
     CliMapping("frequency_file_name", "frequency_policies", "file",             Path),
     CliMapping("disable_lockout",     "frequency_policies", "disable_lockout",  bool),
     CliMapping("disable_priority",    "frequency_policies", "disable_priority", bool),
+    CliMapping("active_banks",        "frequency_policies", "active_banks",     list),
 
     # Display
     CliMapping("max_db",     "display", "max_db",     float),
@@ -226,6 +227,9 @@ class CLParser(object):
         parser.add_argument("-t", "--threshold", type=int,
                           dest="threshold_db", default=None,
                           help="Threshold in dB")
+
+        parser.add_argument("--banks", nargs="+", dest="active_banks", default=None,
+                          help="Active scanner banks to monitor (e.g. --banks FRS_FAMILY SECURITY)")
 
         parser.add_argument("-w", "--write",
                           dest="record", action="store_true", default=None,

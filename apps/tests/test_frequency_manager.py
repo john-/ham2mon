@@ -1,8 +1,16 @@
+import logging
+from pathlib import Path
+
 import pytest
 from frequency_manager import (
-    FrequencyManager, FrequencyConfiguration,
+    ChannelMessage,
+    ConfigFrequency,
+    FrequencyConfiguration,
+    FrequencyInfo,
+    FrequencyManager,
+    ToneRule,
+    TransmissionRecord,
 )
-from pathlib import Path
 
 TEST_DIR = Path(__file__).parent
 
@@ -275,76 +283,33 @@ users already tend to write these configs:
 """
 
 
-@pytest.mark.asyncio
-async def test_add_merges_second_ctcss_tone_for_same_frequency(fm_empty):
-
-    FREQ = 462.400
-
-    await fm_empty.add({'label': 'Security Patrol dispatch',
-                        'single': FREQ, 'priority': 1, 'ctcss': 100.0})
-    frequencies = await fm_empty.add({'label': 'Security Patrol dispatch (Backup)',
-                                      'single': FREQ, 'priority': 1, 'ctcss': 67.0})
-
-    # No new entry was added -- the second declaration was merged into the first
-    assert len(frequencies) == 1
-
-    merged = frequencies[LAST_ENTRY]
-    assert merged.label == 'Security Patrol dispatch'  # first entry's label wins
-    assert merged.ctcss == 100.0                        # primary tone, back-compat
-    assert merged.ctcss_tones == [100.0, 67.0]
-
 
 @pytest.mark.asyncio
-async def test_add_merges_third_ctcss_tone_for_same_frequency(fm_empty):
-
-    FREQ = 462.400
-
-    await fm_empty.add({'label': 'Primary', 'single': FREQ, 'ctcss': 100.0})
-    await fm_empty.add({'label': 'Backup 1', 'single': FREQ, 'ctcss': 67.0})
-    frequencies = await fm_empty.add({'label': 'Backup 2', 'single': FREQ, 'ctcss': 82.5})
-
-    assert len(frequencies) == 1
-    assert frequencies[LAST_ENTRY].ctcss_tones == [100.0, 67.0, 82.5]
-
-
-@pytest.mark.asyncio
-async def test_add_merges_ctcss_tone_for_same_range(fm_empty):
-
-    FREQ = 450.0
-
-    await fm_empty.add({'label': 'Primary', 'lo': FREQ, 'hi': FREQ+1, 'ctcss': 100.0})
-    frequencies = await fm_empty.add({'label': 'Backup', 'lo': FREQ, 'hi': FREQ+1, 'ctcss': 67.0})
-
-    assert len(frequencies) == 1
-    assert frequencies[LAST_ENTRY].ctcss_tones == [100.0, 67.0]
-
-
-@pytest.mark.asyncio
-async def test_fail_duplicate_ctcss_tone_same_value(fm_empty):
-    """Repeating the exact same tone for the same frequency is a real duplicate, not a merge."""
+async def test_fail_duplicate_frequency(fm_empty):
+    """Declaring the same frequency twice is always an error. Use tones: [...] for multiple tones."""
 
     FREQ = 462.400
 
     entry = {'label': 'Security Patrol dispatch', 'single': FREQ, 'ctcss': 100.0}
-
     await fm_empty.add(entry)
 
+    # Same entry exactly → error
     with pytest.raises(ValueError, match='already occurs in list'):
         await fm_empty.add(entry)
 
+    # Same frequency, different ctcss → also an error now
+    with pytest.raises(ValueError, match='already occurs in list'):
+        await fm_empty.add({'label': 'Backup', 'single': FREQ, 'ctcss': 67.0})
+
 
 @pytest.mark.asyncio
-async def test_fail_merge_ctcss_conflicting_priority(fm_empty):
-    """A duplicate-frequency entry with a different explicit priority is ambiguous config."""
+async def test_fail_duplicate_range(fm_empty):
+    """Declaring the same range twice is always an error."""
 
-    FREQ = 462.400
+    await fm_empty.add({'label': 'Primary', 'lo': 450.0, 'hi': 451.0, 'ctcss': 100.0})
 
-    await fm_empty.add({'label': 'Security Patrol dispatch',
-                        'single': FREQ, 'priority': 1, 'ctcss': 100.0})
-
-    with pytest.raises(ValueError, match='conflicts with existing priority'):
-        await fm_empty.add({'label': 'Security Patrol dispatch (Backup)',
-                            'single': FREQ, 'priority': 2, 'ctcss': 67.0})
+    with pytest.raises(ValueError, match='already occurs in list'):
+        await fm_empty.add({'label': 'Backup', 'lo': 450.0, 'hi': 451.0, 'ctcss': 67.0})
 
 
 @pytest.mark.asyncio
@@ -352,12 +317,35 @@ async def test_get_ctcss_tones_returns_all_configured_tones(fm_empty):
 
     FREQ = 462.400
 
-    await fm_empty.add({'label': 'Primary', 'single': FREQ, 'ctcss': 100.0})
-    await fm_empty.add({'label': 'Backup', 'single': FREQ, 'ctcss': 67.0})
+    await fm_empty.add({
+        'single': FREQ,
+        'label': 'Security Patrol',
+        'tones': [
+            {'ctcss': 100.0, 'label': 'Primary'},
+            {'ctcss': 67.0,  'label': 'Backup'},
+        ]
+    })
 
     fm_empty.set_center(FREQ*1e6)
 
     assert fm_empty.get_ctcss_tones(FREQ) == [100.0, 67.0]
+
+
+
+@pytest.mark.asyncio
+async def test_get_ctcss_tones_returns_tones_from_tones_array(fm_empty):
+    """get_ctcss_tones must return CTCSS tones specified under the unified tones: [...] array."""
+    await fm_empty.add({
+        'single': 467.7125,
+        'label': 'Base',
+        'banks': ['FRS_FAMILY'],
+        'tones': [
+            {'ctcss': 67.0, 'label': 'Security', 'banks': ['SECURITY']},
+            {'ctcss': 71.9, 'label': 'Operations', 'banks': ['OPERATIONS']},
+        ]
+    })
+    tones = fm_empty.get_ctcss_tones(467.7125)
+    assert set(tones) == {67.0, 71.9}
 
 
 @pytest.mark.asyncio
@@ -377,26 +365,19 @@ async def test_get_ctcss_info_still_returns_only_primary_tone(fm_empty):
     """
     FREQ = 462.400
 
-    await fm_empty.add({'label': 'Primary', 'single': FREQ, 'ctcss': 100.0})
-    await fm_empty.add({'label': 'Backup', 'single': FREQ, 'ctcss': 67.0})
+    await fm_empty.add({
+        'single': FREQ,
+        'label': 'Security Patrol',
+        'ctcss': 100.0,
+        'tones': [
+            {'ctcss': 100.0, 'label': 'Primary'},
+            {'ctcss': 67.0,  'label': 'Backup'},
+        ]
+    })
 
     assert fm_empty.get_ctcss_info(FREQ) == 100.0
 
 
-@pytest.mark.asyncio
-async def test_process_frequencies_data_merges_duplicate_ctcss_entries(fm_empty):
-    """End-to-end version of the merge, through the same path a real YAML config load uses."""
-
-    frequencies = await load_inline_config(
-        fm_empty,
-        {'label': 'Security Patrol dispatch', 'single': 462.400,
-            'priority': 1, 'ctcss': 100.0},
-        {'label': 'Security Patrol dispatch (Backup)',
-            'single': 462.400, 'priority': 1, 'ctcss': 67.0},
-    )
-
-    assert len(frequencies) == 1
-    assert frequencies[0].ctcss_tones == [100.0, 67.0]
 
 
 @pytest.mark.asyncio
@@ -999,32 +980,10 @@ async def test_get_priority_info(fm_empty):
 
 
 @pytest.mark.asyncio
-async def test_max_ctcss_tones_limit(fm_empty):
-    """Test that max_ctcss_tones limits CTCSS tone count and throws validation errors."""
+async def test_max_ctcss_tones_disabled(fm_empty):
+    """max_ctcss_tones=0 disables CTCSS entirely: adding a frequency with ctcss: raises."""
     from frequency_manager import FrequencyConfiguration, FrequencyManager
 
-    # Set up config with max_ctcss_tones = 2
-    config_2 = FrequencyConfiguration(
-        file_name=None,
-        disable_lockout=False,
-        disable_priority=False,
-        max_ctcss_tones=2
-    )
-    fm_2 = FrequencyManager(config_2, channel_spacing=5000)
-
-    # 1. Add first CTCSS tone: OK
-    await fm_2.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
-    assert fm_2.frequencies[0].ctcss_tones == [100.0]
-
-    # 2. Add second CTCSS tone (merge): OK
-    await fm_2.add({'single': 144.390, 'ctcss': 141.3})
-    assert fm_2.frequencies[0].ctcss_tones == [100.0, 141.3]
-
-    # 3. Add third CTCSS tone (merge): should raise ValueError due to limit
-    with pytest.raises(ValueError, match="exceeds max_ctcss_tones limit"):
-        await fm_2.add({'single': 144.390, 'ctcss': 151.4})
-
-    # Set up config with max_ctcss_tones = 0 (CTCSS disabled)
     config_0 = FrequencyConfiguration(
         file_name=None,
         disable_lockout=False,
@@ -1033,48 +992,709 @@ async def test_max_ctcss_tones_limit(fm_empty):
     )
     fm_0 = FrequencyManager(config_0, channel_spacing=5000)
 
-    # 4. Adding with CTCSS should fail immediately when max_ctcss_tones is 0
     with pytest.raises(ValueError, match="CTCSS is disabled"):
         await fm_0.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
 
 
 @pytest.mark.asyncio
-async def test_change_ctcss_merging(fm_empty):
-    """Test that change() supports CTCSS tone merging and respects max limits."""
-    # Default max_ctcss_tones is 3
-    # 1. Add a frequency with a CTCSS tone
+async def test_max_ctcss_tones_bypass_via_tones_raises_when_exceeding(fm_empty):
+    """max_ctcss_tones must cap tones: -only entries too (not just scalar ctcss:).
+
+    Regression guard: the count check previously keyed off wanted.ctcss, so a
+    tones: array with more tones than the receiver supports slipped past config
+    validation and was only truncated silently at runtime.
+    """
+    with pytest.raises(ValueError, match="max_ctcss_tones"):
+        await fm_empty.add({
+            'single': 467.7125,
+            'label': 'FRS Family',
+            'tones': [
+                {'ctcss': 67.0, 'label': 'Tone 1'},
+                {'ctcss': 71.9, 'label': 'Tone 2'},
+                {'ctcss': 74.4, 'label': 'Tone 3'},
+                {'ctcss': 77.0, 'label': 'Tone 4'},
+            ],
+        })
+
+
+@pytest.mark.asyncio
+async def test_max_ctcss_tones_disabled_rejects_tones_only_entry():
+    """max_ctcss_tones=0 disables CTCSS even for tones: -only entries."""
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+
+    config_0 = FrequencyConfiguration(
+        file_name=None,
+        disable_lockout=False,
+        disable_priority=False,
+        max_ctcss_tones=0
+    )
+    fm_0 = FrequencyManager(config_0, channel_spacing=5000)
+
+    with pytest.raises(ValueError, match="CTCSS is disabled"):
+        await fm_0.add({
+            'single': 144.390,
+            'label': 'Frequency',
+            'tones': [
+                {'ctcss': 100.0, 'label': 'Primary'},
+                {'ctcss': 141.3, 'label': 'Backup'},
+            ],
+        })
+
+
+@pytest.mark.asyncio
+async def test_change_does_not_merge_ctcss(fm_empty):
+    """change() no longer merges CTCSS tones; ctcss key in entry is ignored for tone accumulation."""
     await fm_empty.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
     assert fm_empty.frequencies[0].ctcss_tones == [100.0]
 
-    # 2. Merge another CTCSS tone via change()
+    # change() with a ctcss key should not accumulate tones
     await fm_empty.change({'single': 144.390, 'ctcss': 141.3})
-    assert fm_empty.frequencies[0].ctcss_tones == [100.0, 141.3]
-
-    # 3. Merge a third tone via change()
-    await fm_empty.change({'single': 144.390, 'ctcss': 151.4})
-    assert fm_empty.frequencies[0].ctcss_tones == [100.0, 141.3, 151.4]
-
-    # 4. Merging a fourth tone should fail (max limit is 3)
-    with pytest.raises(ValueError, match="exceeds max_ctcss_tones limit"):
-        await fm_empty.change({'single': 144.390, 'ctcss': 162.2})
+    assert fm_empty.frequencies[0].ctcss_tones == [100.0]
 
 
 @pytest.mark.asyncio
 async def test_get_label_with_ctcss(fm_empty):
     """Test that get_label correctly resolves the label matching a specific CTCSS tone."""
-    # 1. Add multiple entries for same frequency with different CTCSS tones and labels
-    await fm_empty.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Tone 100'})
-    await fm_empty.add({'single': 144.390, 'ctcss': 141.3, 'label': 'Tone 141'})
-    await fm_empty.add({'single': 144.390, 'ctcss': 151.4, 'label': 'Tone 151'})
+    await fm_empty.add({
+        'single': 144.390,
+        'label': 'Tone 100',
+        'ctcss': 100.0,
+        'tones': [
+            {'ctcss': 100.0, 'label': 'Tone 100'},
+            {'ctcss': 141.3, 'label': 'Tone 141'},
+            {'ctcss': 151.4, 'label': 'Tone 151'},
+        ]
+    })
 
-    # 2. Assert that get_label without ctcss returns the primary label
+    # get_label without ctcss returns the primary label
     assert fm_empty.get_label(144.390) == 'Tone 100'
 
-    # 3. Assert that get_label with specific ctcss returns the corresponding label
+    # get_label with specific ctcss returns the corresponding label
     assert fm_empty.get_label(144.390, 100.0) == 'Tone 100'
     assert fm_empty.get_label(144.390, 141.3) == 'Tone 141'
     assert fm_empty.get_label(144.390, 151.4) == 'Tone 151'
 
-    # 4. Assert that get_label with unmatched/unknown ctcss falls back to primary label
+    # get_label with unmatched ctcss falls back to primary label
     assert fm_empty.get_label(144.390, 88.5) == 'Tone 100'
 
+
+def test_tone_rule_validation():
+    """Test ToneRule dataclass construction and validation."""
+    rule = ToneRule(ctcss=67.0, label="Fire Tac", banks="FIRE_TAC")
+    assert rule.ctcss == 67.0
+    assert rule.label == "Fire Tac"
+    assert rule.banks == ["FIRE_TAC"]
+
+    with pytest.raises(ValueError, match="positive number"):
+        ToneRule(ctcss=-5.0)
+
+    with pytest.raises(ValueError, match="CTCSS must be a float"):
+        ToneRule(ctcss="invalid")
+
+
+def test_frequency_info_banks_and_tones_normalization():
+    """Test FrequencyInfo/ConfigFrequency normalization for banks and tones."""
+    # 1. Scalar bank string auto-promotion (FrequencyInfo base class)
+    info1 = FrequencyInfo(banks="PUBLIC_SAFETY")
+    assert info1.banks == ["PUBLIC_SAFETY"]
+
+    # 2. Scalar ctcss auto-promotion to tones list (ConfigFrequency only — tones lives there)
+    info2 = ConfigFrequency(single=462.400, ctcss=100.0, banks=["FIRE_TAC"])
+    assert len(info2.tones) == 1
+    assert info2.tones[0].ctcss == 100.0
+    assert info2.tones[0].banks == ["FIRE_TAC"]
+
+    # 3. Parent bank inheritance for tones omitting banks (ConfigFrequency)
+    tone_no_bank = ToneRule(ctcss=141.3, label="Parks")
+    info3 = ConfigFrequency(single=462.400, banks=["COMMERCIAL"], tones=[tone_no_bank])
+    assert info3.tones[0].banks == ["COMMERCIAL"]
+
+
+def test_transmission_record_banks_field():
+    """Test TransmissionRecord includes banks list."""
+    rec = TransmissionRecord(
+        rf=460.125,
+        bb_hz=0,
+        channel=0,
+        label="Test",
+        priority=1,
+        matched_ctcss_hz=67.0,
+        signal_db=-40,
+        classification="V",
+        wav_path="/tmp/test.wav",
+        started_at=1000.0,
+        duration_sec=5.0,
+        banks=["PUBLIC_SAFETY", "FIRE_TAC"],
+    )
+    assert rec.banks == ["PUBLIC_SAFETY", "FIRE_TAC"]
+
+
+# ---------------------------------------------------------------------------
+# Bank support: set_active_banks / is_bank_active
+# ---------------------------------------------------------------------------
+
+def test_set_active_banks_accepts_list(fm_empty):
+    """set_active_banks stores the supplied list as a set."""
+    fm_empty.set_active_banks(["PUBLIC_SAFETY", "RAILROAD"])
+    assert fm_empty.active_banks == {"PUBLIC_SAFETY", "RAILROAD"}
+
+
+def test_set_active_banks_accepts_set(fm_empty):
+    fm_empty.set_active_banks({"FIRE_TAC"})
+    assert fm_empty.active_banks == {"FIRE_TAC"}
+
+
+def test_set_active_banks_accepts_none(fm_empty):
+    """None resets to promiscuous (empty set)."""
+    fm_empty.set_active_banks(["PUBLIC_SAFETY"])
+    fm_empty.set_active_banks(None)
+    assert fm_empty.active_banks == set()
+
+
+def test_is_bank_active_empty_active_banks_is_promiscuous(fm_empty):
+    """Empty active_banks means every bank matches (scan-all mode)."""
+    fm_empty.set_active_banks(None)
+    assert fm_empty.is_bank_active(["PUBLIC_SAFETY"]) is True
+    assert fm_empty.is_bank_active([]) is True
+
+
+def test_is_bank_active_intersection(fm_empty):
+    fm_empty.set_active_banks(["PUBLIC_SAFETY"])
+    assert fm_empty.is_bank_active(["PUBLIC_SAFETY", "LAW_ENFORCEMENT"]) is True
+    assert fm_empty.is_bank_active(["RAILROAD"]) is False
+    assert fm_empty.is_bank_active([]) is False
+
+
+# ---------------------------------------------------------------------------
+# Bank support: resolve_banks() — 5-tier precedence hierarchy
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier1_single_with_matching_tone(fm_empty):
+    """Tier 1: explicit single entry + matching tone rule → tone rule's banks."""
+    await fm_empty.add({
+        'single': 462.5625,
+        'banks': ['COMMERCIAL'],
+        'tones': [
+            {'ctcss': 67.0, 'label': 'Fire Tac 1', 'banks': ['FIRE_TAC']},
+            {'ctcss': 141.3, 'label': 'City Parks', 'banks': ['PARKS_MAINT']},
+        ],
+    })
+
+    result = fm_empty.resolve_banks(462.5625, ctcss_hz=67.0)
+    assert result == ['FIRE_TAC']
+
+    result = fm_empty.resolve_banks(462.5625, ctcss_hz=141.3)
+    assert result == ['PARKS_MAINT']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier1_tone_inherits_parent_bank_when_tone_has_no_banks(fm_empty):
+    """Tier 1: tone rule without its own banks inherits the parent entry's banks."""
+    await fm_empty.add({
+        'single': 462.5625,
+        'banks': ['COMMERCIAL'],
+        'tones': [
+            {'ctcss': 141.3, 'label': 'City Parks'},   # no banks key → should inherit COMMERCIAL
+        ],
+    })
+
+    result = fm_empty.resolve_banks(462.5625, ctcss_hz=141.3)
+    assert result == ['COMMERCIAL']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier2_single_csq_no_tone(fm_empty):
+    """Tier 2: explicit single entry, no decoded tone → base entry banks."""
+    await fm_empty.add({
+        'single': 460.125,
+        'banks': ['PUBLIC_SAFETY', 'LAW_ENFORCEMENT'],
+    })
+
+    result = fm_empty.resolve_banks(460.125, ctcss_hz=None)
+    assert set(result) == {'PUBLIC_SAFETY', 'LAW_ENFORCEMENT'}
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier2_single_with_tone_no_ctcss_decoded(fm_empty):
+    """Tier 2: single entry has tone rules, but no CTCSS was decoded → union of base and tone banks returned."""
+    await fm_empty.add({
+        'single': 462.5625,
+        'banks': ['COMMERCIAL'],
+        'tones': [
+            {'ctcss': 67.0, 'banks': ['FIRE_TAC']},
+        ],
+    })
+
+    # No ctcss_hz decoded → returns Union of base and tone rules
+    result = fm_empty.resolve_banks(462.5625, ctcss_hz=None)
+    assert set(result) == {'COMMERCIAL', 'FIRE_TAC'}
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier2_single_untagged_fallback(fm_empty):
+    """Tier 2: single entry exists but has no banks → no tags (promiscuous)."""
+    await fm_empty.add({'single': 460.050, 'label': 'Untagged channel'})
+
+    result = fm_empty.resolve_banks(460.050, ctcss_hz=None)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier3_range_with_matching_tone(fm_empty):
+    """Tier 3: frequency inside a range + matching tone rule → tone rule's banks."""
+    await fm_empty.add({
+        'lo': 462.200,
+        'hi': 462.400,
+        'banks': ['COMMERCIAL'],
+        'tones': [
+            {'ctcss': 67.0, 'label': 'Fire Tac Segment', 'banks': ['FIRE_TAC']},
+        ],
+    })
+
+    result = fm_empty.resolve_banks(462.300, ctcss_hz=67.0)
+    assert result == ['FIRE_TAC']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier4_range_csq(fm_empty):
+    """Tier 4: frequency inside a range, no tone decoded → range's base banks."""
+    await fm_empty.add({
+        'lo': 462.200,
+        'hi': 462.400,
+        'banks': ['COMMERCIAL'],
+    })
+
+    result = fm_empty.resolve_banks(462.300, ctcss_hz=None)
+    assert result == ['COMMERCIAL']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier4_range_untagged_fallback(fm_empty):
+    """Tier 4: frequency inside an untagged range → no tags (promiscuous)."""
+    await fm_empty.add({'lo': 462.200, 'hi': 462.400, 'label': 'Untagged range'})
+
+    result = fm_empty.resolve_banks(462.300)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier5_unconfigured_returns_no_tags_in_promiscuous(fm_empty):
+    """Tier 5: frequency outside all configured entries → no tags (no SEARCH,
+    no bank filtering active)."""
+    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+
+    result = fm_empty.resolve_banks(999.999)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tier5_unconfigured_returns_search_when_active(fm_empty):
+    """Tier 5: SEARCH active + unconfigured frequency → ['SEARCH'] returned."""
+    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    fm_empty.set_active_banks(['SEARCH'])
+
+    result = fm_empty.resolve_banks(999.999)
+    assert result == ['SEARCH']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_single_takes_precedence_over_range(fm_empty):
+    """Single entry (Tier 1/2) always beats a containing range (Tier 3/4)."""
+    await fm_empty.add({'lo': 460.000, 'hi': 461.000, 'banks': ['RAILROAD']})
+    await fm_empty.add({'single': 460.500, 'banks': ['PUBLIC_SAFETY']})
+
+    result = fm_empty.resolve_banks(460.500)
+    assert result == ['PUBLIC_SAFETY']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_tone_match_tolerance(fm_empty):
+    """Tone matching uses a ±0.5 Hz tolerance; exact and near-exact both hit; far miss falls back."""
+    await fm_empty.add({
+        'single': 462.5625,
+        'banks': ['COMMERCIAL'],
+        'tones': [{'ctcss': 67.0, 'banks': ['FIRE_TAC']}],
+    })
+
+    # Exact match
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.0) == ['FIRE_TAC']
+    # Within tolerance
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.4) == ['FIRE_TAC']
+    # Outside tolerance → falls back to base entry banks (Tier 2)
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=68.0) == ['COMMERCIAL']
+
+
+# ---------------------------------------------------------------------------
+# Bank support: "SEARCH" dynamic tag — opt-in unconfigured spectrum scanning
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_search_tag_in_active_banks_resolves_unconfigured_hits(fm_empty):
+    """SEARCH in active_banks causes unconfigured spectrum hits to resolve as ['SEARCH']."""
+    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    fm_empty.set_active_banks(['PUBLIC_SAFETY', 'SEARCH'])
+
+    # Configured hit still resolves normally
+    assert fm_empty.resolve_banks(460.125) == ['PUBLIC_SAFETY']
+
+    # Unconfigured hit resolves as SEARCH (not UNTAGGED)
+    assert fm_empty.resolve_banks(999.000) == ['SEARCH']
+
+
+@pytest.mark.asyncio
+async def test_search_tag_not_active_unconfigured_returns_untagged(fm_empty):
+    """Without SEARCH in active_banks, unconfigured spectrum hits return UNTAGGED."""
+    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    fm_empty.set_active_banks(['PUBLIC_SAFETY'])
+
+    assert fm_empty.resolve_banks(999.000) == ['UNTAGGED']
+
+
+@pytest.mark.asyncio
+async def test_search_tag_alone_in_active_banks(fm_empty):
+    """SEARCH as the only active bank: resolve_banks still returns SEARCH for unconfigured
+    spectrum and resolves configured entries normally."""
+    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    fm_empty.set_active_banks(['SEARCH'])
+
+    # resolve_banks: unconfigured hit → SEARCH
+    assert fm_empty.resolve_banks(999.000) == ['SEARCH']
+
+    # resolve_banks: configured single still resolves correctly (SEARCH not in active_banks does
+    # not suppress configured resolution; it only affects Tier 5 unconfigured hits)
+    assert fm_empty.resolve_banks(460.125) == ['PUBLIC_SAFETY']
+
+
+@pytest.mark.asyncio
+async def test_search_tag_promiscuous_mode_search_inactive(fm_empty):
+    """In promiscuous mode (empty active_banks), SEARCH is inactive and
+    unconfigured spectrum returns no tags."""
+    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    fm_empty.set_active_banks(None)  # promiscuous
+
+    assert fm_empty.resolve_banks(999.000) == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_untagged_sentinel_gated_on_bank_filtering(fm_empty):
+    """The UNTAGGED sentinel appears only when bank filtering is active.
+
+    Without --banks (empty active_banks), untagged hits resolve to no tags so
+    bank metadata stays empty for non-participants.  With --banks active, the
+    same hits resolve to UNTAGGED so is_bank_active() can fail them closed.
+    """
+    await fm_empty.add({'single': 460.125, 'label': 'Untagged channel'})    # Promiscuous / legacy: no sentinel injected
+    assert fm_empty.resolve_banks(460.125) == []
+    assert fm_empty.resolve_banks(999.000) == []
+
+    # Bank filtering active: untagged hits resolve to the sentinel
+    fm_empty.set_active_banks(['PUBLIC_SAFETY'])
+    assert fm_empty.resolve_banks(460.125) == ['UNTAGGED']
+    assert fm_empty.resolve_banks(999.000) == ['UNTAGGED']
+
+    # Untagged sentinel never matches a non-dynamic active bank (fail-closed)
+    assert fm_empty.is_bank_active(['UNTAGGED']) is False
+
+
+def test_channel_message_str_omits_bank_bracket_when_no_tags() -> None:
+    """The syslog debug line (str(msg)) must skip the bank field when no bank
+    information is available instead of printing [UNTAGGED]."""
+    no_banks = ChannelMessage(state='off', rf=460.125, bb=0, channel=3)
+    text = str(no_banks)
+    assert '[UNTAGGED]' not in text
+    assert '[PUBLIC_SAFETY]' not in text
+
+    tagged = ChannelMessage(state='off', rf=460.125, bb=0, channel=3,
+                            banks=['PUBLIC_SAFETY'])
+    assert '[PUBLIC_SAFETY]' in str(tagged)
+
+
+# ---------------------------------------------------------------------------
+# Mutation-killing boundary tests (plugging gaps found by mutmut)
+# ---------------------------------------------------------------------------
+
+def test_set_active_banks_accepts_bare_string(fm_empty):
+    """set_active_banks with a bare string wraps it in a set (isinstance str branch).
+    Kills mutant that sets active_banks = None instead of {banks}.
+    """
+    fm_empty.set_active_banks("PUBLIC_SAFETY")
+    assert fm_empty.active_banks == {"PUBLIC_SAFETY"}
+    # Confirm it actually filters correctly — not promiscuous
+    assert fm_empty.is_bank_active(["PUBLIC_SAFETY"]) is True
+    assert fm_empty.is_bank_active(["RAILROAD"]) is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_single_proximity_threshold(fm_empty):
+    """Frequency 200 Hz outside the ±100 Hz (1e-4 MHz) single-match window
+    must NOT match the entry. Kills mutations that widen the threshold to
+    <= 1e-4 or < 1.0001 MHz.
+    """
+    await fm_empty.add({'single': 460.1250, 'banks': ['PUBLIC_SAFETY']})
+
+    # Exactly on target → must match
+    assert fm_empty.resolve_banks(460.1250) == ['PUBLIC_SAFETY']
+    # 200 Hz away (0.0002 MHz) → outside 100 Hz window → must NOT match
+    assert fm_empty.resolve_banks(460.1252) == []
+    assert fm_empty.resolve_banks(460.1248) == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_range_boundary_inclusive_at_lo_and_hi(fm_empty):
+    """A frequency exactly at lo or hi must be inside the range (inclusive <=).
+    Kills mutations that change lo <= to lo < or <= hi to < hi.
+    """
+    await fm_empty.add({'lo': 462.200, 'hi': 462.400, 'banks': ['COMMERCIAL']})
+
+    # Exactly at lo — must be inside (<=, not <)
+    assert fm_empty.resolve_banks(462.200) == ['COMMERCIAL']
+    # Exactly at hi — must be inside (<= not <)
+    assert fm_empty.resolve_banks(462.400) == ['COMMERCIAL']
+    # Just outside both ends — must NOT match
+    assert fm_empty.resolve_banks(462.199) == []
+    assert fm_empty.resolve_banks(462.401) == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_single_tone_tolerance_exact_boundary(fm_empty):
+    """Tone ±0.5 Hz is the exclusive upper boundary: abs(diff) must be
+    strictly < 0.5 to match. Kills mutations that change < 0.5 to <= 0.5
+    or < 1.5 on single-entry tone rules (Tier 1).
+    """
+    await fm_empty.add({
+        'single': 462.5625,
+        'banks': ['COMMERCIAL'],
+        'tones': [{'ctcss': 67.0, 'banks': ['FIRE_TAC']}],
+    })
+
+    # 0.49 Hz away — strictly inside window → must match tone
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.49) == ['FIRE_TAC']
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=66.51) == ['FIRE_TAC']
+    # Exactly 0.5 Hz away — NOT strictly < 0.5 → must NOT match, falls back to base
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.5) == ['COMMERCIAL']
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=66.5) == ['COMMERCIAL']
+    # 0.9 Hz away — well outside → must NOT match (kills < 1.5 widening mutation)
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.9) == ['COMMERCIAL']
+
+
+@pytest.mark.asyncio
+async def test_resolve_banks_range_tone_tolerance_exact_boundary(fm_empty):
+    """Same ±0.5 Hz exclusive boundary check, but for range-entry tone rules
+    (Tier 3). Kills mutations that change < 0.5 to <= 0.5 or < 1.5.
+    """
+    await fm_empty.add({
+        'lo': 462.200,
+        'hi': 462.400,
+        'banks': ['COMMERCIAL'],
+        'tones': [{'ctcss': 67.0, 'banks': ['FIRE_TAC']}],
+    })
+
+    # 0.49 Hz away — strictly inside window → must match tone
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=67.49) == ['FIRE_TAC']
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=66.51) == ['FIRE_TAC']
+    # Exactly 0.5 Hz away — NOT strictly < 0.5 → falls back to base range banks
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=67.5) == ['COMMERCIAL']
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=66.5) == ['COMMERCIAL']
+    # 0.9 Hz away — well outside → must NOT match (kills < 1.5 widening mutation)
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=67.9) == ['COMMERCIAL']
+
+
+# ---------------------------------------------------------------------------
+# get_label / get_ctcss_info match-tolerance consistency
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_label_rf_match_tolerance(fm_empty):
+    """get_label must match RF within the same strict <1e-4 MHz window as
+    resolve_banks (not exact equality). Kills regressions to `==` matching.
+    """
+    await fm_empty.add({'single': 460.1250, 'label': 'Patrol'})
+
+    # Exactly on target → matches
+    assert fm_empty.get_label(460.1250) == 'Patrol'
+    # 50 Hz away (0.00005 MHz) → strictly inside window → matches
+    assert fm_empty.get_label(460.12505) == 'Patrol'
+    # 200 Hz away (0.0002 MHz) → outside window → no match
+    assert fm_empty.get_label(460.1252) is None
+    assert fm_empty.get_label(460.1248) is None
+
+
+@pytest.mark.asyncio
+async def test_get_label_uses_tone_tolerance_for_tone_rules(fm_empty):
+    """get_label tone matching uses the same ±0.5 Hz exclusive tolerance as
+    resolve_banks: near tones hit, exactly-0.5-away and far tones fall back to
+    the entry label. Kills regressions that return the exact-value tone label
+    only (old ctcss_labels path) or widen the tolerance.
+    """
+    await fm_empty.add({
+        'single': 462.5625,
+        'label': 'Base',
+        'tones': [
+            {'ctcss': 67.0, 'label': 'Fire Tac'},
+            {'ctcss': 100.0, 'label': 'Police'},
+        ],
+    })
+
+    # 0.49 Hz away — strictly inside → matches the tone label
+    assert fm_empty.get_label(462.5625, 67.49) == 'Fire Tac'
+    assert fm_empty.get_label(462.5625, 99.51) == 'Police'
+    # Exactly 0.5 Hz away — NOT strictly < 0.5 → falls back to entry label
+    assert fm_empty.get_label(462.5625, 67.5) == 'Base'
+    # Well outside → falls back to entry label
+    assert fm_empty.get_label(462.5625, 68.0) == 'Base'
+    # No ctcss provided → entry label
+    assert fm_empty.get_label(462.5625) == 'Base'
+
+
+@pytest.mark.asyncio
+async def test_get_ctcss_info_tones_only_returns_first_tone(fm_empty):
+    """get_ctcss_info must surface a primary tone for tones:-only entries
+    (previously returned None when no scalar ctcss was set)."""
+    await fm_empty.add({
+        'single': 462.400,
+        'label': 'Security Patrol',
+        'tones': [
+            {'ctcss': 100.0, 'label': 'Primary'},
+            {'ctcss': 67.0, 'label': 'Backup'},
+        ]
+    })
+
+    assert fm_empty.get_ctcss_info(462.400) == 100.0
+
+
+@pytest.mark.asyncio
+async def test_get_ctcss_info_none_when_no_tone(fm_empty):
+    """get_ctcss_info returns None for entries with no CTCSS tone configured."""
+    await fm_empty.add({'single': 462.400, 'label': 'No tone'})
+
+    assert fm_empty.get_ctcss_info(462.400) is None
+    assert fm_empty.get_ctcss_info(999.0) is None
+
+
+# ---------------------------------------------------------------------------
+# Active-bank startup sanity check (typo detection)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_unknown_active_banks_matches_configured_set(fm_empty):
+    """unknown_active_banks must flag only requested banks with no configured
+    match, across both top-level and tone-rule banks."""
+    await fm_empty.add({
+        'single': 462.5625,
+        'banks': ['COMMERCIAL'],
+        'tones': [
+            {'ctcss': 67.0, 'banks': ['FIRE_TAC']},
+            {'ctcss': 71.9, 'banks': ['SECURITY']},
+        ],
+    })
+    await fm_empty.add({'single': 467.7125, 'banks': ['OPERATIONS']})
+
+    fm_empty.set_active_banks(['FIRE_TAC', 'OPERATIONS', 'FIRE_TAK', 'NOPE'])
+
+    assert fm_empty.unknown_active_banks() == {'FIRE_TAK', 'NOPE'}
+
+
+def test_unknown_active_banks_exempts_search(fm_empty):
+    """SEARCH is a pseudo-bank, not a configured tag — must never be flagged."""
+    fm_empty.set_active_banks(['SEARCH'])
+    assert fm_empty.unknown_active_banks() == set()
+
+
+def test_unknown_active_banks_empty_in_promiscuous_mode(fm_empty):
+    """Promiscuous mode (no active banks) means nothing to validate."""
+    fm_empty.set_active_banks(None)
+    assert fm_empty.unknown_active_banks() == set()
+
+
+@pytest.mark.asyncio
+async def test_load_warns_on_unmatched_active_banks(fm_empty, tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """A typo'd active bank (vs. configured tags) must log a WARNING on load()."""
+    freqs_file = tmp_path / "freqs.yaml"
+    freqs_file.write_text(
+        "frequencies:\n"
+        "  - single: 460.125\n"
+        "    label: Patrol\n"
+        "    banks: [FIRE_TAC]\n"
+    )
+
+    fm_empty.config.file_name = freqs_file
+    fm_empty.set_active_banks(["FIRE_TAK"])
+
+    with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
+        await fm_empty.load()
+
+    assert any(
+        "FIRE_TAK" in message and "match no configured" in message
+        for message in caplog.messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_no_warning_when_all_active_banks_match(fm_empty, tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """Matching active banks produce no startup warning on load()."""
+    freqs_file = tmp_path / "freqs.yaml"
+    freqs_file.write_text(
+        "frequencies:\n"
+        "  - single: 460.125\n"
+        "    label: Patrol\n"
+        "    banks: [FIRE_TAC]\n"
+    )
+
+    fm_empty.config.file_name = freqs_file
+    fm_empty.set_active_banks(["FIRE_TAC"])
+
+    with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
+        await fm_empty.load()
+
+    assert not any("match no configured" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_load_warns_on_unmatched_active_banks_without_file(fm_empty, caplog: pytest.LogCaptureFixture):
+    """--banks X without -F/--frequencies silently resolves everything to
+    UNTAGGED, which never matches X — load() must warn at startup."""
+    fm_empty.set_active_banks(["FIRE_TAC"])
+
+    with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
+        await fm_empty.load()
+
+    assert any(
+        "FIRE_TAC" in message and "match no configured" in message
+        for message in caplog.messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_no_warning_without_file_when_search_only(fm_empty, caplog: pytest.LogCaptureFixture):
+    """--banks SEARCH without a frequency file is functional (Tier 5 SEARCH
+    matches), so no startup warning."""
+    fm_empty.set_active_banks(["SEARCH"])
+
+    with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
+        await fm_empty.load()
+
+    assert not any("match no configured" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_load_no_warning_without_file_when_untagged_only(fm_empty, caplog: pytest.LogCaptureFixture):
+    """--banks UNTAGGED without a frequency file is functional (Tier 5 UNTAGGED
+    matches), so no startup warning."""
+    fm_empty.set_active_banks(["UNTAGGED"])
+
+    with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
+        await fm_empty.load()
+
+    assert not any("match no configured" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_active_bank_without_frequencies_resolves_untagged(fm_empty):
+    """Without a frequency file, every hit resolves to UNTAGGED which never
+    matches a non-dynamic active bank — the fail-closed no-op that the
+    load()-time warning exists to surface."""
+    fm_empty.set_active_banks(["FIRE_TAC"])
+
+    assert fm_empty.resolve_banks(460.125) == ["UNTAGGED"]
+    assert fm_empty.is_bank_active(["UNTAGGED"]) is False

@@ -18,7 +18,7 @@ async def test_fixed_field_logger(tmp_path):
     params = ActivityParams(type="fixed-field", dest=str(log_file), interval=0)
     logger = FixedField(params)
 
-    # 1. Message WITH matched CTCSS
+    # 1. Message WITH matched CTCSS and banks
     msg1 = ChannelMessage(
         state="on",
         rf=145.5,
@@ -27,11 +27,12 @@ async def test_fixed_field_logger(tmp_path):
         priority=1,
         classification="V",
         matched_ctcss=100.0,
-        file="test1.wav"
+        file="test1.wav",
+        banks=["PUBLIC_SAFETY", "FIRE_TAC"],
     )
     await logger.log(msg1)
 
-    # 2. Message WITHOUT matched CTCSS
+    # 2. Message WITHOUT matched CTCSS or banks
     msg2 = ChannelMessage(
         state="off",
         rf=145.5,
@@ -40,7 +41,7 @@ async def test_fixed_field_logger(tmp_path):
         priority=None,
         classification=None,
         matched_ctcss=None,
-        file="test2.wav"
+        file="test2.wav",
     )
     await logger.log(msg2)
 
@@ -48,10 +49,14 @@ async def test_fixed_field_logger(tmp_path):
     lines = log_file.read_text().splitlines()
     assert len(lines) == 2
 
-    # Verify formatting of msg1: matched_ctcss '100.0  ' should be present right before the filename
+    # Verify formatting of msg1: matched_ctcss '100.0  ' and the banks column
+    # truncated to 15 chars ('PUBLIC_SAFETY,F'); the rest of the joined bank
+    # list must be dropped so the record stays fixed-width.
     line1 = lines[0]
-    # Check that we can find the tone and filename in the correct order/formatting
+    # Check that we can find the tone, truncated banks, and filename in the correct order/formatting
     assert "100.0  " in line1
+    assert "PUBLIC_SAFETY,F" in line1
+    assert "FIRE_TAC" not in line1
     assert "test1.wav" in line1
 
     # Verify formatting of msg2: matched_ctcss is empty/omitted
@@ -80,7 +85,8 @@ async def test_json_to_server_logger():
         priority=1,
         classification="V",
         matched_ctcss=141.3,
-        file="test.wav"
+        file="test.wav",
+        banks=["FIRE_TAC"],
     )
     await logger.log(msg)
 
@@ -94,6 +100,7 @@ async def test_json_to_server_logger():
     assert posted_json["state"] == "on"
     assert posted_json["rf"] == 145.5
     assert posted_json["file"] == "test.wav"
+    assert posted_json["banks"] == ["FIRE_TAC"]
 
 
 class SpyLogger(ActivityLogger):

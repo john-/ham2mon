@@ -7,19 +7,14 @@ from typing import override
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-
 from components.base import ChannelInfo, ComponentResult, WavGatekeeper
 from components.manager import ComponentManager
-
 from config import MasterHam2MonConfig
 from frequency_manager import (
     FrequencyConfiguration,
-    FrequencyList,
     FrequencyManager,
     TransmissionRecord,
 )
-
 from scanner import Scanner
 
 
@@ -78,6 +73,18 @@ def test_scanner_sidecar_json_written_on_kept_wav(tmp_path: Path):
     scanner._wav_dir = wav_dir
     scanner.frequency_manager = fm
 
+    # Spy on resolve_banks: this path (kept WAV + component, empty msg.banks)
+    # must resolve banks exactly once, not once per fallback site (scanner.py
+    # 544/578/621 pre-dedup).
+    resolve_banks_calls = {"n": 0}
+    original_resolve_banks = fm.resolve_banks
+
+    def _spy_resolve_banks(rf: float, ctcss_hz: float | None = None) -> list[str]:
+        resolve_banks_calls["n"] += 1
+        return original_resolve_banks(rf, ctcss_hz)
+
+    fm.resolve_banks = _spy_resolve_banks  # type: ignore[method-assign]
+
     gk = MockGatekeeper(
         {"keep": True, "classification": "VOICE", "metadata": {"confidence": 0.98}}
     )
@@ -89,7 +96,7 @@ def test_scanner_sidecar_json_written_on_kept_wav(tmp_path: Path):
 
     msg = ChannelMessage(
         state="off",
-        rf=460_125_000.0,
+        rf=460.125,
         bb=0,
         channel=0,
         wav_tmp_path=tmp_wav,
@@ -97,6 +104,8 @@ def test_scanner_sidecar_json_written_on_kept_wav(tmp_path: Path):
     )
 
     _msg, record = scanner._process_completed_transmission(msg)
+
+    assert resolve_banks_calls["n"] == 1
 
     assert record is not None
     assert record.classification == "VOICE"
@@ -113,6 +122,7 @@ def test_scanner_sidecar_json_written_on_kept_wav(tmp_path: Path):
     assert sidecar_data["rf"] == 460.125
     assert sidecar_data["classification"] == "VOICE"
     assert sidecar_data["metadata"] == {"confidence": 0.98}
+    assert sidecar_data["banks"] == []
 
 
 def test_scanner_no_sidecar_json_on_discard(tmp_path: Path):
@@ -152,7 +162,7 @@ def test_scanner_no_sidecar_json_on_discard(tmp_path: Path):
 
     msg = ChannelMessage(
         state="off",
-        rf=460_125_000.0,
+        rf=460.125,
         bb=0,
         channel=0,
         wav_tmp_path=tmp_wav,
@@ -211,7 +221,7 @@ async def test_got_channel_activity_dispatches_notifiers_only_when_interesting(
 
     msg = ChannelMessage(
         state="off",
-        rf=460_125_000.0,
+        rf=460.125,
         bb=0,
         channel=0,
         wav_tmp_path=tmp_wav,
@@ -235,7 +245,7 @@ async def test_got_channel_activity_dispatches_notifiers_only_when_interesting(
 
     msg_unwanted = ChannelMessage(
         state="off",
-        rf=460_125_000.0,
+        rf=460.125,
         bb=0,
         channel=0,
         wav_tmp_path=tmp_mismatch_wav,

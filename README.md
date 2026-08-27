@@ -484,11 +484,27 @@ The frequency file contains metadata for individual frequencies and ranges of fr
 2. Lockout frequencies
 3. Frequency labeling
 4. CTCSS (PL tone) filtering
+5. Bank tags
 
 If an individual frequency or frequency range is specified more than once, an error will be generated and ham2mon will not load (unless the duplicate entry is used to specify an
 additional unique ctcss tone for that frequency).
 
 For an example, see the [example frequencies file](./doc/example.freqs.yaml).
+
+### Bank Filtering (`--banks`)
+Banks are optional tags applied to frequency entries and to per-tone rules in the frequency file:
+
+    - label: "Local repeater output"
+      single: 462.730
+      banks: ["FIRE"]
+
+Select which banks to monitor with `--banks` (or `frequency_policies.active_banks` in YAML):
+
+    uv run apps/ham2mon.py -a "airspy" -f 460.0-470.0 --banks FIRE LAW
+
+`--banks` is a **filter**, not a scan-scope control. The scanner still sweeps the entire configured band (or range) every scan cycle; bank filtering only controls which channels are demodulated and which captured transmissions are kept. A channel whose resolved bank tags do not intersect the selected set is never assigned a demodulator, and a transmission already captured on such a channel is discarded.
+
+Bank filtering is fail-closed: if a `--banks` tag matches no configured frequency or tone bank, no channel is demodulated and ham2mon logs a startup warning. Without `--banks`, all channels are monitored. Two special tags are available: `SEARCH` lets unconfigured spectrum hits be monitored, and `UNTAGGED` matches channels that carry no bank tag while filtering is active.
 
 ### Priority Handling
 Priorities can be assigned to frequencies and frequency ranges in the frequency file.  Highest priority is 1.  Frequencies can have equal priority.  If no priority is assigned the default value is no priority.
