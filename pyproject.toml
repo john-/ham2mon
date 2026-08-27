@@ -44,3 +44,6 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 extraPaths = ["apps"]
 reportMissingTypeStubs = false
 
+[tool.basedpyright]
+pythonVersion = "3.10"
+

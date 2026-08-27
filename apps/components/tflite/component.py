@@ -3,9 +3,10 @@ Reference WavGatekeeper implementation wrapping TFLite audio classification.
 """
 
 from pathlib import Path
-from typing import cast, override
+from typing import cast
 
 from config import resolve_app_relative_path
+from typing_extensions import override
 
 from components.base import ChannelInfo, ComponentResult, WavGatekeeper
 

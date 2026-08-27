@@ -1,7 +1,6 @@
 """Unit tests for ComponentManager execution, timeout isolation, and dispatch."""
 
 import time
-from typing import override
 
 import pytest
 from components.base import (
@@ -13,6 +12,7 @@ from components.base import (
 from components.manager import ComponentManager, load_component_class
 from config import ComponentEntryConfig, ConfigError, MasterHam2MonConfig
 from frequency_manager import TransmissionRecord
+from typing_extensions import override
 
 
 class HangingGatekeeper(WavGatekeeper):
