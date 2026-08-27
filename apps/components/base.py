@@ -63,6 +63,9 @@ class ChannelInfo:
     wav_tmp_path: str
     """Absolute path to the tmp WAV file being evaluated."""
 
+    banks: list[str] = field(default_factory=list)
+    """Resolved scanner bank tags for this channel."""
+
 
 class Component(ABC):
     """Base abstract class for all ham2mon components."""

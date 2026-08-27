@@ -20,7 +20,7 @@ class ActivityParams:
     '''
     type: str
     dest: str
-    interval: int
+    interval: float | int
 
 class ActivityLogger(ABC):
     '''
@@ -29,10 +29,10 @@ class ActivityLogger(ABC):
     def __init__(self, params: ActivityParams,
                  get_ctcss: Callable[[int], float | None] | None = None) -> None:
         logger.debug(f'Creating {self.__class__.__name__} channel logger')
-        self.interval: int = 0  # overridden by child classes
-        self.log_task: dict[int, asyncio.Task] = {}  # activity logging tasks are channel specific
-        self.params = params
-        self.get_ctcss = get_ctcss  # optional callback: bb_freq -> matched ctcss tone or None
+        self.interval: float | int = 0  # overridden by child classes
+        self.log_task: dict[int, asyncio.Task[None]] = {}  # activity logging tasks are channel specific
+        self.params: ActivityParams = params
+        self.get_ctcss: Callable[[int], float | None] | None = get_ctcss  # optional callback: bb_freq -> matched ctcss tone or None
 
     async def log(self, msg: ChannelMessage | None,
                   record: TransmissionRecord | None = None) -> None:
@@ -102,7 +102,10 @@ class ActivityLogger(ABC):
                                     rf=msg.rf,
                                     bb=msg.bb,
                                     channel=msg.channel,
-                                    matched_ctcss=live_ctcss))
+                                    matched_ctcss=live_ctcss,
+                                    label=msg.label,
+                                    priority=msg.priority,
+                                    banks=msg.banks))
 
 class NoOp(ActivityLogger):
     '''
@@ -112,7 +115,7 @@ class NoOp(ActivityLogger):
                  get_ctcss: Callable[[int], float | None] | None = None) -> None:
         super().__init__(params, get_ctcss=get_ctcss)
 
-        self.interval: int = 0
+        self.interval: float | int = 0
 
     async def log(self, msg: ChannelMessage | None,
                   record: TransmissionRecord | None = None) -> None:
@@ -125,12 +128,12 @@ class FixedField(ActivityLogger):
     '''
     Send channel events to a file with fixed field length records
     '''
-    def __init__(self, params,
+    def __init__(self, params: ActivityParams,
                  get_ctcss: Callable[[int], float | None] | None = None) -> None:
         super().__init__(params, get_ctcss=get_ctcss)
 
-        self.file_name = params.dest
-        self.interval = params.interval
+        self.file_name: str = params.dest
+        self.interval: float | int = params.interval
 
     async def log(self, msg: ChannelMessage | None,
                   record: TransmissionRecord | None = None) -> None:
@@ -140,11 +143,13 @@ class FixedField(ActivityLogger):
         await super().log(msg)
 
         now = datetime.datetime.now()
+        banks_str: str = ",".join(msg.banks) if msg.banks else ""
         with open(self.file_name, 'a') as file:
             text = (f'{now.strftime("%Y-%m-%d, %H:%M:%S.%f")}: {msg.state:<4}{msg.rf:<10}'
                     f'{msg.channel:<2}{msg.priority if msg.priority else "":<2}'
                     f'{msg.classification if msg.classification else "":<2}'
                     f'{f"{msg.matched_ctcss:.1f}" if msg.matched_ctcss else "":<7}'
+                    f'{banks_str[:15]:<15}'
                     f'{msg.file if msg.file else "":<50}\n'
                     )
             file.write(text)
@@ -155,12 +160,12 @@ class JsonToServer(ActivityLogger):
     '''
     Send channels events as json messages to  a remote server
     '''
-    def __init__(self, params,
+    def __init__(self, params: ActivityParams,
                  get_ctcss: Callable[[int], float | None] | None = None) -> None:
         super().__init__(params, get_ctcss=get_ctcss)
 
-        self.server = params.dest
-        self.interval = params.interval
+        self.server: str = params.dest
+        self.interval: float | int = params.interval
 
         self.requests = import_module('requests')
         # urllib3 log suppression is configured at application startup in ham2mon.py

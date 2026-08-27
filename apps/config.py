@@ -174,11 +174,12 @@ class AudioConfig:
 
 @dataclass(kw_only=True)
 class FrequencyPoliciesConfig:
-    """Frequencies file path, lockout settings, and priority overrides."""
+    """Frequencies file path, lockout settings, priority overrides, and active banks."""
 
     file: Optional[Path] = None
     disable_lockout: bool = False
     disable_priority: bool = False
+    active_banks: List[str] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)

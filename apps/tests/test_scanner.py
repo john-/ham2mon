@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from conftest import make_test_scanner
-from frequency_manager import ChannelMessage, TransmissionRecord
+from frequency_manager import ChannelFrequency, ChannelMessage, TransmissionRecord
 from scanner import Scanner
 from utilities import (
     DEFAULT_AUDIO_RATE,
@@ -92,7 +92,7 @@ def test_transmission_record_built_on_kept_wav(tmp_path: Path) -> None:
     started_at = 1_700_000_000.0
     msg = ChannelMessage(
         state='off',
-        rf=460_125_000.0,
+        rf=460.125,
         bb=0,
         channel=0,
         wav_tmp_path=tmp_wav,
@@ -136,7 +136,7 @@ def test_transmission_record_duration_set_on_msg(tmp_path: Path) -> None:
     _write_wav(tmp_wav, num_samples=8_000)  # 1-second recording
 
     msg = ChannelMessage(
-        state='off', rf=460_125_000.0, bb=0, channel=0,
+        state='off', rf=460.125, bb=0, channel=0,
         wav_tmp_path=tmp_wav, started_at=1_700_000_000.0,
     )
 
@@ -160,7 +160,7 @@ def test_transmission_record_none_on_ctcss_discard(tmp_path: Path) -> None:
     _write_wav(tmp_wav, num_samples=16_000)
 
     msg = ChannelMessage(
-        state='off', rf=460_125_000.0, bb=0, channel=0,
+        state='off', rf=460.125, bb=0, channel=0,
         wav_tmp_path=tmp_wav, discard=True,
     )
     scanner = make_test_scanner(wav_dir=wav_dir)
@@ -179,7 +179,7 @@ def test_transmission_record_none_on_short_recording(tmp_path: Path) -> None:
     _write_wav(tmp_wav, num_samples=0)
 
     msg = ChannelMessage(
-        state='off', rf=460_125_000.0, bb=0, channel=0,
+        state='off', rf=460.125, bb=0, channel=0,
         wav_tmp_path=tmp_wav,
     )
     scanner = make_test_scanner(wav_dir=wav_dir)
@@ -283,7 +283,7 @@ def test_scanner_interesting_matrix(
 
     msg = ChannelMessage(
         state=state,
-        rf=145_000_000.0,
+        rf=145.5,
         bb=0,
         channel=0,
         file=msg_file,
@@ -291,3 +291,119 @@ def test_scanner_interesting_matrix(
     )
 
     assert scanner.interesting(msg) is expected_interesting
+
+
+@pytest.mark.asyncio
+async def test_assign_channels_skips_inactive_banks(tmp_path: Path) -> None:
+    """_assign_channels_to_demodulators must skip channels whose resolved banks are not active."""
+    wav_dir = str(tmp_path / "wav")
+    os.makedirs(wav_dir, exist_ok=True)
+    scanner = make_test_scanner(wav_dir=wav_dir)
+
+    # Set active bank filter to OPERATIONS only
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+    fm = FrequencyManager(FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False), 5000)
+    fm.set_active_banks(["OPERATIONS"])
+    await fm.add({'single': 462.5625, 'banks': ['FRS_FAMILY'], 'label': 'FRS Ch 1'})
+    await fm.add({'single': 467.7125, 'banks': ['OPERATIONS'], 'label': 'FRS Ch 14 Ops'})
+    scanner.frequency_manager = fm
+    scanner.mismatched_freqs = {}
+
+    # Create two channels: one in FRS_FAMILY (inactive) and one in OPERATIONS (active)
+    ch_inactive = ChannelFrequency(
+        rf=462.5625, bb=10000, active=False, hanging=False, locked=False,
+        label="FRS Ch 1"
+    )
+    ch_active = ChannelFrequency(
+        rf=467.7125, bb=20000, active=False, hanging=False, locked=False,
+        label="FRS Ch 14 Ops"
+    )
+
+    # Mock receiver & demodulators (1 free demodulator)
+    from unittest.mock import AsyncMock
+    demod = MagicMock()
+    demod.center_freq = 0
+    demod.set_center_freq = AsyncMock()
+    scanner.receiver = MagicMock()
+    scanner.receiver.demodulators = [demod]
+    scanner.receiver.get_demod_freqs = MagicMock(return_value=[])
+    scanner.center_freq = 460000000
+    scanner._demod_signal_stats = {0: (0.0, 0)}
+
+    await scanner._assign_channels_to_demodulators([ch_inactive, ch_active])
+
+    # The active channel (467.7125 MHz, bb=20000) should have been assigned, while inactive (bb=10000) was skipped
+    demod.set_center_freq.assert_called_once()
+    assert demod.set_center_freq.call_args[0][0] == 20000
+
+
+@pytest.mark.asyncio
+async def test_assign_channels_promiscuous_skips_bank_scan(tmp_path: Path) -> None:
+    """Without --banks (promiscuous), _assign_channels_to_demodulators must not
+    call resolve_banks() per channel per cycle — is_bank_active() is always
+    active, so the scan is pure waste. Channels must still be assigned."""
+    wav_dir = str(tmp_path / "wav")
+    os.makedirs(wav_dir, exist_ok=True)
+    scanner = make_test_scanner(wav_dir=wav_dir)
+
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+    fm = FrequencyManager(FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False), 5000)
+    await fm.add({'single': 462.5625, 'banks': ['FRS_FAMILY'], 'label': 'FRS Ch 1'})
+    scanner.frequency_manager = fm
+    scanner.mismatched_freqs = {}
+
+    resolve_banks_calls = {"n": 0}
+    original_resolve_banks = fm.resolve_banks
+
+    def _spy_resolve_banks(rf: float, ctcss_hz: float | None = None) -> list[str]:
+        resolve_banks_calls["n"] += 1
+        return original_resolve_banks(rf, ctcss_hz)
+
+    fm.resolve_banks = _spy_resolve_banks  # type: ignore[method-assign]
+
+    ch = ChannelFrequency(
+        rf=462.5625, bb=10000, active=False, hanging=False, locked=False,
+        label="FRS Ch 1"
+    )
+
+    from unittest.mock import AsyncMock
+    demod = MagicMock()
+    demod.center_freq = 0
+    demod.set_center_freq = AsyncMock()
+    scanner.receiver = MagicMock()
+    scanner.receiver.demodulators = [demod]
+    scanner.receiver.get_demod_freqs = MagicMock(return_value=[])
+    scanner.center_freq = 460000000
+    scanner._demod_signal_stats = {0: (0.0, 0)}
+
+    await scanner._assign_channels_to_demodulators([ch])
+
+    assert resolve_banks_calls["n"] == 0
+    demod.set_center_freq.assert_called_once()
+    assert demod.set_center_freq.call_args[0][0] == 10000
+
+
+def test_process_completed_transmission_discards_inactive_banks(tmp_path: Path) -> None:
+    """_process_completed_transmission must discard WAV files whose final resolved banks are not active."""
+    wav_dir = str(tmp_path / "wav")
+    os.makedirs(wav_dir, exist_ok=True)
+    tmp_wav = str(tmp_path / "tmp_inactive_bank.wav")
+    _write_wav(tmp_wav, num_samples=16_000)
+
+    scanner = make_test_scanner(wav_dir=wav_dir)
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+    fm = FrequencyManager(FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False), 5000)
+    fm.set_active_banks(["SECURITY"])
+    scanner.frequency_manager = fm
+
+    msg = ChannelMessage(
+        state='off', rf=467.7125, bb=0, channel=0,
+        wav_tmp_path=tmp_wav, banks=["FRS_FAMILY"],
+    )
+
+    _msg, record = scanner._process_completed_transmission(msg)
+
+    assert record is None
+    assert not os.path.exists(tmp_wav), "Discarded WAV must be deleted"
+    assert _msg.detail == "Discarded inactive bank selection"
+

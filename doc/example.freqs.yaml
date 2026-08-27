@@ -4,15 +4,30 @@
 #   1. Priority frequencies   (priority: <int>, lower number = higher priority)
 #   2. Lockout frequencies    (locked: true)
 #   3. Frequency labeling     (label: "...")
-#   4. CTCSS tone squelch     (ctcss: <Hz>)
+#   4. CTCSS tone squelch     (tones: [...] or ctcss: <Hz>)
 #
 # Each entry is either a single frequency (single: <MHz>) or a frequency
 # range (lo: <MHz>, hi: <MHz>), but never both. All frequencies are in MHz.
 #
 # CTCSS:
-#   If a "ctcss" tone (in Hz) is given, the channel uses Tone Squelch mode:
-#   the demodulator only opens when the carrier includes that sub-audible tone.
-#   Channels without "ctcss" operate in Carrier Squelch (CSQ) mode.
+#   Tones are configured with the unified "tones:" key as a list of tone
+#   rules, each with a tone frequency (ctcss: <Hz>), an optional per-tone
+#   label, and optional per-tone banks:
+#
+#       tones:
+#         - ctcss: 67.0        # in Hz
+#           label: "Tone A"
+#           banks: ["FIRE"]
+#         - ctcss: 71.9
+#
+#   A single tone can also be given with the "ctcss:" scalar shorthand, which
+#   is equivalent to "tones: [{ctcss: <Hz>}]":
+#
+#       ctcss: 100.0
+#
+#   A channel with tones uses Tone Squelch mode: the demodulator only opens
+#   when the carrier includes one of the configured sub-audible tones.
+#   Channels without any tone operate in Carrier Squelch (CSQ) mode.
 #   See the "CTCSS Squelch and Tone Filtering" section of the README for the
 #   full list of valid tone frequencies.
 

@@ -9,12 +9,39 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeAlias  # TypeAlias needed for python < 3.12
+from typing import Any, TypeAlias  # TypeAlias needed for python < 3.12
 
 import yaml
 from utilities import frequency_to_baseband
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
+
+# Match tolerances shared across FrequencyManager RF/tone matching
+# (resolve_banks, get_label, get_ctcss_info, get_ctcss_tones).
+FREQ_MATCH_TOLERANCE_MHZ = 1e-4
+TONE_MATCH_TOLERANCE_HZ = 0.5
+
+
+@dataclass(kw_only=True)
+class ToneRule:
+    """Structured CTCSS tone rule for single frequencies or ranges."""
+    ctcss: float
+    label: str | None = None
+    banks: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        try:
+            self.ctcss = float(self.ctcss)
+        except (ValueError, TypeError):
+            raise ValueError("CTCSS must be a float or integer representing frequency in Hz")
+        if self.ctcss <= 0:
+            raise ValueError("CTCSS must be a positive number")
+        if isinstance(self.banks, str):
+            self.banks = [self.banks]
+
+
+def _coerce_tone_rule(rule: ToneRule | dict[str, Any]) -> ToneRule:
+    return rule if isinstance(rule, ToneRule) else ToneRule(**rule)
 
 
 @dataclass(kw_only=True)
@@ -26,6 +53,7 @@ class FrequencyInfo:
     locked: bool = field(default=False)
     priority: int | None = field(default=None)
     ctcss: float | None = field(default=None)
+    banks: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if not isinstance(self.locked, bool):
@@ -35,6 +63,9 @@ class FrequencyInfo:
             if not isinstance(self.priority, int) or self.priority < 1:
                 raise ValueError('Priority must be an integer >= 1')
 
+        if isinstance(self.banks, str):
+            self.banks = [self.banks]
+
         if self.ctcss is not None:
             try:
                 self.ctcss = float(self.ctcss)
@@ -42,7 +73,6 @@ class FrequencyInfo:
                 raise ValueError('CTCSS must be a float or integer representing frequency in Hz')
             if self.ctcss <= 0:
                 raise ValueError('CTCSS must be a positive number')
-
 
 
 @dataclass(kw_only=True, eq=False)
@@ -67,14 +97,50 @@ class ConfigFrequency(FrequencyInfo):
     # if not a single it is a range
     is_single: bool | None = field(default=None)
 
+    # tones: list of CTCSS tone rules with optional per-tone labels and banks.
+    # Config-domain only — ChannelFrequency and ChannelMessage do not carry tones.
+    tones: list[ToneRule] = field(default_factory=list)
+
     # All CTCSS tones considered valid for this frequency/range. Populated from
-    # `ctcss` on construction, and may be extended later via FrequencyManager.add()
-    # when the same frequency/range is declared again in config with a different
-    # `ctcss` value (e.g. a repeater with a primary and a backup PL tone). `ctcss`
-    # itself remains the first/primary tone, kept for backward compatibility with
-    # code that only expects a single value (e.g. get_ctcss_info()).
+    # the normalized `tones` rules, with any scalar `ctcss` prepended. `ctcss`
+    # remains the first/primary tone, kept for backward compatibility with code
+    # that only expects a single value (e.g. get_ctcss_info()).
     ctcss_tones: list[float] = field(default_factory=list, init=False, repr=False)
-    ctcss_labels: list[str] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self):
+        # Call parent validation first (banks norm, ctcss float cast/validation)
+        super().__post_init__()
+
+        # Convert any raw dict items under tones: into ToneRule instances
+        if self.tones:
+            self.tones = [_coerce_tone_rule(t) for t in self.tones]
+
+        if self.ctcss is not None and not self.tones:
+            # Normalize scalar ctcss into tones list if tones is empty
+            self.tones = [ToneRule(ctcss=self.ctcss, label=self.label, banks=self.banks)]
+
+        # Ensure any tone rule missing banks inherits parent entry's banks
+        for tone_rule in self.tones:
+            if not tone_rule.banks and self.banks:
+                tone_rule.banks = list(self.banks)
+
+        # Validate frequency types
+        self._validate_frequency_types()
+
+        # Validate frequency specification (single or range)
+        self._validate_frequency_specification()
+
+        # Validate frequency values
+        self._validate_frequency_values()
+
+        # Set state
+        self.is_single = self.single is not None
+        self.ctcss_tones = []
+        if self.ctcss is not None:
+            self.ctcss_tones.append(self.ctcss)
+        for tone_rule in self.tones:
+            if tone_rule.ctcss not in self.ctcss_tones:
+                self.ctcss_tones.append(tone_rule.ctcss)
 
 
     def calculate_baseband(self, center_freq: int, channel_spacing: int) -> None:
@@ -109,25 +175,6 @@ class ConfigFrequency(FrequencyInfo):
             return self.priority
 
         return None
-
-    def __post_init__(self):
-        # Call parent validation first
-        super().__post_init__()
-
-        # Validate frequency types
-        self._validate_frequency_types()
-
-        # Validate frequency specification (single or range)
-        self._validate_frequency_specification()
-
-        # Validate frequency values
-        self._validate_frequency_values()
-
-        # Set state
-        self.is_single = self.single is not None
-        self.ctcss_tones = [self.ctcss] if self.ctcss is not None else []
-        self.ctcss_labels = [self.label] if (self.ctcss is not None and self.label is not None) else []
-
 
     def _validate_frequency_types(self):
         """Ensure all frequency values are floats if provided"""
@@ -230,6 +277,9 @@ class ChannelMessage(FrequencyInfo):
         if self.label:
             parts.append(f"[{self.label}]")
 
+        if self.banks:
+            parts.append(f"[{','.join(self.banks)}]")
+
         if self.file:
             parts.append(f"Saved: {os.path.basename(self.file)}")
         elif self.detail:
@@ -280,6 +330,8 @@ class TransmissionRecord:
     metadata: dict = field(default_factory=dict)  # type: ignore[reportGeneralTypeIssues]
     """Free-form metadata populated by TransmissionComponent processors in Phase 4
     (e.g. transcription text, classifier confidence scores)."""
+    banks: list[str] = field(default_factory=list)
+    """List of scanner bank tags assigned to this transmission."""
 
 
     def __str__(self) -> str:
@@ -287,6 +339,8 @@ class TransmissionRecord:
         parts = [f"{self.rf:.4f} MHz", f"{self.duration_sec:.1f}s"]
         if self.label:
             parts.append(f"[{self.label}]")
+        if self.banks:
+            parts.append(f"[{','.join(self.banks)}]")
         if self.priority is not None:
             parts.append(f"P{self.priority}")
         if self.classification:
@@ -319,8 +373,118 @@ class FrequencyManager:
         self.center_freq = None
         self.config = config
         self.frequencies: FrequencyList = []
+        self.active_banks: set[str] = set()
 
-    async def process_frequencies_data(self, frequencies_config) -> FrequencyList:
+    def set_active_banks(self, banks: list[str] | set[str] | None) -> None:
+        """Set the active bank tags for filtering and stepping inclusion."""
+        if banks is None:
+            self.active_banks = set()
+        elif isinstance(banks, str):
+            self.active_banks = {banks}
+        else:
+            self.active_banks = set(banks)
+
+    def is_bank_active(self, bank_list: list[str]) -> bool:
+        """Return True if active_banks is empty (promiscuous scan all mode),
+        or if active_banks intersects with bank_list."""
+        if not self.active_banks:
+            return True
+        return bool(self.active_banks.intersection(bank_list))
+
+    def configured_banks(self) -> set[str]:
+        """Union of all bank tags configured across loaded frequencies and tone rules."""
+        banks: set[str] = set()
+        for freq in self.frequencies:
+            banks.update(freq.banks)
+            for tone_rule in freq.tones:
+                banks.update(tone_rule.banks)
+        return banks
+
+    def unknown_active_banks(self) -> set[str]:
+        """Active bank tags that match no configured bank tag. The "SEARCH"
+        and "UNTAGGED" dynamic tags are exempt. Returns empty set in
+        promiscuous mode."""
+        if not self.active_banks:
+            return set()
+        return self.active_banks - self.configured_banks() - {"SEARCH", "UNTAGGED"}
+
+    def _warn_on_unmatched_active_banks(self) -> None:
+        """Log a warning when active bank tags match no configured bank tag.
+
+        Bank filtering is fail-closed (see is_bank_active), so a typo'd active
+        bank (or a missing/empty frequency file) silently disables every
+        channel — surface it at startup.
+        """
+        unknown = self.unknown_active_banks()
+        if unknown:
+            logger.warning(
+                'Active bank(s) %s match no configured frequency/tone banks; bank filtering is fail-closed so channels in these will not be monitored. Check the --banks spelling and that -F/--frequencies points at a file defining matching banks.',
+                sorted(unknown))
+
+    def _untagged_fallback(self) -> list[str]:
+        """Bank-filtering sentinel tag.
+
+        "UNTAGGED" is only meaningful when the user opted into bank filtering
+        (non-empty active_banks); it lets untagged hits fail-closed via
+        is_bank_active().  In promiscuous/legacy mode (no --banks) return no
+        tags so bank metadata stays empty for non-participants instead of
+        injecting "UNTAGGED" into logs, fixed-field records, and JSON.
+        """
+        return ["UNTAGGED"] if self.active_banks else []
+
+    def resolve_banks(self, rf: float, ctcss_hz: float | None = None) -> list[str]:
+        """Resolve bank tags for a carrier hit at rf with decoded ctcss_hz
+        using 5-tier precedence hierarchy:
+        1. Explicit single entry tone match
+        2. Explicit single entry base bank
+        3. Range entry tone match
+        4. Range entry base bank
+        5. Dynamic fallback ("SEARCH" if active; else "UNTAGGED" when bank
+           filtering is active, otherwise no tags)
+
+        Note: "UNTAGGED" also arises from tiers 2 & 4 (and their pre-tuning
+        union fallbacks) when a configured entry matches but sets no bank
+        tags -- all such paths return _untagged_fallback(), the same gated
+        sentinel as tier 5. Under bank filtering both an unbanked configured
+        entry and an unmatched hit resolve to UNTAGGED and fail closed via
+        is_bank_active(); in promiscuous mode both resolve to no tags.
+        """
+        # Tier 1 & 2: Check single frequencies first
+        for freq in self.frequencies:
+            if freq.is_single and freq.single is not None and abs(freq.single - rf) < FREQ_MATCH_TOLERANCE_MHZ:
+                if ctcss_hz is not None:
+                    for tone_rule in freq.tones:
+                        if abs(tone_rule.ctcss - ctcss_hz) < TONE_MATCH_TOLERANCE_HZ:
+                            return tone_rule.banks if tone_rule.banks else freq.banks
+                    return freq.banks if freq.banks else self._untagged_fallback()
+                else:
+                    # Pre-tuning (no tone decoded yet): return Union of all possible bank tags
+                    union_banks = set(freq.banks)
+                    for tone_rule in freq.tones:
+                        union_banks.update(tone_rule.banks)
+                    return list(union_banks) if union_banks else self._untagged_fallback()
+
+        # Tier 3 & 4: Check range entries
+        for freq in self.frequencies:
+            if not freq.is_single and freq.lo is not None and freq.hi is not None and freq.lo <= rf <= freq.hi:
+                if ctcss_hz is not None:
+                    for tone_rule in freq.tones:
+                        if abs(tone_rule.ctcss - ctcss_hz) < TONE_MATCH_TOLERANCE_HZ:
+                            return tone_rule.banks if tone_rule.banks else freq.banks
+                    return freq.banks if freq.banks else self._untagged_fallback()
+                else:
+                    # Pre-tuning (no tone decoded yet): return Union of all possible bank tags
+                    union_banks = set(freq.banks)
+                    for tone_rule in freq.tones:
+                        union_banks.update(tone_rule.banks)
+                    return list(union_banks) if union_banks else self._untagged_fallback()
+
+        # Tier 5: Outside configured entries
+        if "SEARCH" in self.active_banks:
+            return ["SEARCH"]
+        return self._untagged_fallback()
+
+    async def process_frequencies_data(self, frequencies_config: dict[str, Any]) -> FrequencyList:
         """Process pre-loaded frentryequencies configuration data."""
 
         if 'frequencies' in frequencies_config:
@@ -335,6 +499,7 @@ class FrequencyManager:
         self.frequencies = []
 
         if not self.config.file_name:
+            self._warn_on_unmatched_active_banks()
             return []
 
         file = self.config.file_name
@@ -344,7 +509,7 @@ class FrequencyManager:
         logger.debug(f'Loading frequencies from {file}')
         with file.open(mode='r') as file:
             try:
-                frequencies_config = yaml.safe_load(file)
+                frequencies_config: dict[str, Any] = yaml.safe_load(file)
             except yaml.YAMLError as e:
                 if hasattr(e, 'problem_mark'):
                     logger.error(
@@ -355,18 +520,18 @@ class FrequencyManager:
                 raise Exception(
                     "Invalid yaml frequency file (enable debugging for more info)")
 
-            return await self.process_frequencies_data(frequencies_config)
+            _ = await self.process_frequencies_data(frequencies_config)
+            self._warn_on_unmatched_active_banks()
+            return self.frequencies
 
     async def add(self, entry: dict) -> FrequencyList:
         '''
         Add frequency to channels if not already there.
 
-        A frequency/range may legitimately be declared more than once in config
-        when the only difference is the `ctcss` tone (e.g. a repeater that
-        answers to a primary and a backup PL tone). In that case, the new tone
-        is merged into the existing entry's `ctcss_tones` list rather than
-        raising. Any other kind of duplicate (an identical entry, or a repeat
-        that doesn't add a new tone) is still an error.
+        Each frequency or range must be declared exactly once. To configure
+        multiple CTCSS tones on a single frequency, use either a single
+        ``ctcss:`` scalar (one tone) or the unified ``tones: [...]`` array
+        (multiple tones with optional per-tone labels and banks).
 
         Args:
             entry (dict): Dictionary of frequency attributes
@@ -383,12 +548,11 @@ class FrequencyManager:
                 FrequencyList: List of frequencies
 
         Raises:
-            ValueError: If the frequency already occurs in the list and is not
-                a mergeable CTCSS-only variant of an existing entry.
+            ValueError: If the frequency already occurs in the list.
         '''
         wanted = ConfigFrequency(**entry)
 
-        if wanted.ctcss is not None:
+        if wanted.ctcss_tones:
             if self.config.max_ctcss_tones <= 0:
                 raise ValueError(
                     f"CTCSS is disabled (max_ctcss_tones={self.config.max_ctcss_tones}) "
@@ -403,17 +567,10 @@ class FrequencyManager:
                                 if wanted == existing]
 
         if len(matching_frequencies) > 0:
-            existing = matching_frequencies[0]
-
-            if wanted.ctcss is not None and wanted.ctcss not in existing.ctcss_tones:
-                self._merge_ctcss_tone(existing, wanted, entry)
-                return self.frequencies
-
-            # Already one occurance, and no new tone to merge, so this is an error
             raise ValueError(
-                f'Frequency {wanted} already occurs in list')
+                f'Frequency {wanted} already occurs in list. Use tones: [...] on a single entry to configure multiple CTCSS tones.')
 
-        # add the basband if center frequency has been set
+        # add the baseband if center frequency has been set
         if self.center_freq:
             wanted.calculate_baseband(self.center_freq, self.channel_spacing)
 
@@ -421,43 +578,6 @@ class FrequencyManager:
 
         return self.frequencies
 
-    def _merge_ctcss_tone(self, existing: ConfigFrequency, wanted: ConfigFrequency, entry: dict) -> None:
-        '''
-        Merge an additional CTCSS tone into an already-loaded frequency/range.
-
-        The first-seen entry's label/priority/locked remain authoritative for
-        the merged entry. A conflicting, explicitly-specified priority on the
-        duplicate entry is treated as a config error, since it's ambiguous
-        which one should apply. (locked/label conflicts are intentionally not
-        validated in this phase.)
-
-        Args:
-            existing (ConfigFrequency): The already-loaded entry to merge into
-            wanted (ConfigFrequency): The newly parsed duplicate entry
-            entry (dict): The raw dict passed to add(), used to distinguish
-                "not specified" from "explicitly set" for conflict checks
-        '''
-        if self.config.max_ctcss_tones <= 0:
-            raise ValueError(
-                f"CTCSS is disabled (max_ctcss_tones={self.config.max_ctcss_tones}) "
-                f"but frequency config specifies ctcss: {wanted.ctcss}")
-
-        if len(existing.ctcss_tones) >= self.config.max_ctcss_tones:
-            raise ValueError(
-                f"Cannot merge CTCSS tone {wanted.ctcss} into "
-                f"{existing.label!r}: exceeds max_ctcss_tones limit of {self.config.max_ctcss_tones}")
-
-        if 'priority' in entry and existing.priority is not None and wanted.priority != existing.priority:
-            raise ValueError(
-                f"Cannot merge CTCSS tone {wanted.ctcss} into "
-                f"{existing.label!r}: priority {wanted.priority} conflicts "
-                f"with existing priority {existing.priority}")
-
-        existing.ctcss_tones.append(wanted.ctcss)
-        existing.ctcss_labels.append(wanted.label or existing.label or "")
-        logger.debug(
-            f'Merged CTCSS tone {wanted.ctcss} into existing frequency '
-            f'{existing.label!r} (tones now {existing.ctcss_tones})')
 
 
     async def change(self, entry: dict) -> FrequencyList:
@@ -484,11 +604,6 @@ class FrequencyManager:
                 for field in ['label', 'priority', 'locked']:
                     if field in entry:
                         setattr(frequency, field, entry[field])
-
-                # CTCSS tone merging in change()
-                if 'ctcss' in entry and entry['ctcss'] is not None:
-                    if entry['ctcss'] not in frequency.ctcss_tones:
-                        self._merge_ctcss_tone(frequency, new_values, entry)
 
                 return self.frequencies
 
@@ -582,23 +697,26 @@ class FrequencyManager:
     def get_ctcss_info(self, rf_freq: float) -> float | None:
         """Get the primary CTCSS tone frequency (in Hz) for the given absolute RF frequency.
 
-        NOTE: if multiple tones are configured for this frequency (see
-        get_ctcss_tones), this returns only the first/primary one. Kept for
-        backward compatibility with callers that only support a single tone
-        (currently: the single-tone squelch in BaseTuner). Callers that want to
-        validate against all configured tones should use get_ctcss_tones().
+        Returns the scalar ``ctcss`` when configured; otherwise the first tone
+        from the ``tones:`` list, so tones:-only entries still surface a primary
+        tone. Kept single-valued for callers (e.g. the UI) that display one
+        tone — use get_ctcss_tones() for the full set.
         """
         # Check single frequencies first
         for frequency in self.frequencies:
-            if frequency.is_single and abs(frequency.single - rf_freq) < 1e-4:
+            if frequency.is_single and frequency.single is not None and abs(frequency.single - rf_freq) < FREQ_MATCH_TOLERANCE_MHZ:
                 if frequency.ctcss is not None:
                     return frequency.ctcss
+                if frequency.tones:
+                    return frequency.tones[0].ctcss
 
         # Then check ranges
         for frequency in self.frequencies:
-            if not frequency.is_single and frequency.lo <= rf_freq <= frequency.hi:
+            if not frequency.is_single and frequency.lo is not None and frequency.hi is not None and frequency.lo <= rf_freq <= frequency.hi:
                 if frequency.ctcss is not None:
                     return frequency.ctcss
+                if frequency.tones:
+                    return frequency.tones[0].ctcss
 
         return None
 
@@ -610,15 +728,21 @@ class FrequencyManager:
         """
         # Check single frequencies first
         for frequency in self.frequencies:
-            if frequency.is_single and abs(frequency.single - rf_freq) < 1e-4:
-                if frequency.ctcss_tones:
-                    return list(frequency.ctcss_tones)
+            if frequency.is_single and frequency.single is not None and abs(frequency.single - rf_freq) < FREQ_MATCH_TOLERANCE_MHZ:
+                tones = list(frequency.ctcss_tones)
+                for tone_rule in frequency.tones:
+                    if tone_rule.ctcss not in tones:
+                        tones.append(tone_rule.ctcss)
+                return tones
 
         # Then check ranges
         for frequency in self.frequencies:
-            if not frequency.is_single and frequency.lo <= rf_freq <= frequency.hi:
-                if frequency.ctcss_tones:
-                    return list(frequency.ctcss_tones)
+            if not frequency.is_single and frequency.lo is not None and frequency.hi is not None and frequency.lo <= rf_freq <= frequency.hi:
+                tones = list(frequency.ctcss_tones)
+                for tone_rule in frequency.tones:
+                    if tone_rule.ctcss not in tones:
+                        tones.append(tone_rule.ctcss)
+                return tones
 
         return []
 
@@ -676,19 +800,19 @@ class FrequencyManager:
         range_label: str | None = None
         for freq_entry in self.frequencies:
             if freq_entry.is_single:
-                if freq_entry.single == rf:
-                    if ctcss is not None and ctcss in freq_entry.ctcss_tones:
-                        idx = freq_entry.ctcss_tones.index(ctcss)
-                        if idx < len(freq_entry.ctcss_labels):
-                            return freq_entry.ctcss_labels[idx]
+                if freq_entry.single is not None and abs(freq_entry.single - rf) < FREQ_MATCH_TOLERANCE_MHZ:
+                    if ctcss is not None:
+                        for tone_rule in freq_entry.tones:
+                            if abs(tone_rule.ctcss - ctcss) < TONE_MATCH_TOLERANCE_HZ and tone_rule.label:
+                                return tone_rule.label
                     return freq_entry.label
             else:
-                if freq_entry.lo <= rf <= freq_entry.hi:
+                if freq_entry.lo is not None and freq_entry.hi is not None and freq_entry.lo <= rf <= freq_entry.hi:
                     range_label = freq_entry.label
-                    if ctcss is not None and ctcss in freq_entry.ctcss_tones:
-                        idx = freq_entry.ctcss_tones.index(ctcss)
-                        if idx < len(freq_entry.ctcss_labels):
-                            range_label = freq_entry.ctcss_labels[idx]
+                    if ctcss is not None:
+                        for tone_rule in freq_entry.tones:
+                            if abs(tone_rule.ctcss - ctcss) < TONE_MATCH_TOLERANCE_HZ and tone_rule.label:
+                                range_label = tone_rule.label
 
         return range_label
 

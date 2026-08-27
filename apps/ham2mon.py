@@ -156,6 +156,11 @@ class MyDisplay():
 
         scanner = scnr.Scanner(PARSER.master_config, frequency_params)
 
+        if PARSER.master_config.frequency_policies.active_banks:
+            scanner.frequency_manager.set_active_banks(
+                PARSER.master_config.frequency_policies.active_banks
+            )
+
         await scanner.load_frequencies()
         # Set the parameters
         scanner.set_center_freq(scanner.center_freq)
