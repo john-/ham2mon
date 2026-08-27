@@ -113,3 +113,85 @@ components:
     - class_path: components.activity_logger_component.ActivityLoggerComponent
       config: {}
 ```
+
+---
+
+## 4. Home Assistant MQTT Component (`HomeAssistantMqttComponent`)
+
+* **Type**: `TransmissionNotifier`
+* **Class Path**: `components.ha_mqtt.ha_mqtt_notify.HomeAssistantMqttComponent`
+* **Description**: Publishes MQTT Discovery configs so entities appear automatically in Home Assistant (no manual `configuration.yaml` editing), then pushes per-transmission state updates. Each `ham2mon` instance registers as one HA device (keyed by `instance`), with two entities: `sensor.<instance>_last_transmission` (frequency plus full record attributes) and `binary_sensor.<instance>_voice_activity` (auto-clears via HA's `off_delay`). Availability is tracked via an MQTT Last Will and Testament plus explicit `online`/`offline` publishes.
+* **Bank support**: resolved bank tags are read per-transmission from `TransmissionRecord.banks` and published in the state payload as a JSON list — banks are **not** part of this component's config.
+
+The `last_transmission/state` payload is a JSON object published on `ham2mon/<instance>/last_transmission/state` with: `freq` (MHz, also the sensor state), `duration`, `priority`, `strength`, `ctcss`, `label`, `classification`, `wav_path` (location of the saved clip on the ham2mon host, relative to its working directory), `created`, and `banks`. The sensor reports `unit_of_measurement: "MHz"`. To watch the raw payloads from any LAN host:
+
+```bash
+mosquitto_sub -h <broker_host> -u <mqtt_user> -P <mqtt_pass> -t 'ham2mon/#' -v
+```
+
+(In Home Assistant: **Settings → Devices & Services → MQTT → Listen to topics**, subscribe to `ham2mon/#`.)
+
+### Requirements & Installation
+
+1. **Install `aiomqtt`** (declared as a core dependency, installed automatically with `uv sync`):
+   ```bash
+   uv sync
+   ```
+
+### Configuration
+
+Register `HomeAssistantMqttComponent` in your `config.yaml` under the `components.notifiers` list:
+
+```yaml
+components:
+  notifiers:
+    - class_path: components.ha_mqtt.ha_mqtt_notify.HomeAssistantMqttComponent
+      config:
+        instance: "SDR1"          # or ENV: H2M_INSTANCE (defaults to hostname)
+        broker_host: "localhost"  # or ENV: MQTT_BROKER_HOST
+        broker_port: 1883
+        username: null            # or ENV: MQTT_USERNAME
+        password: null            # or ENV: MQTT_PASSWORD
+        wanted: "V"               # only publish this classification code
+        off_delay_sec: 5
+        discovery_prefix: "homeassistant"
+```
+
+#### Options:
+* `instance`: Stable identifier for this `ham2mon` deployment, used for the MQTT topic namespace (`ham2mon/<instance>/...`) and the HA device/entity names. Defaults to the value of `H2M_INSTANCE` or the system hostname.
+* `broker_host` / `broker_port`: MQTT broker address (defaults to `localhost:1883`, `MQTT_BROKER_HOST` env override).
+* `username` / `password`: MQTT broker credentials (or `MQTT_USERNAME` / `MQTT_PASSWORD` env overrides).
+* `wanted`: Classification code to forward to Home Assistant (default `"V"`). Transmissions classified otherwise are still recorded but not published.
+* `off_delay_sec`: Seconds before HA auto-resets `voice_activity` to `off` after the last transmission (default `5`).
+* `discovery_prefix`: Home Assistant MQTT discovery prefix (default `homeassistant`).
+
+#### Example: Alert automation in Home Assistant
+
+The sensor's state is the last received frequency (`MHz`) and the state JSON is exposed as the entity's attributes, so HA automations can alert on any frequency/tone combination without touching `configuration.yaml`. This example posts a persistent notification whenever FRS channel 14 (467.7125 MHz) with privacy code 8 (88.5 Hz CTCSS) is keyed up:
+
+```yaml
+alias: FRS Ch14 Code 8 Alert
+description: Notify when FRS channel 14 (467.7125) with privacy code 8 (88.5 Hz) is keyed up
+triggers:
+  - trigger: state
+    entity_id: sensor.ham2mon_sdr1_last_transmission
+    attribute: created
+conditions:
+  - condition: template
+    value_template: "{{ state_attr('sensor.ham2mon_sdr1_last_transmission', 'freq') | float(0) | round(4) == 467.7125 }}"
+  - condition: template
+    value_template: "{{ (state_attr('sensor.ham2mon_sdr1_last_transmission', 'ctcss') or '') | replace('Hz', '') | float(0) | round(1) == 88.5 }}"
+actions:
+  - action: notify.persistent_notification
+    data:
+      title: "FRS Channel 14 · Code 8"
+      message: "Keyed up at {{ now().strftime('%H:%M:%S') }} — clip: {{ state_attr('sensor.ham2mon_sdr1_last_transmission', 'wav_path') }}"
+mode: single
+```
+
+Notes:
+- **The entity id encodes your instance**: it is `sensor.ham2mon_<instance_lowercase>_last_transmission`. Use the exact entity shown in **Developer Tools → States** (search `ham2mon`), or derive it from the sensor's `friendly_name` (`ham2mon (<instance>) Last Transmission`). The example above uses `SDR1` — if your `instance` is different, every reference must be updated, or the trigger/conditions will silently evaluate against a nonexistent entity (`state_attr` returns `None`, `condition: state` fails).
+- The trigger watches the `created` **attribute** (`trigger: state` + `attribute:`) so *every* completed transmission fires, including rapid consecutive same-frequency key-ups. Do not use a template trigger for this: template triggers only re-evaluate when the entity's *state* changes, and since this sensor's state is the frequency, a single-frequency channel changes state only once (on the first transmission).
+- Conditions read the `freq` and `ctcss` **attributes** (not the sensor state). The `freq` attribute is always present and compared as a float (`round(4)` absorbs the 4-decimal format and float noise); the `ctcss` check tolerates the `88.5Hz` suffix and fails cleanly (evaluates to `False`) when `ctcss` is `null`.
+- The `ctcss` attribute is only non-`null` when CTCSS tone squelch is enabled (`receiver.max_ctcss_tones` > 0) and the frequency entry declares `tones:` (e.g. `tones: [88.5]`).
+- Swap `notify.persistent_notification` for `notify.mobile_app_<device>` to push to a phone.

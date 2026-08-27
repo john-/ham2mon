@@ -121,7 +121,7 @@ This application uses the [uv](https://github.com/astral-sh/uv) package manager 
     ```
 
 4. **Install and Sync Python Dependencies:**
-   Install remaining Python-only dependencies (like `PyYAML`, and `requests`) defined in [pyproject.toml](file:///library/pub/dev/ham2mon/pyproject.toml):
+   Install remaining Python-only dependencies (like `PyYAML`, `requests`, and `aiomqtt`) defined in [pyproject.toml](pyproject.toml):
 
     ```bash
     uv sync
@@ -141,6 +141,11 @@ This application uses the [uv](https://github.com/astral-sh/uv) package manager 
       ```bash
       uv sync --extra tensorflow
       ```
+
+    _To support all optional components at once (LiteRT classifier + ONNX Silero VAD; TensorFlow is an alternative to LiteRT, not an addition):_
+    ```bash
+    uv sync --extra ai-edge-litert --extra onnxruntime
+    ```
 
 5. **Configure Volk for Performance Optimization (Recommended):**
    GNU Radio uses the Volk (Vector Optimized Library of Kernels) library to perform accelerated SIMD calculations. You can profile your CPU to select the fastest mathematical kernels:
@@ -421,7 +426,7 @@ graph TD
     RecSelector -- "Index 1 (Recording)" --> WavSink
 ```
 
-See [receiver.py](file:///library/pub/dev/ham2mon/apps/receiver.py) for the Python coded flow.  The complex samples are grouped into a vector of length 2^n and then decimated by keeping “1 in N” vectors. The FFT is taken followed by magnitude-squared to form a power spectrum.  The FFT length is chosen, based on sample rate, to span about 3 RBW bins across a 12.5 kHz FM channel.  The spectrum vectors are then integrated and further decimated for a video average, akin to the VBW of a spectrum analyzer.  The spectrum is then probed by the Python code at ~10 Hz rate.
+See [receiver.py](apps/receiver.py) for the Python coded flow.  The complex samples are grouped into a vector of length 2^n and then decimated by keeping “1 in N” vectors. The FFT is taken followed by magnitude-squared to form a power spectrum.  The FFT length is chosen, based on sample rate, to span about 3 RBW bins across a 12.5 kHz FM channel.  The spectrum vectors are then integrated and further decimated for a video average, akin to the VBW of a spectrum analyzer.  The spectrum is then probed by the Python code at ~10 Hz rate.
 
 The demodulator blocks are put into a hierarchical GR block so multiple can be instantiated in parallel.  A frequency translating FIR filter tunes the channel, followed by two more decimating FIR filters to 12.5 kHz channel bandwidth.  For sample rates 1 Msps or greater, the total decimation for the first three stages takes the rate to 40-80 ksps.  A non-blocking power squelch silences the channel, followed by quadrature (FM) demodulation, or AGC and AM demodulation.  The audio stream is filtered to 3.5 kHz bandwidth and further decimated to 8-16 ksps.  A polyphase arbitrary resampler takes the final audio rate to a constant 8 ksps (or 16 ksps for AM/WBFM). The audio stream is then routed through a parallel-path CTCSS bypass/filter chain (consisting of a bypass branch and up to `max_ctcss_tones` parallel squelch/filter branches running in parallel, with only the active branch's gain enabled), mixed with other streams, or routed to a selector-controlled WAV file sink/null sink path via a blocking squelch to remove dead audio.
 
