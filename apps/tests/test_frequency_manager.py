@@ -1844,3 +1844,91 @@ async def test_active_bank_without_frequencies_resolves_untagged(fm_empty):
 
     assert fm_empty.resolve_banks(460.125) == ["UNTAGGED"]
     assert fm_empty.is_bank_active(["UNTAGGED"]) is False
+
+
+# ---------------------------------------------------------------------------
+# FrequencyInfo.locks_out() / get_priority_at() truth tables
+#
+# These methods gate lockout and priority matching for every scanned hit.
+# Single entries leave bb_lo/bb_hi as None and range entries leave bb_single
+# as None, so the is_single guards are what keep comparisons away from those Nones.
+# ---------------------------------------------------------------------------
+
+CENTER_FREQ = 460_000_000
+
+
+def _single_entry(locked: bool = True, priority: int | None = None) -> ConfigFrequency:
+    fi = ConfigFrequency(single=462.400, locked=locked, priority=priority)
+    fi.calculate_baseband(CENTER_FREQ, CHANNEL_SPACING)
+    return fi
+
+
+def _range_entry(locked: bool = True, priority: int | None = None) -> ConfigFrequency:
+    fi = ConfigFrequency(lo=462.100, hi=462.700, locked=locked, priority=priority)
+    fi.calculate_baseband(CENTER_FREQ, CHANNEL_SPACING)
+    return fi
+
+
+def test_lockout_unlocked_entry_never_locks():
+    """locks_out() gates on `locked` before anything else — even an exact
+    frequency match on an unlocked entry must not report a lockout."""
+    assert _single_entry(locked=False).locks_out(2_400_000) is False
+    assert _range_entry(locked=False).locks_out(2_400_000) is False
+
+
+def test_lockout_single_frequency_matches_only_that_bin():
+    fi = _single_entry()
+    assert fi.bb_single == 2_400_000
+    assert fi.locks_out(fi.bb_single) is True
+    assert fi.locks_out(fi.bb_single + CHANNEL_SPACING) is False
+    assert fi.locks_out(fi.bb_single - CHANNEL_SPACING) is False
+
+
+def test_lockout_range_bounds_are_inclusive():
+    fi = _range_entry()
+    assert (fi.bb_lo, fi.bb_hi) == (2_100_000, 2_700_000)
+    for bb in (fi.bb_lo, 2_400_000, fi.bb_hi):
+        assert fi.locks_out(bb) is True, f"bb={bb} inside closed range must lock"
+
+
+def test_lockout_range_misses_outside_bounds():
+    fi = _range_entry()
+    assert fi.locks_out(fi.bb_lo - CHANNEL_SPACING) is False
+    assert fi.locks_out(fi.bb_hi + CHANNEL_SPACING) is False
+
+
+def test_single_entry_baseband_invariant():
+    """Single entries never populate range basebands; range entries never
+    populate bb_single.  Dropping an is_single guard in locks_out() or
+    get_priority_at() would compare against these Nones and TypeError."""
+    single = _single_entry()
+    assert single.bb_lo is None and single.bb_hi is None
+    rng = _range_entry()
+    assert rng.bb_single is None
+    # Must not raise despite the unset counterparts.
+    assert single.locks_out(single.bb_single) is True
+    assert rng.locks_out(rng.bb_lo) is True
+
+
+def test_priority_unset_returns_none_even_on_exact_hit():
+    assert _single_entry(priority=None).get_priority_at(2_400_000) is None
+    assert _range_entry(priority=None).get_priority_at(2_100_000) is None
+
+
+def test_priority_single_hit_and_miss():
+    fi = _single_entry(priority=3)
+    assert fi.get_priority_at(fi.bb_single) == 3
+    assert fi.get_priority_at(fi.bb_single + CHANNEL_SPACING) is None
+
+
+def test_priority_range_hit_is_inclusive_and_miss_is_none():
+    fi = _range_entry(priority=5)
+    assert fi.get_priority_at(fi.bb_lo) == 5
+    assert fi.get_priority_at(fi.bb_hi) == 5
+    assert fi.get_priority_at(fi.bb_hi + CHANNEL_SPACING) is None
+
+
+def test_priority_does_not_gate_on_locked():
+    """Documented asymmetry: unlike locks_out(), get_priority_at() ignores the
+    locked flag — an unlocked entry still reports its configured priority."""
+    assert _single_entry(locked=False, priority=2).get_priority_at(2_400_000) == 2
