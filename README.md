@@ -613,28 +613,30 @@ CTCSS (Continuous Tone-Coded Squelch System) allows filtering transmissions by r
 
 ### Configuration
 
-CTCSS tones are configured per-channel inside the YAML frequencies file (specified via the `-F`/`--frequencies` command-line option):
+CTCSS tones are configured per-channel inside the YAML frequencies file (specified via the `-F`/`--frequencies` command-line option) using the `tones:` key. Each list item is either a bare tone frequency in Hz or a tone rule dict with an optional per-tone label and per-tone banks:
+
+```yaml
+frequencies:
+  # Single tone, bare frequency in Hz
+  - label: "CTCSS Test Channel"
+    single: 144.500
+    tones: [100.0]
+```
+
+To support **multiple valid CTCSS tones** on a single frequency or frequency range, list them all under `tones:` on a single entry:
 
 ```yaml
 frequencies:
   - label: "CTCSS Test Channel"
     single: 144.500
-    ctcss: 100.0   # Configured expected CTCSS tone in Hz
+    tones:
+      - ctcss: 100.0   # in Hz
+        label: "Primary"
+      - ctcss: 141.3
+        label: "Backup"
 ```
 
-To support **multiple valid CTCSS tones** on a single frequency or frequency range, declare the frequency block multiple times, changing only the `ctcss` tone frequency. These will merge into a single tuner entry at load time:
-
-```yaml
-frequencies:
-  # Primary tone
-  - label: "CTCSS Test Channel"
-    single: 144.500
-    ctcss: 100.0
-  # Backup tone
-  - label: "CTCSS Test Channel"
-    single: 144.500
-    ctcss: 141.3
-```
+> Declaring the same frequency twice (even with different tones) is an error; multiple tones must live on one entry.
 
 By default, **CTCSS demodulation is disabled (`--max-ctcss-tones` defaults to 0) for performance reasons**, as running CTCSS tone detection blocks on every channel incurs significant CPU overhead even when no signal is present. To enable CTCSS tone detection, you must specify a limit (e.g. `--max-ctcss-tones 3`). Any configured tones loaded beyond this limit are validated and rejected at configuration load time.
 
@@ -643,10 +645,10 @@ By default, **CTCSS demodulation is disabled (`--max-ctcss-tones` defaults to 0)
 Depending on your configuration in your `.freqs.yaml` file (specified via the `-F`/`--frequencies` option), the application operates in one of two modes:
 
 1. **Carrier Squelch (CSQ) Mode (CTCSS Bypassed):**
-   * **Trigger:** Enabled for any channel configured in your `.freqs.yaml` file **without** a `ctcss` tone, or for any frequency not present in the file at all (such as dynamically discovered frequencies during a range scan).
+   * **Trigger:** Enabled for any channel configured in your `.freqs.yaml` file **without** a `tones:` entry, or for any frequency not present in the file at all (such as dynamically discovered frequencies during a range scan).
    * **Behavior:** The receiver will record and unmute any signal that is strong enough to break the RF carrier power squelch, regardless of whether a sub-audible tone is present or what its frequency is. Additionally, the 300Hz high-pass filter is dynamically bypassed in this mode to preserve full audio fidelity and bass (e.g. for broadcast FM music).
 2. **Tone Squelch (CTCSS) Mode:**
-   * **Trigger:** Enabled for channels configured **with** a specific `ctcss` key (e.g. `ctcss: 100.0`).
+   * **Trigger:** Enabled for channels configured with a `tones:` entry (e.g. `tones: [100.0]`).
    * **Behavior:** The receiver will only unmute and keep the recording if the signal contains one of the configured CTCSS tones. Transmissions carrying a different tone or no tone at all are muted and discarded.
 
 ### GUI Display

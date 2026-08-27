@@ -848,7 +848,7 @@ async def test_ctcss_mismatch_suppression(tmp_path):
         'single': 144.03,
         'priority': 1,
         'label': 'Priority 1',
-        'ctcss': 100.0
+        'tones': [100.0]
     })
 
     # Tune the mock demodulator to +30 kHz

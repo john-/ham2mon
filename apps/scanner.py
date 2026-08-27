@@ -421,7 +421,6 @@ class Scanner:
                                       active=is_active,
                                       priority=priority,
                                       hanging=is_hanging,
-                                      ctcss=self.frequency_manager.get_ctcss_info(frequency),
                                       matched_ctcss=matched_tone,
                                       label=self.frequency_manager.get_label(frequency, matched_tone),
                                       ctcss_tones=self.frequency_manager.get_ctcss_tones(frequency)))

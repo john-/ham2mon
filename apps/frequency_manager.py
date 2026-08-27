@@ -40,8 +40,12 @@ class ToneRule:
             self.banks = [self.banks]
 
 
-def _coerce_tone_rule(rule: ToneRule | dict[str, Any]) -> ToneRule:
-    return rule if isinstance(rule, ToneRule) else ToneRule(**rule)
+def _coerce_tone_rule(rule: ToneRule | dict[str, Any] | float) -> ToneRule:
+    if isinstance(rule, ToneRule):
+        return rule
+    if isinstance(rule, (int, float)):
+        return ToneRule(ctcss=rule)
+    return ToneRule(**rule)
 
 
 @dataclass(kw_only=True)
@@ -52,7 +56,6 @@ class FrequencyInfo:
     label: str = field(default=None)
     locked: bool = field(default=False)
     priority: int | None = field(default=None)
-    ctcss: float | None = field(default=None)
     banks: list[str] = field(default_factory=list)
 
     def __post_init__(self):
@@ -65,14 +68,6 @@ class FrequencyInfo:
 
         if isinstance(self.banks, str):
             self.banks = [self.banks]
-
-        if self.ctcss is not None:
-            try:
-                self.ctcss = float(self.ctcss)
-            except (ValueError, TypeError):
-                raise ValueError('CTCSS must be a float or integer representing frequency in Hz')
-            if self.ctcss <= 0:
-                raise ValueError('CTCSS must be a positive number')
 
 
 @dataclass(kw_only=True, eq=False)
@@ -98,26 +93,22 @@ class ConfigFrequency(FrequencyInfo):
     is_single: bool | None = field(default=None)
 
     # tones: list of CTCSS tone rules with optional per-tone labels and banks.
+    # Each item is a ToneRule, a dict, or a bare float (see _coerce_tone_rule).
     # Config-domain only — ChannelFrequency and ChannelMessage do not carry tones.
     tones: list[ToneRule] = field(default_factory=list)
 
-    # All CTCSS tones considered valid for this frequency/range. Populated from
-    # the normalized `tones` rules, with any scalar `ctcss` prepended. `ctcss`
-    # remains the first/primary tone, kept for backward compatibility with code
-    # that only expects a single value (e.g. get_ctcss_info()).
+    # All CTCSS tones considered valid for this frequency/range, in order.
+    # Derived from the normalized `tones` rules; the first entry is the
+    # primary tone surfaced by get_ctcss_info().
     ctcss_tones: list[float] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self):
-        # Call parent validation first (banks norm, ctcss float cast/validation)
+        # Call parent validation first (banks norm)
         super().__post_init__()
 
         # Convert any raw dict items under tones: into ToneRule instances
         if self.tones:
             self.tones = [_coerce_tone_rule(t) for t in self.tones]
-
-        if self.ctcss is not None and not self.tones:
-            # Normalize scalar ctcss into tones list if tones is empty
-            self.tones = [ToneRule(ctcss=self.ctcss, label=self.label, banks=self.banks)]
 
         # Ensure any tone rule missing banks inherits parent entry's banks
         for tone_rule in self.tones:
@@ -136,8 +127,6 @@ class ConfigFrequency(FrequencyInfo):
         # Set state
         self.is_single = self.single is not None
         self.ctcss_tones = []
-        if self.ctcss is not None:
-            self.ctcss_tones.append(self.ctcss)
         for tone_rule in self.tones:
             if tone_rule.ctcss not in self.ctcss_tones:
                 self.ctcss_tones.append(tone_rule.ctcss)
@@ -528,10 +517,10 @@ class FrequencyManager:
         '''
         Add frequency to channels if not already there.
 
-        Each frequency or range must be declared exactly once. To configure
-        multiple CTCSS tones on a single frequency, use either a single
-        ``ctcss:`` scalar (one tone) or the unified ``tones: [...]`` array
-        (multiple tones with optional per-tone labels and banks).
+        Each frequency or range must be declared exactly once. CTCSS tones
+        are configured with the ``tones: [...]`` array, where each item is a
+        tone rule dict (with optional per-tone labels and banks) or a bare
+        float.
 
         Args:
             entry (dict): Dictionary of frequency attributes
@@ -556,11 +545,11 @@ class FrequencyManager:
             if self.config.max_ctcss_tones <= 0:
                 raise ValueError(
                     f"CTCSS is disabled (max_ctcss_tones={self.config.max_ctcss_tones}) "
-                    f"but frequency config specifies ctcss: {wanted.ctcss}")
+                    f"but frequency config specifies {len(wanted.ctcss_tones)} CTCSS tone(s)")
             if len(wanted.ctcss_tones) > self.config.max_ctcss_tones:
                 raise ValueError(
-                    f"Frequency config specifies {len(wanted.ctcss_tones)} CTCSS tones "
-                    f"but max_ctcss_tones is limited to {self.config.max_ctcss_tones}")
+                    f"A frequency config specifies {len(wanted.ctcss_tones)} CTCSS tones "
+                    f"on a channel but max_ctcss_tones is limited to {self.config.max_ctcss_tones}")
 
         # use the dataclass __eq__ functions to look for matches
         matching_frequencies = [existing for existing in self.frequencies
@@ -697,26 +686,23 @@ class FrequencyManager:
     def get_ctcss_info(self, rf_freq: float) -> float | None:
         """Get the primary CTCSS tone frequency (in Hz) for the given absolute RF frequency.
 
-        Returns the scalar ``ctcss`` when configured; otherwise the first tone
-        from the ``tones:`` list, so tones:-only entries still surface a primary
-        tone. Kept single-valued for callers (e.g. the UI) that display one
-        tone — use get_ctcss_tones() for the full set.
+        Returns the first tone from the ``tones:`` list (the primary tone).
+        Kept single-valued for callers (e.g. the UI) that display one tone —
+        use get_ctcss_tones() for the full set.
         """
         # Check single frequencies first
         for frequency in self.frequencies:
-            if frequency.is_single and frequency.single is not None and abs(frequency.single - rf_freq) < FREQ_MATCH_TOLERANCE_MHZ:
-                if frequency.ctcss is not None:
-                    return frequency.ctcss
-                if frequency.tones:
-                    return frequency.tones[0].ctcss
+            if (frequency.is_single and frequency.single is not None
+                    and abs(frequency.single - rf_freq) < FREQ_MATCH_TOLERANCE_MHZ
+                    and frequency.tones):
+                return frequency.tones[0].ctcss
 
         # Then check ranges
         for frequency in self.frequencies:
-            if not frequency.is_single and frequency.lo is not None and frequency.hi is not None and frequency.lo <= rf_freq <= frequency.hi:
-                if frequency.ctcss is not None:
-                    return frequency.ctcss
-                if frequency.tones:
-                    return frequency.tones[0].ctcss
+            if (not frequency.is_single and frequency.lo is not None and frequency.hi is not None
+                    and frequency.lo <= rf_freq <= frequency.hi
+                    and frequency.tones):
+                return frequency.tones[0].ctcss
 
         return None
 

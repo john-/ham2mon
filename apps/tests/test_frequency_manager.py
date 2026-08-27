@@ -56,8 +56,8 @@ async def load_inline_config(frequency_manager: FrequencyManager, *entries: dict
     it's meant to represent, e.g.:
 
         await load_inline_config(fm,
-            {'label': 'Security Patrol dispatch', 'single': 462.400, 'ctcss': 100.0},
-            {'label': 'Security Patrol dispatch (Backup)', 'single': 462.400, 'ctcss': 67.0},
+            {'label': 'Security Patrol dispatch', 'single': 462.400, 'tones': [100.0]},
+            {'label': 'Security Patrol dispatch (Backup)', 'single': 462.400, 'tones': [67.0]},
         )
 
     Prefer this over calling frequency_manager.add() directly when the test's
@@ -268,18 +268,17 @@ Multiple CTCSS tones per frequency
 
 Real-world config sometimes needs more than one CTCSS tone valid for the same
 physical frequency (e.g. a repeater that answers to a primary and a backup PL
-tone). Rather than requiring a new YAML shape, this is expressed by declaring
-the same frequency/range twice, differing only by `ctcss` -- mirroring how
-users already tend to write these configs:
+tone). Configure them on a single entry with the unified ``tones:`` array:
 
     - label: "Security Patrol dispatch"
       single: 462.400
       priority: 1
-      ctcss: 100.0
-    - label: "Security Patrol dispatch (Backup)"
-      single: 462.400
-      priority: 1
-      ctcss: 67.0
+      tones:
+        - ctcss: 100.0    # in Hz
+        - ctcss: 67.0
+
+Declaring the same frequency twice is an error, even when the tone differs —
+multiple tones must live on one entry.
 """
 
 
@@ -290,7 +289,7 @@ async def test_fail_duplicate_frequency(fm_empty):
 
     FREQ = 462.400
 
-    entry = {'label': 'Security Patrol dispatch', 'single': FREQ, 'ctcss': 100.0}
+    entry = {'label': 'Security Patrol dispatch', 'single': FREQ, 'tones': [100.0]}
     await fm_empty.add(entry)
 
     # Same entry exactly → error
@@ -299,17 +298,17 @@ async def test_fail_duplicate_frequency(fm_empty):
 
     # Same frequency, different ctcss → also an error now
     with pytest.raises(ValueError, match='already occurs in list'):
-        await fm_empty.add({'label': 'Backup', 'single': FREQ, 'ctcss': 67.0})
+        await fm_empty.add({'label': 'Backup', 'single': FREQ, 'tones': [67.0]})
 
 
 @pytest.mark.asyncio
 async def test_fail_duplicate_range(fm_empty):
     """Declaring the same range twice is always an error."""
 
-    await fm_empty.add({'label': 'Primary', 'lo': 450.0, 'hi': 451.0, 'ctcss': 100.0})
+    await fm_empty.add({'label': 'Primary', 'lo': 450.0, 'hi': 451.0, 'tones': [100.0]})
 
     with pytest.raises(ValueError, match='already occurs in list'):
-        await fm_empty.add({'label': 'Backup', 'lo': 450.0, 'hi': 451.0, 'ctcss': 67.0})
+        await fm_empty.add({'label': 'Backup', 'lo': 450.0, 'hi': 451.0, 'tones': [67.0]})
 
 
 @pytest.mark.asyncio
@@ -358,17 +357,17 @@ async def test_get_ctcss_tones_empty_when_not_configured(fm_empty):
 
 
 @pytest.mark.asyncio
-async def test_get_ctcss_info_still_returns_only_primary_tone(fm_empty):
+async def test_get_ctcss_info_returns_first_tone(fm_empty):
     """
     get_ctcss_info() is kept single-valued on purpose for callers (e.g. the
-    current single-tone squelch) that don't yet support multiple tones.
+    current single-tone squelch) that don't yet support multiple tones. It
+    returns the first tone configured under tones:.
     """
     FREQ = 462.400
 
     await fm_empty.add({
         'single': FREQ,
         'label': 'Security Patrol',
-        'ctcss': 100.0,
         'tones': [
             {'ctcss': 100.0, 'label': 'Primary'},
             {'ctcss': 67.0,  'label': 'Backup'},
@@ -378,6 +377,26 @@ async def test_get_ctcss_info_still_returns_only_primary_tone(fm_empty):
     assert fm_empty.get_ctcss_info(FREQ) == 100.0
 
 
+@pytest.mark.asyncio
+async def test_get_ctcss_info_returns_none_when_no_tones(fm_empty):
+    """get_ctcss_info returns None for entries without any CTCSS tones."""
+    await fm_empty.add({'single': 462.400, 'label': 'No tone'})
+
+    assert fm_empty.get_ctcss_info(462.400) is None
+
+
+@pytest.mark.asyncio
+async def test_tones_accepts_bare_floats(fm_empty):
+    """The unified tones: key accepts bare floats as well as tone rule dicts."""
+    await fm_empty.add({
+        'single': 462.400,
+        'label': 'Security Patrol',
+        'tones': [100.0, {'ctcss': 67.0, 'label': 'Backup'}],
+    })
+
+    assert fm_empty.get_ctcss_tones(462.400) == [100.0, 67.0]
+    assert fm_empty.get_ctcss_info(462.400) == 100.0
+    assert fm_empty.get_label(462.400, 67.0) == 'Backup'
 
 
 @pytest.mark.asyncio
@@ -981,7 +1000,7 @@ async def test_get_priority_info(fm_empty):
 
 @pytest.mark.asyncio
 async def test_max_ctcss_tones_disabled(fm_empty):
-    """max_ctcss_tones=0 disables CTCSS entirely: adding a frequency with ctcss: raises."""
+    """max_ctcss_tones=0 disables CTCSS entirely: adding a frequency with tones: raises."""
     from frequency_manager import FrequencyConfiguration, FrequencyManager
 
     config_0 = FrequencyConfiguration(
@@ -993,16 +1012,17 @@ async def test_max_ctcss_tones_disabled(fm_empty):
     fm_0 = FrequencyManager(config_0, channel_spacing=5000)
 
     with pytest.raises(ValueError, match="CTCSS is disabled"):
-        await fm_0.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
+        await fm_0.add({'single': 144.390, 'tones': [100.0], 'label': 'Frequency'})
 
 
 @pytest.mark.asyncio
 async def test_max_ctcss_tones_bypass_via_tones_raises_when_exceeding(fm_empty):
-    """max_ctcss_tones must cap tones: -only entries too (not just scalar ctcss:).
+    """max_ctcss_tones must cap tones: -only entries.
 
-    Regression guard: the count check previously keyed off wanted.ctcss, so a
-    tones: array with more tones than the receiver supports slipped past config
-    validation and was only truncated silently at runtime.
+    Regression guard: the tone count check must key off all configured tones
+    (including the tones: array) so an entry with more tones than the receiver
+    supports is rejected at config load rather than truncated silently at
+    runtime.
     """
     with pytest.raises(ValueError, match="max_ctcss_tones"):
         await fm_empty.add({
@@ -1042,23 +1062,11 @@ async def test_max_ctcss_tones_disabled_rejects_tones_only_entry():
 
 
 @pytest.mark.asyncio
-async def test_change_does_not_merge_ctcss(fm_empty):
-    """change() no longer merges CTCSS tones; ctcss key in entry is ignored for tone accumulation."""
-    await fm_empty.add({'single': 144.390, 'ctcss': 100.0, 'label': 'Frequency'})
-    assert fm_empty.frequencies[0].ctcss_tones == [100.0]
-
-    # change() with a ctcss key should not accumulate tones
-    await fm_empty.change({'single': 144.390, 'ctcss': 141.3})
-    assert fm_empty.frequencies[0].ctcss_tones == [100.0]
-
-
-@pytest.mark.asyncio
 async def test_get_label_with_ctcss(fm_empty):
     """Test that get_label correctly resolves the label matching a specific CTCSS tone."""
     await fm_empty.add({
         'single': 144.390,
         'label': 'Tone 100',
-        'ctcss': 100.0,
         'tones': [
             {'ctcss': 100.0, 'label': 'Tone 100'},
             {'ctcss': 141.3, 'label': 'Tone 141'},
@@ -1098,8 +1106,8 @@ def test_frequency_info_banks_and_tones_normalization():
     info1 = FrequencyInfo(banks="PUBLIC_SAFETY")
     assert info1.banks == ["PUBLIC_SAFETY"]
 
-    # 2. Scalar ctcss auto-promotion to tones list (ConfigFrequency only — tones lives there)
-    info2 = ConfigFrequency(single=462.400, ctcss=100.0, banks=["FIRE_TAC"])
+    # 2. Bare float tones are coerced to ToneRule (ConfigFrequency only — tones lives there)
+    info2 = ConfigFrequency(single=462.400, tones=[ToneRule(ctcss=100.0)], banks=["FIRE_TAC"])
     assert len(info2.tones) == 1
     assert info2.tones[0].ctcss == 100.0
     assert info2.tones[0].banks == ["FIRE_TAC"]
@@ -1549,8 +1557,7 @@ async def test_get_label_uses_tone_tolerance_for_tone_rules(fm_empty):
 
 @pytest.mark.asyncio
 async def test_get_ctcss_info_tones_only_returns_first_tone(fm_empty):
-    """get_ctcss_info must surface a primary tone for tones:-only entries
-    (previously returned None when no scalar ctcss was set)."""
+    """get_ctcss_info must surface a primary tone for tones:-only entries."""
     await fm_empty.add({
         'single': 462.400,
         'label': 'Security Patrol',

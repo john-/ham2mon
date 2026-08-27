@@ -440,7 +440,7 @@ class ChannelWindow(object):
             label_start = 14
 
             matched_ctcss = getattr(channel, 'matched_ctcss', None)
-            primary_ctcss = channel.ctcss or (channel.ctcss_tones[0] if channel.ctcss_tones else None)
+            primary_ctcss = channel.ctcss_tones[0] if channel.ctcss_tones else None
 
             has_multiple_ctcss = len(channel.ctcss_tones) > 1
             is_testing_ctcss = channel.active and not channel.hanging and has_multiple_ctcss and matched_ctcss is None
