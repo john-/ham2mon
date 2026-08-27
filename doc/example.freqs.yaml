@@ -4,26 +4,24 @@
 #   1. Priority frequencies   (priority: <int>, lower number = higher priority)
 #   2. Lockout frequencies    (locked: true)
 #   3. Frequency labeling     (label: "...")
-#   4. CTCSS tone squelch     (tones: [...] or ctcss: <Hz>)
+#   4. CTCSS tone squelch     (tones: [...])
 #
 # Each entry is either a single frequency (single: <MHz>) or a frequency
 # range (lo: <MHz>, hi: <MHz>), but never both. All frequencies are in MHz.
 #
 # CTCSS:
 #   Tones are configured with the unified "tones:" key as a list of tone
-#   rules, each with a tone frequency (ctcss: <Hz>), an optional per-tone
-#   label, and optional per-tone banks:
+#   values. Each entry is either a bare tone frequency in Hz or a tone rule
+#   dict with a tone frequency (ctcss: <Hz>), an optional per-tone label, and
+#   optional per-tone banks:
 #
 #       tones:
 #         - ctcss: 67.0        # in Hz
 #           label: "Tone A"
 #           banks: ["FIRE"]
-#         - ctcss: 71.9
+#         - 71.9               # bare float, in Hz
 #
-#   A single tone can also be given with the "ctcss:" scalar shorthand, which
-#   is equivalent to "tones: [{ctcss: <Hz>}]":
-#
-#       ctcss: 100.0
+#   A single tone can be written as "tones: [100.0]".
 #
 #   A channel with tones uses Tone Squelch mode: the demodulator only opens
 #   when the carrier includes one of the configured sub-audible tones.
@@ -43,11 +41,19 @@ frequencies:
   - label: "Some dispatch"
     single: 462.400
     priority: 1
-    ctcss: 100.0
+    tones: [100.0]
 
   - label: "General talkaround"
     single: 462.610
-    ctcss: 167.9
+    tones: [167.9]
+
+  - label: "Multi-tone repeater"
+    single: 462.550
+    tones:
+      - ctcss: 100.0
+        label: "Primary"
+        banks: ["FIRE"]
+      - 127.3
 
   # The scanner will detect and record any active channel in these ranges.
 
