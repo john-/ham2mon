@@ -71,6 +71,7 @@ hardware:
 # frequency_policies:
 #   disable_lockout: false
 #   disable_priority: false
+#   active_banks: ["NET_A", "NET_B"]
 
 # display:
 #   min_db: -10.0

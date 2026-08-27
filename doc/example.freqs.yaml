@@ -5,6 +5,8 @@
 #   2. Lockout frequencies    (locked: true)
 #   3. Frequency labeling     (label: "...")
 #   4. CTCSS tone squelch     (tones: [...])
+#   5. Bank tags              (banks: [...] on single/range entries or per-tone
+#      rules, filtered by --banks / frequency_policies.active_banks)
 #
 # Each entry is either a single frequency (single: <MHz>) or a frequency
 # range (lo: <MHz>, hi: <MHz>), but never both. All frequencies are in MHz.
@@ -18,7 +20,7 @@
 #       tones:
 #         - ctcss: 67.0        # in Hz
 #           label: "Tone A"
-#           banks: ["FIRE"]
+#           banks: ["NET_A"]
 #         - 71.9               # bare float, in Hz
 #
 #   A single tone can be written as "tones: [100.0]".
@@ -42,6 +44,8 @@ frequencies:
     single: 462.400
     priority: 1
     tones: [100.0]
+    # Banks tag this entry for the --banks NET_A filter (see README "Bank Filtering").
+    banks: ["NET_A"]
 
   - label: "General talkaround"
     single: 462.610
@@ -52,7 +56,7 @@ frequencies:
     tones:
       - ctcss: 100.0
         label: "Primary"
-        banks: ["FIRE"]
+        banks: ["NET_A"]
       - 127.3
 
   # The scanner will detect and record any active channel in these ranges.
@@ -64,6 +68,8 @@ frequencies:
   - label: "UHF business band high segment"
     lo: 462.800
     hi: 463.200
+    # Range entries take banks the same way; filter with --banks NET_A.
+    banks: ["NET_A"]
 
   # Thw entry below is locked: the scanner will never tune a
   # demodulator to them regardless of activity.
