@@ -157,6 +157,8 @@ Prefix all commands with `uv run apps/ham2mon.py` (which runs the script using t
 uv run apps/ham2mon.py [options]
 ```
 
+Not sure how to run ham2mon for what you're trying to do? The [Scanning Guide](./doc/scanning-guide.md) walks through every mode of operation — from a bare sweep with no frequency file to bank-filtered monitoring — what each one is for, and what you'll see on screen.
+
 ## Console Operation:
 The following is an example of the option switches for UHD with NBFM demodulation, although omission of any will use default values (shown below) that are optimal for the B200:
 
@@ -208,6 +210,8 @@ uv run apps/ham2mon.py -a "file=gqrx.raw,rate=8E6,repeat=false,throttle=true,fre
 `l = Clear lockouts`
 
 `/ = Frequency entry mode (Esc to exit)`
+
+`b = Edit active banks (Enter to apply, Esc to cancel)`
 
 `CTRL-C or SHIFT-Q = quit`
 
@@ -489,22 +493,36 @@ The frequency file contains metadata for individual frequencies and ranges of fr
 If an individual frequency or frequency range is specified more than once, an error will be generated and ham2mon will not load (unless the duplicate entry is used to specify an
 additional unique ctcss tone for that frequency).
 
-For an example, see the [example frequencies file](./doc/example.freqs.yaml).
+For an example, see the [example frequencies file](./doc/example.freqs.yaml). For a build-up from the bare minimum through every configuration option, see the [full example frequencies file](./doc/full-example.freqs.yaml).
 
 ### Bank Filtering (`--banks`)
 Banks are optional tags applied to frequency entries and to per-tone rules in the frequency file:
 
     - label: "Local repeater output"
       single: 462.730
-      banks: ["FIRE"]
+      banks: ["NET_A"]
 
 Select which banks to monitor with `--banks` (or `frequency_policies.active_banks` in YAML):
 
-    uv run apps/ham2mon.py -a "airspy" -f 460.0-470.0 --banks FIRE LAW
+    uv run apps/ham2mon.py -a "airspy" -f 460.0-470.0 --banks NET_A NET_B
 
 `--banks` is a **filter**, not a scan-scope control. The scanner still sweeps the entire configured band (or range) every scan cycle; bank filtering only controls which channels are demodulated and which captured transmissions are kept. A channel whose resolved bank tags do not intersect the selected set is never assigned a demodulator, and a transmission already captured on such a channel is discarded.
 
 Bank filtering is fail-closed: if a `--banks` tag matches no configured frequency or tone bank, no channel is demodulated and ham2mon logs a startup warning. Without `--banks`, all channels are monitored. Two special tags are available: `SEARCH` lets unconfigured spectrum hits be monitored, and `UNTAGGED` matches channels that carry no bank tag while filtering is active.
+
+The RECEIVER panel shows the active selection in its **Banks** row (`NET_A, NET_B`, or `none` without `--banks`), and each CHANNELS entry displays its resolved tags as a bracketed block just before the CTCSS readout (e.g. `[NET_A,NET_B]`), dimmed while the channel is idle. `SEARCH` and `UNTAGGED` appear as literal tags here only while bank filtering is active.
+
+A bank tag can be written as a dict mapping the tag to a **per-bank display label** (`banks: {AREA_A: "Net A", AREA_B: "Net B"}`). The keys are the membership tags, exactly like the list form; the values are per-bank label overrides. When a hit resolves to one of those banks, its label is shown instead of the entry label (this is how one frequency reads differently per geographic area). Label precedence for a matched entry is: per-bank label, then per-tone label, then the entry label. An optional top-level `banks:` section in the frequency file attaches display-only names to tags for the RECEIVER Banks row (e.g. `BANKS: NET_A (Net A)`); it does not declare membership. See the [full example frequencies file](./doc/full-example.freqs.yaml).
+
+Use `--list-banks` to audit bank membership without running the scanner: it loads the frequency file, prints each configured bank with its channel members (using the top-level display label when present), and exits.
+
+For the full set of scanning modes — including running with no frequency file, and custom bank combinations such as `NET_A SEARCH` or a default bank for a range with specific-channel overrides — see the [Scanning Guide](./doc/scanning-guide.md).
+
+#### Changing banks at runtime
+
+Press `b` to edit the active banks in place: the Banks row switches to an editable text field pre-filled with the current selection. Type a comma- or space-separated list (letters, digits, `_`, `-`, `,`, space) and press `Enter` to apply, or `Esc` to cancel. Submitting an empty list (or the literal `none`) restores promiscuous mode.
+
+The change applies immediately on the next scan cycle: channels whose resolved tags no longer intersect the new selection are no longer assigned a demodulator, and any transmission still running on a now-deselected bank finishes naturally but its recording is discarded. Runtime changes are not persisted and do not affect the `--banks` setting for the next launch.
 
 ### Priority Handling
 Priorities can be assigned to frequencies and frequency ranges in the frequency file.  Highest priority is 1.  Frequencies can have equal priority.  If no priority is assigned the default value is no priority.

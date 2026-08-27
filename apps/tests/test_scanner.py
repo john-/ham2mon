@@ -407,3 +407,97 @@ def test_process_completed_transmission_discards_inactive_banks(tmp_path: Path) 
     assert not os.path.exists(tmp_wav), "Discarded WAV must be deleted"
     assert _msg.detail == "Discarded inactive bank selection"
 
+
+@pytest.mark.asyncio
+async def test_add_metadata_populates_banks_when_filtering(tmp_path: Path) -> None:
+    """_add_metadata must populate ChannelFrequency.banks when active_banks is
+    set, and leave it [] in promiscuous mode -- mirroring the gated resolve in
+    _assign_channels_to_demodulators so non-bank users pay no per-cycle cost."""
+    wav_dir = str(tmp_path / "wav")
+    os.makedirs(wav_dir, exist_ok=True)
+    scanner = make_test_scanner(wav_dir=wav_dir)
+
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+    fm = FrequencyManager(FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False), 5000)
+    await fm.add({'single': 462.5625, 'banks': ['FRS_FAMILY'], 'label': 'FRS Ch 1'})
+    scanner.frequency_manager = fm
+
+    # Receiver stub: no live demodulators, center frequency 460 MHz. The test
+    # baseband 2,562,500 Hz resolves to 462.5625 MHz (the FRS_FAMILY entry).
+    scanner.receiver = MagicMock()
+    scanner.receiver.get_demod_freq_map = MagicMock(return_value={})
+    scanner.receiver.center_freq = 460000000
+    bb = 2562500
+
+    # Promiscuous mode (no --banks): no bank tags resolved.
+    fm.set_active_banks(None)
+    sweep = scanner._add_metadata(np.array([bb]))
+    assert sweep[0].banks == []
+
+    # Bank filtering active: tags resolved onto the channel.
+    fm.set_active_banks(["FRS_FAMILY"])
+    sweep = scanner._add_metadata(np.array([bb]))
+    assert sweep[0].banks == ["FRS_FAMILY"]
+
+    # Resolved tags reflect the entry's configured banks even when the active
+    # selection differs; discarding by active_banks happens downstream in
+    # _process_current_demodulators via is_bank_active().
+    fm.set_active_banks(["OPERATIONS"])
+    sweep = scanner._add_metadata(np.array([bb]))
+    assert sweep[0].banks == ["FRS_FAMILY"]
+
+    # A hit outside every configured entry resolves to the UNTAGGED sentinel
+    # when bank filtering is active (fail-closed), mirroring tier 5.
+    sweep = scanner._add_metadata(np.array([0]))
+    assert sweep[0].banks == ["UNTAGGED"]
+
+
+@pytest.mark.asyncio
+async def test_set_active_banks_takes_effect_next_assignment(tmp_path: Path) -> None:
+    """set_active_banks() must flip which channels _assign_channels_to_demodulators
+    assigns on the next cycle (immediate-apply semantics)."""
+    wav_dir = str(tmp_path / "wav")
+    os.makedirs(wav_dir, exist_ok=True)
+    scanner = make_test_scanner(wav_dir=wav_dir)
+
+    from frequency_manager import FrequencyConfiguration, FrequencyManager
+    fm = FrequencyManager(FrequencyConfiguration(file_name=None, disable_lockout=False, disable_priority=False), 5000)
+    await fm.add({'single': 462.5625, 'banks': ['FRS_FAMILY'], 'label': 'FRS Ch 1'})
+    await fm.add({'single': 467.7125, 'banks': ['OPERATIONS'], 'label': 'FRS Ch 14 Ops'})
+    scanner.frequency_manager = fm
+    scanner.mismatched_freqs = {}
+
+    from unittest.mock import AsyncMock
+    demod = MagicMock()
+    demod.center_freq = 0
+    demod.set_center_freq = AsyncMock()
+    scanner.receiver = MagicMock()
+    scanner.receiver.demodulators = [demod]
+    scanner.receiver.get_demod_freqs = MagicMock(return_value=[])
+    scanner.center_freq = 460000000
+    scanner._demod_signal_stats = {0: (0.0, 0)}
+
+    ch_family = ChannelFrequency(
+        rf=462.5625, bb=10000, active=False, hanging=False, locked=False,
+        label="FRS Ch 1"
+    )
+    ch_ops = ChannelFrequency(
+        rf=467.7125, bb=20000, active=False, hanging=False, locked=False,
+        label="FRS Ch 14 Ops"
+    )
+
+    # Cycle 1: OPERATIONS active -> the OPERATIONS channel is assigned.
+    scanner.set_active_banks(["OPERATIONS"])
+    await scanner._assign_channels_to_demodulators([ch_family, ch_ops])
+    assert demod.set_center_freq.call_args[0][0] == 20000
+
+    # Reset the demodulator to a free slot for the next cycle.
+    demod.set_center_freq.reset_mock()
+    demod.center_freq = 0
+
+    # Cycle 2: switch at runtime to FRS_FAMILY -> the FRS_FAMILY channel is assigned.
+    scanner.set_active_banks(["FRS_FAMILY"])
+    await scanner._assign_channels_to_demodulators([ch_family, ch_ops])
+    demod.set_center_freq.assert_called_once()
+    assert demod.set_center_freq.call_args[0][0] == 10000
+

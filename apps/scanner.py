@@ -296,11 +296,12 @@ class Scanner:
 
         return 10.0 * np.log10(power) - 70.0
 
-    # TODO: active_banks is set once at startup (ham2mon.py) and never changes
-    # mid-session. If it ever becomes mutable at runtime, note that bank filtering
-    # only gates assignment in _assign_channels_to_demodulators(), so a demodulator
-    # already tuned to a now-inactive-bank channel would keep running here until
-    # the transmission ends naturally.
+    # active_banks can change at runtime (Scanner.set_active_banks / the 'b'
+    # key in the TUI). Bank filtering only gates assignment in
+    # _assign_channels_to_demodulators(), so a demodulator already tuned to a
+    # now-inactive-bank channel keeps running here until the transmission
+    # ends naturally; its recording is then discarded by the is_bank_active
+    # check in _process_completed_transmission.
     async def _process_current_demodulators(self, channels: ChannelList) -> None:
 
         the_now = time.time()
@@ -414,6 +415,15 @@ class Scanner:
             if channel in demod_map:
                 matched_tone = demod_map[channel].matched_ctcss_tone
 
+            # Resolve bank tags for the CHANNELS panel display. Gated on a
+            # non-empty active_banks to mirror the promiscuous short-circuit
+            # in _assign_channels_to_demodulators() and avoid a per-cycle
+            # resolve_banks() scan for non-bank users.
+            banks = (
+                self.frequency_manager.resolve_banks(frequency, matched_tone)
+                if self.frequency_manager.active_banks else []
+            )
+
             idx = 0 if priority is not None else len(sweep)  # priority channels up front
             sweep.insert(idx, ChannelFrequency(bb=channel,
                                       rf=frequency,
@@ -422,8 +432,9 @@ class Scanner:
                                       priority=priority,
                                       hanging=is_hanging,
                                       matched_ctcss=matched_tone,
-                                      label=self.frequency_manager.get_label(frequency, matched_tone),
-                                      ctcss_tones=self.frequency_manager.get_ctcss_tones(frequency)))
+                                      label=self.frequency_manager.get_label(frequency, matched_tone, banks),
+                                      ctcss_tones=self.frequency_manager.get_ctcss_tones(frequency),
+                                      banks=banks))
 
 
         return sweep
@@ -512,6 +523,16 @@ class Scanner:
             threshold_db (int): Threshold in dB
         """
         self.threshold_db = threshold_db
+
+    def set_active_banks(self, banks: list[str] | None) -> None:
+        """Set the active bank tags at runtime.
+
+        Empty or None restores promiscuous scan-all mode. Unknown tags are
+        warned about since bank filtering is fail-closed (a typo silently
+        disables every channel).
+        """
+        self.frequency_manager.set_active_banks(banks)
+        self.frequency_manager._warn_on_unmatched_active_banks()
 
     def _process_completed_transmission(
             self, msg: ChannelMessage
@@ -674,9 +695,9 @@ class Scanner:
             return
 
         # 1. Embellish metadata FIRST so label/priority/banks are present for persistence & classification
-        msg.label = self.frequency_manager.get_label(msg.rf, msg.matched_ctcss)
-        msg.priority = self.frequency_manager.is_priority(msg.bb)
         msg.banks = self.frequency_manager.resolve_banks(msg.rf, msg.matched_ctcss)
+        msg.label = self.frequency_manager.get_label(msg.rf, msg.matched_ctcss, msg.banks)
+        msg.priority = self.frequency_manager.is_priority(msg.bb)
 
         # 2. Process recording persistence / classification SECOND
         record: TransmissionRecord | None = None

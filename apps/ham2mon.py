@@ -20,6 +20,8 @@ from pathlib import Path
 from os.path import realpath, dirname
 
 import _curses
+from frequency_manager import FrequencyConfiguration, FrequencyManager
+from utilities import parse_bank_entry
 
 logger = logging.getLogger("ham2mon")
 
@@ -109,7 +111,11 @@ class MyDisplay():
         self.rxwin.record = self.scanner.record
         self.rxwin.type_demod = PARSER.master_config.receiver.mode
         self.rxwin.frequency_file_name = self.scanner.frequency_file_name
+        if self.scanner is not None:
+            self.rxwin.banks = self.scanner.frequency_manager.active_banks
+            self.rxwin.bank_labels = self.scanner.frequency_manager.bank_display_labels
         self.rxwin.activity_type = self.scanner.activity_params.type
+
         # not all activity types use a dest
         if self.scanner.activity_params.type == 'fixed-field':
             dest = self.scanner.activity_params.dest
@@ -145,6 +151,11 @@ class MyDisplay():
         self.chanwin.draw_channels(self.scanner.channels)
         self.specwin.draw_spectrum(self.scanner.spectrum, self.scanner.channels, self.chanwin.get_row_map())
         self.lockoutwin.draw_channels(self.scanner.frequencies, self.scanner.channels)
+        # Refresh active banks each cycle so runtime changes ('b' key) show up
+        # on the next draw without requiring a window rebuild.
+        if self.scanner is not None:
+            self.rxwin.banks = self.scanner.frequency_manager.active_banks
+            self.rxwin.bank_labels = self.scanner.frequency_manager.bank_display_labels
         self.rxwin.draw_rx()
 
         # Update physical screen via optimized double buffering
@@ -180,6 +191,15 @@ class MyDisplay():
         self.rxwin.steps = self.scanner.steps
 
     async def handle_char(self, keyb: int) -> None:
+        # Bank-entry mode consumes all keystrokes until Enter/ESC. This early
+        # return keeps bank entry and frequency entry mutually exclusive and
+        # suppresses every other handler while editing.
+        if self.rxwin.bank_entry is not None:
+            text = self.rxwin.bank_entry
+            if self.rxwin.proc_keyb_bank_entry(keyb) and self.scanner is not None:
+                self.scanner.set_active_banks(parse_bank_entry(text))
+            return
+
         # Send keystroke to spectrum window and update scanner if True
         if self.specwin.proc_keyb(keyb):
             self.scanner.set_threshold(self.specwin.threshold_db)
@@ -218,6 +238,45 @@ async def display_main(stdscr) -> None:
 
 def main(stdscr) -> None:
     return asyncio.run(display_main(stdscr))
+
+async def list_banks() -> None:
+    """Print each configured bank with its channel members, then exit.
+
+    A non-curses audit mode for --list-banks: builds a FrequencyManager (no
+    SDR, receiver, or component pipeline is touched) so bank membership can
+    be previewed before running the scanner.
+    """
+    cfg = PARSER.master_config
+    frequency_manager = FrequencyManager(
+        FrequencyConfiguration(
+            file_name=cfg.frequency_policies.file,
+            disable_lockout=cfg.frequency_policies.disable_lockout,
+            disable_priority=cfg.frequency_policies.disable_priority,
+            max_ctcss_tones=cfg.receiver.max_ctcss_tones,
+        ),
+        cfg.receiver.channel_spacing,
+    )
+    await frequency_manager.load()
+
+    configured = frequency_manager.configured_banks()
+    if not configured:
+        print("No banks configured.")
+        return
+
+    for bank in sorted(configured):
+        display_label = frequency_manager.bank_display_labels.get(bank)
+        header = f"{bank} - {display_label}" if display_label else bank
+        members = frequency_manager.bank_members(bank)
+        print(f"{header} ({len(members)} channel(s))")
+        for member in members:
+            if member.is_single and member.single is not None:
+                desc = f"{member.single:.4f} MHz"
+            else:
+                desc = f"{member.lo:.4f}-{member.hi:.4f} MHz"
+            name = member.label if member.label else "(no label)"
+            if member.bank_labels and bank in member.bank_labels:
+                name = f"{member.bank_labels[bank]} ({name})"
+            print(f"  {desc}  {name}")
 
 if __name__ == '__main__':
 
@@ -261,7 +320,10 @@ if __name__ == '__main__':
             # Suppress chatty third-party loggers that would otherwise pollute output
             logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-        wrapper(main)
+        if PARSER.list_banks:
+            asyncio.run(list_banks())
+        else:
+            wrapper(main)
     except KeyboardInterrupt:
         pass
     except RuntimeError as error:

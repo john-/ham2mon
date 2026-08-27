@@ -315,6 +315,10 @@ class CLParser(object):
                           dest="max_ctcss_tones", default=None,
                           help="Maximum number of CTCSS tones configured per frequency")
 
+        parser.add_argument("--list-banks", action="store_true", default=False,
+                          dest="list_banks",
+                          help="Print each configured bank with its channel members, then exit without scanning")
+
         if args is not None:
             options = parser.parse_args(args)
         else:
@@ -341,6 +345,7 @@ class CLParser(object):
             parser.error(str(err))
 
         self.frequency_params = self._build_frequency_params()
+        self.list_banks = bool(options.list_banks)
 
     def _merge_cli_options(self, raw: dict[str, Any], options) -> dict[str, Any]:
         """Layer non-None CLI options onto the raw YAML dict, keyed by CLI_OPTION_MAP."""

@@ -5,7 +5,10 @@ from utilities import (
     baseband_to_bin,
     bin_to_baseband,
     build_column_edges,
+    format_active_banks,
+    format_channel_banks,
     index_to_column,
+    parse_bank_entry,
     wav_bytes_per_sec,
     wav_duration_sec,
 )
@@ -85,3 +88,48 @@ def test_index_to_column_matches_bar_column() -> None:
     for bin_idx in [0, 1, 500, 1024, 2000, 2047]:
         col: int = index_to_column(bin_idx, edges)
         assert edges[col] <= bin_idx < edges[col + 1] or col == num_cols - 1
+
+
+def test_format_active_banks_sorted_comma_separated() -> None:
+    assert format_active_banks({"NET_B", "NET_A"}) == "NET_A, NET_B"
+    assert format_active_banks({"NET_A"}) == "NET_A"
+
+
+def test_format_active_banks_empty_is_none() -> None:
+    assert format_active_banks(set()) == "none"
+
+
+def test_format_active_banks_with_bank_labels() -> None:
+    labels = {"NET_A": "Net A", "NET_B": "Net B"}
+    assert format_active_banks({"NET_A"}, labels) == "NET_A (Net A)"
+    assert format_active_banks({"NET_B", "NET_A"}, labels) == "NET_A (Net A), NET_B (Net B)"
+    # Unknown tags are left bare (sorted alphabetically)
+    assert format_active_banks({"NET_A", "MISC"}, labels) == "MISC, NET_A (Net A)"
+    # Empty set still renders "none" regardless of labels
+    assert format_active_banks(set(), labels) == "none"
+
+
+def test_format_channel_banks_empty_is_blank() -> None:
+    assert format_channel_banks([], 20) == ""
+
+
+def test_format_channel_banks_bracketed_join() -> None:
+    assert format_channel_banks(["NET_A", "NET_B"], 20) == "[NET_A,NET_B]"
+
+
+def test_format_channel_banks_truncated_to_max_len() -> None:
+    assert format_channel_banks(["NET_A", "NET_B"], 6) == "[NET_A"
+    assert len(format_channel_banks(["NET_A", "NET_B"], 6)) == 6
+
+
+def test_parse_bank_entry_comma_and_space_separated() -> None:
+    assert parse_bank_entry("NET_A, NET_B") == ["NET_A", "NET_B"]
+    assert parse_bank_entry("NET_A NET_B") == ["NET_A", "NET_B"]
+    assert parse_bank_entry("  NET_A ,  NET_B  ") == ["NET_A", "NET_B"]
+
+
+def test_parse_bank_entry_empty_is_promiscuous() -> None:
+    assert parse_bank_entry("") == []
+    assert parse_bank_entry("   ") == []
+    assert parse_bank_entry("none") == []
+    assert parse_bank_entry("NONE") == []

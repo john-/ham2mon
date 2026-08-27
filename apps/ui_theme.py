@@ -131,6 +131,8 @@ DEFAULT_STYLES: Final[dict[str, StyleSpec]] = {
     'channel.icon_inactive':           {'fg': 'green', 'dim': True},
     'channel.index_active':            {'fg': 'blue'},
     'channel.index_inactive':          {'fg': 'blue', 'dim': True},
+    'channel.bank_active':             {'fg': 'cyan'},
+    'channel.bank_inactive':           {'fg': 'cyan', 'dim': True},
     'channel.placeholder_index':       {'fg': 'blue', 'dim': True},
     'channel.placeholder_text':        {'fg': 'white', 'dim': True},
 

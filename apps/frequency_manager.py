@@ -57,6 +57,7 @@ class FrequencyInfo:
     locked: bool = field(default=False)
     priority: int | None = field(default=None)
     banks: list[str] = field(default_factory=list)
+    bank_labels: dict[str, str] | None = field(default=None, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.locked, bool):
@@ -66,8 +67,18 @@ class FrequencyInfo:
             if not isinstance(self.priority, int) or self.priority < 1:
                 raise ValueError('Priority must be an integer >= 1')
 
-        if isinstance(self.banks, str):
+        if isinstance(self.banks, dict):
+            # Dict form: {bank tag: per-bank display label}. The keys are the
+            # membership tags (a channel can belong to several banks); the
+            # values are per-bank label overrides shown instead of the entry
+            # label when the hit resolves to that bank.
+            self.bank_labels = {str(k): v for k, v in self.banks.items()}
+            self.banks = list(self.bank_labels)
+        elif isinstance(self.banks, str):
             self.banks = [self.banks]
+
+        if self.bank_labels is not None and not isinstance(self.bank_labels, dict):
+            raise ValueError('bank_labels must be a dict mapping bank tags to labels')
 
 
 @dataclass(kw_only=True, eq=False)
@@ -363,6 +374,10 @@ class FrequencyManager:
         self.config = config
         self.frequencies: FrequencyList = []
         self.active_banks: set[str] = set()
+        # Display-only labels for bank tags, from the optional top-level
+        # ``banks:`` section of the frequency file. Membership lives on the
+        # channel entries themselves; this map only decorates the TUI.
+        self.bank_display_labels: dict[str, str] = {}
 
     def set_active_banks(self, banks: list[str] | set[str] | None) -> None:
         """Set the active bank tags for filtering and stepping inclusion."""
@@ -388,6 +403,16 @@ class FrequencyManager:
             for tone_rule in freq.tones:
                 banks.update(tone_rule.banks)
         return banks
+
+    def bank_members(self, bank: str) -> list[ConfigFrequency]:
+        """Channel-level entries whose membership tags include ``bank``.
+
+        Returns entries in configuration (load) order, not scanning priority
+        order. Tone rules are not listed: their banks tag individual tones,
+        and membership auditing is at the channel level. ``--list-banks``
+        uses this to preview a bank's contents.
+        """
+        return [freq for freq in self.frequencies if bank in freq.banks]
 
     def unknown_active_banks(self) -> set[str]:
         """Active bank tags that match no configured bank tag. The "SEARCH"
@@ -474,7 +499,14 @@ class FrequencyManager:
         return self._untagged_fallback()
 
     async def process_frequencies_data(self, frequencies_config: dict[str, Any]) -> FrequencyList:
-        """Process pre-loaded frentryequencies configuration data."""
+        """Process pre-loaded frequency configuration data."""
+
+        # Optional top-level ``banks:`` section carries display-only labels
+        # for the TUI Banks row. It does not define membership; membership is
+        # declared per-channel via each entry's ``banks:``.
+        banks_section = frequencies_config.get('banks')
+        if isinstance(banks_section, dict):
+            self.bank_display_labels = {str(k): str(v) for k, v in banks_section.items()}
 
         if 'frequencies' in frequencies_config:
             for freq in frequencies_config['frequencies']:
@@ -774,19 +806,47 @@ class FrequencyManager:
                 self.center_freq, self.channel_spacing)
 
 
-    def get_label(self, rf: float, ctcss: float | None = None) -> str | None:
+    def _bank_label(self, freq_entry: FrequencyInfo, banks: list[str] | None) -> str | None:
+        """Pick the per-bank display label for a matched entry.
+
+        The winning bank is the first resolved tag that is active and carries
+        a per-bank label (active mode); otherwise the first resolved tag with
+        a per-bank label (promiscuous mode). Returns None when the entry has
+        no per-bank labels or none of the resolved tags apply.
+        """
+        if not banks or not freq_entry.bank_labels:
+            return None
+        for bank in banks:
+            if bank in self.active_banks and bank in freq_entry.bank_labels:
+                return freq_entry.bank_labels[bank]
+        for bank in banks:
+            if bank in freq_entry.bank_labels:
+                return freq_entry.bank_labels[bank]
+        return None
+
+    def get_label(self, rf: float, ctcss: float | None = None, banks: list[str] | None = None) -> str | None:
         '''
         Get the label for a frequency.  If there is not a label for the frequency then
         return the label for the range of frequencies (if any)
 
+        Label precedence for a matched entry:
+        1. Per-bank display label (from the resolved ``banks`` tags)
+        2. Matched per-tone label
+        3. Entry label
+
         Args:
             rf (float): Radio frequency of tuned channel
             ctcss (float, optional): Matched CTCSS tone frequency
+            banks (list[str], optional): Resolved bank tags for the hit, used
+                to select a per-bank display label when one is configured
         '''
         range_label: str | None = None
         for freq_entry in self.frequencies:
             if freq_entry.is_single:
                 if freq_entry.single is not None and abs(freq_entry.single - rf) < FREQ_MATCH_TOLERANCE_MHZ:
+                    bank_label = self._bank_label(freq_entry, banks)
+                    if bank_label is not None:
+                        return bank_label
                     if ctcss is not None:
                         for tone_rule in freq_entry.tones:
                             if abs(tone_rule.ctcss - ctcss) < TONE_MATCH_TOLERANCE_HZ and tone_rule.label:
@@ -795,7 +855,10 @@ class FrequencyManager:
             else:
                 if freq_entry.lo is not None and freq_entry.hi is not None and freq_entry.lo <= rf <= freq_entry.hi:
                     range_label = freq_entry.label
-                    if ctcss is not None:
+                    bank_label = self._bank_label(freq_entry, banks)
+                    if bank_label is not None:
+                        range_label = bank_label
+                    elif ctcss is not None:
                         for tone_rule in freq_entry.tones:
                             if abs(tone_rule.ctcss - ctcss) < TONE_MATCH_TOLERANCE_HZ and tone_rule.label:
                                 range_label = tone_rule.label

@@ -109,3 +109,49 @@ def index_to_column(index: int, col_edges: list[int]) -> int:
     build_column_edges, return which column it falls in."""
     col = bisect.bisect_right(col_edges, index) - 1
     return max(0, min(len(col_edges) - 2, col))
+
+
+def format_active_banks(banks: set[str], bank_labels: dict[str, str] | None = None) -> str:
+    """Format the active bank set for the RECEIVER panel "Banks" row.
+
+    Returns sorted, comma-separated tags (e.g. "NET_A, NET_B"), or "none" when
+    the set is empty (promiscuous scan-all mode with no --banks). When
+    ``bank_labels`` is provided, a matching display label is appended to each
+    tag in parentheses (e.g. "NET_A (Net A)"); unknown tags are left
+    bare.
+    """
+    if not banks:
+        return "none"
+    if bank_labels:
+        return ", ".join(
+            f"{tag} ({bank_labels[tag]})" if tag in bank_labels else tag
+            for tag in sorted(banks))
+    return ", ".join(sorted(banks))
+
+
+def format_channel_banks(banks: list[str], max_len: int) -> str:
+    """Format a channel's resolved bank tags for the CHANNELS panel.
+
+    Returns a "[NET_A,NET_B]" style tag block, truncated to max_len characters
+    when it does not fit the reserved label region, or "" when there are no
+    banks (nothing is drawn, so non-bank users see no layout shift).
+    """
+    if not banks:
+        return ""
+    text = f"[{','.join(banks)}]"
+    if len(text) > max_len:
+        return text[:max_len]
+    return text
+
+
+def parse_bank_entry(text: str) -> list[str]:
+    """Parse a bank-entry-mode input string into a list of bank tags.
+
+    Tags are separated by commas and/or whitespace, stripped, and empty
+    entries dropped. A literal "none" (case-insensitive) selects promiscuous
+    scan-all mode and returns []; an empty/blank input also returns [].
+    """
+    stripped = text.strip()
+    if not stripped or stripped.lower() == "none":
+        return []
+    return [tag for tag in stripped.replace(",", " ").split() if tag]
