@@ -5,8 +5,10 @@ description = "GNU Radio based SDR scanner with a Curses interface"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aiomqtt>=2.5.1",
     "pyyaml>=6.0",
     "requests>=2.25",
+    "typing_extensions>=4.12",
 ]
 
 [project.optional-dependencies]
