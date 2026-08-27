@@ -65,7 +65,7 @@ def test_channel_info_immutable():
         rf=460.125,
         bb_hz=0,
         channel=0,
-        label="Fire",
+        label="Net A",
         priority=1,
         matched_ctcss_hz=156.7,
         signal_db=-65,
@@ -73,7 +73,7 @@ def test_channel_info_immutable():
         wav_tmp_path="/tmp/test.wav",
     )
     assert info.rf == 460.125
-    assert info.label == "Fire"
+    assert info.label == "Net A"
 
 
 def test_component_recover():

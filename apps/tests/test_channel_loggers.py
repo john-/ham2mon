@@ -28,7 +28,7 @@ async def test_fixed_field_logger(tmp_path):
         classification="V",
         matched_ctcss=100.0,
         file="test1.wav",
-        banks=["PUBLIC_SAFETY", "FIRE_TAC"],
+        banks=["NETWORK_A", "NETWORK_B"],
     )
     await logger.log(msg1)
 
@@ -50,13 +50,13 @@ async def test_fixed_field_logger(tmp_path):
     assert len(lines) == 2
 
     # Verify formatting of msg1: matched_ctcss '100.0  ' and the banks column
-    # truncated to 15 chars ('PUBLIC_SAFETY,F'); the rest of the joined bank
+    # truncated to 15 chars ('NETWORK_A,NETWO'); the rest of the joined bank
     # list must be dropped so the record stays fixed-width.
     line1 = lines[0]
     # Check that we can find the tone, truncated banks, and filename in the correct order/formatting
     assert "100.0  " in line1
-    assert "PUBLIC_SAFETY,F" in line1
-    assert "FIRE_TAC" not in line1
+    assert "NETWORK_A,NETWO" in line1
+    assert "NETWORK_B" not in line1
     assert "test1.wav" in line1
 
     # Verify formatting of msg2: matched_ctcss is empty/omitted
@@ -86,7 +86,7 @@ async def test_json_to_server_logger():
         classification="V",
         matched_ctcss=141.3,
         file="test.wav",
-        banks=["FIRE_TAC"],
+        banks=["NETWORK_A"],
     )
     await logger.log(msg)
 
@@ -100,7 +100,7 @@ async def test_json_to_server_logger():
     assert posted_json["state"] == "on"
     assert posted_json["rf"] == 145.5
     assert posted_json["file"] == "test.wav"
-    assert posted_json["banks"] == ["FIRE_TAC"]
+    assert posted_json["banks"] == ["NETWORK_A"]
 
 
 class SpyLogger(ActivityLogger):

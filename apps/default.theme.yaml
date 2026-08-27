@@ -35,6 +35,8 @@ styles:
   channel.icon_inactive:           { fg: 46, dim: true }
   channel.index_active:            { fg: 39, bold: true }
   channel.index_inactive:          { fg: 24 }
+  channel.bank_active:             { fg: 51 }
+  channel.bank_inactive:           { fg: 51, dim: true }
   channel.placeholder_index:       { fg: 24, dim: true }   # index label on empty "Scanning..." rows
   channel.placeholder_text:        { fg: 244, dim: true }  # the "Scanning..." text itself
   # Note: the CTCSS tone readout uses channel.icon_active/channel.icon_inactive

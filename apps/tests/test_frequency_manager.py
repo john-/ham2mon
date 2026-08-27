@@ -110,6 +110,34 @@ async def test_file_format_conditions(file, expected_exception, message):
 
 
 @pytest.mark.asyncio
+async def test_full_example_frequencies_file_loads():
+    """The progressive full-example frequency file must stay loadable."""
+    config = FrequencyConfiguration(
+        file_name=Path(__file__).parents[2] / "doc" / "full-example.freqs.yaml",
+        disable_lockout=False, disable_priority=False, max_ctcss_tones=3)
+    fm = FrequencyManager(config, CHANNEL_SPACING)
+    freqs = await fm.load()
+    assert len(freqs) >= 15
+    by_label = {f.label: f for f in freqs}
+
+    # Entry-level bank as a plain string is coerced to a list.
+    assert by_label["Logistics net"].banks == ["LOG"]
+
+    # Per-tone banks resolve per tone rule; a bare tone stays untagged.
+    multi_role = by_label["Multi-role repeater"]
+    assert multi_role.tones[0].banks == ["DISPATCH"]
+    assert multi_role.tones[1].ctcss == 127.3
+    assert multi_role.tones[1].banks == []
+
+    # Kitchen-sink range: banks + two tones + priority on a range entry.
+    wide_area = by_label["Wide-area field operations"]
+    assert not wide_area.is_single
+    assert wide_area.banks == ["FIELD"]
+    assert [tone.ctcss for tone in wide_area.tones] == [110.9, 123.0]
+    assert wide_area.priority == 5
+
+
+@pytest.mark.asyncio
 async def test_file_load_no_errors(fm_with_entries):
     await fm_with_entries.load()
     initial_len = len(fm_with_entries.frequencies)
@@ -1088,10 +1116,10 @@ async def test_get_label_with_ctcss(fm_empty):
 
 def test_tone_rule_validation():
     """Test ToneRule dataclass construction and validation."""
-    rule = ToneRule(ctcss=67.0, label="Fire Tac", banks="FIRE_TAC")
+    rule = ToneRule(ctcss=67.0, label="Net A", banks="NET_A")
     assert rule.ctcss == 67.0
-    assert rule.label == "Fire Tac"
-    assert rule.banks == ["FIRE_TAC"]
+    assert rule.label == "Net A"
+    assert rule.banks == ["NET_A"]
 
     with pytest.raises(ValueError, match="positive number"):
         ToneRule(ctcss=-5.0)
@@ -1103,19 +1131,130 @@ def test_tone_rule_validation():
 def test_frequency_info_banks_and_tones_normalization():
     """Test FrequencyInfo/ConfigFrequency normalization for banks and tones."""
     # 1. Scalar bank string auto-promotion (FrequencyInfo base class)
-    info1 = FrequencyInfo(banks="PUBLIC_SAFETY")
-    assert info1.banks == ["PUBLIC_SAFETY"]
+    info1 = FrequencyInfo(banks="NET_A")
+    assert info1.banks == ["NET_A"]
 
     # 2. Bare float tones are coerced to ToneRule (ConfigFrequency only — tones lives there)
-    info2 = ConfigFrequency(single=462.400, tones=[ToneRule(ctcss=100.0)], banks=["FIRE_TAC"])
+    info2 = ConfigFrequency(single=462.400, tones=[ToneRule(ctcss=100.0)], banks=["NET_A"])
     assert len(info2.tones) == 1
     assert info2.tones[0].ctcss == 100.0
-    assert info2.tones[0].banks == ["FIRE_TAC"]
+    assert info2.tones[0].banks == ["NET_A"]
 
     # 3. Parent bank inheritance for tones omitting banks (ConfigFrequency)
     tone_no_bank = ToneRule(ctcss=141.3, label="Parks")
     info3 = ConfigFrequency(single=462.400, banks=["COMMERCIAL"], tones=[tone_no_bank])
     assert info3.tones[0].banks == ["COMMERCIAL"]
+
+
+def test_frequency_info_banks_dict_form_normalization():
+    """Dict-form banks: keys become membership tags, values become per-bank labels."""
+    info = ConfigFrequency(single=462.400, banks={"AREA_A": "Net A", "AREA_B": "Net B"})
+    assert info.banks == ["AREA_A", "AREA_B"]
+    assert info.bank_labels == {"AREA_A": "Net A", "AREA_B": "Net B"}
+
+    # List form leaves bank_labels unset (zero overhead for existing configs)
+    info_list = ConfigFrequency(single=462.400, banks=["NET_A"])
+    assert info_list.banks == ["NET_A"]
+    assert info_list.bank_labels is None
+
+    # String form is unchanged
+    info_str = FrequencyInfo(banks="NET_A")
+    assert info_str.banks == ["NET_A"]
+    assert info_str.bank_labels is None
+
+    # Dict-form keys normalize to strings
+    info_int = ConfigFrequency(single=462.400, banks={1: "one"})
+    assert info_int.banks == ["1"]
+    assert info_int.bank_labels == {"1": "one"}
+
+    # Tone inheritance copies bank keys only, not labels
+    tone = ToneRule(ctcss=141.3, label="Parks")
+    info_tone = ConfigFrequency(single=462.400, banks={"AREA_A": "Net A"}, tones=[tone])
+    assert info_tone.tones[0].banks == ["AREA_A"]
+
+
+@pytest.mark.asyncio
+async def test_add_dict_form_banks_does_not_break_duplicate_detection(fm_empty):
+    """Custom __eq__ compares only frequency values; dict-form banks don't create dupes."""
+    await fm_empty.add({'single': 462.400, 'banks': {'AREA_A': 'Net A'}})
+    with pytest.raises(ValueError, match='already occurs'):
+        await fm_empty.add({'single': 462.400, 'banks': {'AREA_B': 'Net B'}})
+    assert len(fm_empty.frequencies) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_label_per_bank_overrides_tone_label(fm_empty):
+    """Per-bank label beats per-tone label for a matched entry."""
+    await fm_empty.add({
+        'single': 462.400,
+        'label': 'Base',
+        'banks': {'AREA_A': 'Net A', 'AREA_B': 'Net B'},
+        'tones': [
+            {'ctcss': 100.0, 'label': 'Tone 100'},
+            {'ctcss': 141.3, 'label': 'Tone 141'},
+        ],
+    })
+
+    # Bank label wins over tone label when the resolved bank carries one
+    assert fm_empty.get_label(462.400, 100.0, ['AREA_A']) == 'Net A'
+    assert fm_empty.get_label(462.400, 141.3, ['AREA_B']) == 'Net B'
+
+    # Unresolved / unmatched bank falls back to the tone label
+    assert fm_empty.get_label(462.400, 100.0, ['OTHER']) == 'Tone 100'
+
+    # No banks argument: existing behavior preserved
+    assert fm_empty.get_label(462.400, 100.0) == 'Tone 100'
+    assert fm_empty.get_label(462.400) == 'Base'
+
+
+@pytest.mark.asyncio
+async def test_get_label_per_bank_active_preference(fm_empty):
+    """When several resolved tags carry labels, the active bank is preferred."""
+    await fm_empty.add({
+        'single': 462.400,
+        'label': 'Base',
+        'banks': {'AREA_A': 'Net A', 'AREA_B': 'Net B'},
+    })
+    fm_empty.set_active_banks({'AREA_B'})
+    assert fm_empty.get_label(462.400, None, ['AREA_A', 'AREA_B']) == 'Net B'
+    fm_empty.set_active_banks(set())
+    # Promiscuous mode: first resolved tag with a label wins
+    assert fm_empty.get_label(462.400, None, ['AREA_A', 'AREA_B']) == 'Net A'
+
+
+@pytest.mark.asyncio
+async def test_get_range_label_with_bank_override(fm_empty):
+    """Ranges get per-bank labels too; bank beats tone beats entry."""
+    await fm_empty.add({
+        'lo': 460.0, 'hi': 468.0,
+        'label': 'Region',
+        'banks': {'AREA_A': 'Net A'},
+        'tones': [{'ctcss': 100.0, 'label': 'Tone 100'}],
+    })
+    assert fm_empty.get_label(464.0) == 'Region'
+    assert fm_empty.get_label(464.0, 100.0) == 'Tone 100'
+    assert fm_empty.get_label(464.0, 100.0, ['AREA_A']) == 'Net A'
+    assert fm_empty.get_label(464.0, None, ['AREA_A']) == 'Net A'
+
+
+@pytest.mark.asyncio
+async def test_bank_display_labels_section_and_members(fm_empty):
+    """Top-level banks: section is display-only; bank_members audits membership."""
+    await fm_empty.process_frequencies_data({
+        'banks': {'AREA_A': 'Net A', 'AREA_B': 'Net B'},
+        'frequencies': [
+            {'single': 462.400, 'banks': ['AREA_A']},
+            {'single': 463.000, 'banks': ['AREA_B']},
+            {'lo': 460.0, 'hi': 468.0, 'banks': ['AREA_A']},
+        ],
+    })
+    assert fm_empty.bank_display_labels == {'AREA_A': 'Net A', 'AREA_B': 'Net B'}
+
+    members_a = fm_empty.bank_members('AREA_A')
+    assert [m.single for m in members_a if m.is_single] == [462.400]
+    assert len(members_a) == 2  # the single plus the range
+    assert [m.single for m in fm_empty.bank_members('AREA_B') if m.is_single] == [463.000]
+    assert fm_empty.bank_members('NOPE') == []
 
 
 def test_transmission_record_banks_field():
@@ -1132,9 +1271,9 @@ def test_transmission_record_banks_field():
         wav_path="/tmp/test.wav",
         started_at=1000.0,
         duration_sec=5.0,
-        banks=["PUBLIC_SAFETY", "FIRE_TAC"],
+        banks=["NET_A", "NET_B"],
     )
-    assert rec.banks == ["PUBLIC_SAFETY", "FIRE_TAC"]
+    assert rec.banks == ["NET_A", "NET_B"]
 
 
 # ---------------------------------------------------------------------------
@@ -1143,18 +1282,18 @@ def test_transmission_record_banks_field():
 
 def test_set_active_banks_accepts_list(fm_empty):
     """set_active_banks stores the supplied list as a set."""
-    fm_empty.set_active_banks(["PUBLIC_SAFETY", "RAILROAD"])
-    assert fm_empty.active_banks == {"PUBLIC_SAFETY", "RAILROAD"}
+    fm_empty.set_active_banks(["NET_A", "RAILROAD"])
+    assert fm_empty.active_banks == {"NET_A", "RAILROAD"}
 
 
 def test_set_active_banks_accepts_set(fm_empty):
-    fm_empty.set_active_banks({"FIRE_TAC"})
-    assert fm_empty.active_banks == {"FIRE_TAC"}
+    fm_empty.set_active_banks({"NET_A"})
+    assert fm_empty.active_banks == {"NET_A"}
 
 
 def test_set_active_banks_accepts_none(fm_empty):
     """None resets to promiscuous (empty set)."""
-    fm_empty.set_active_banks(["PUBLIC_SAFETY"])
+    fm_empty.set_active_banks(["NET_A"])
     fm_empty.set_active_banks(None)
     assert fm_empty.active_banks == set()
 
@@ -1162,13 +1301,13 @@ def test_set_active_banks_accepts_none(fm_empty):
 def test_is_bank_active_empty_active_banks_is_promiscuous(fm_empty):
     """Empty active_banks means every bank matches (scan-all mode)."""
     fm_empty.set_active_banks(None)
-    assert fm_empty.is_bank_active(["PUBLIC_SAFETY"]) is True
+    assert fm_empty.is_bank_active(["NET_A"]) is True
     assert fm_empty.is_bank_active([]) is True
 
 
 def test_is_bank_active_intersection(fm_empty):
-    fm_empty.set_active_banks(["PUBLIC_SAFETY"])
-    assert fm_empty.is_bank_active(["PUBLIC_SAFETY", "LAW_ENFORCEMENT"]) is True
+    fm_empty.set_active_banks(["NET_A"])
+    assert fm_empty.is_bank_active(["NET_A", "NET_B"]) is True
     assert fm_empty.is_bank_active(["RAILROAD"]) is False
     assert fm_empty.is_bank_active([]) is False
 
@@ -1184,13 +1323,13 @@ async def test_resolve_banks_tier1_single_with_matching_tone(fm_empty):
         'single': 462.5625,
         'banks': ['COMMERCIAL'],
         'tones': [
-            {'ctcss': 67.0, 'label': 'Fire Tac 1', 'banks': ['FIRE_TAC']},
+            {'ctcss': 67.0, 'label': 'Net A 1', 'banks': ['NET_A']},
             {'ctcss': 141.3, 'label': 'City Parks', 'banks': ['PARKS_MAINT']},
         ],
     })
 
     result = fm_empty.resolve_banks(462.5625, ctcss_hz=67.0)
-    assert result == ['FIRE_TAC']
+    assert result == ['NET_A']
 
     result = fm_empty.resolve_banks(462.5625, ctcss_hz=141.3)
     assert result == ['PARKS_MAINT']
@@ -1216,11 +1355,11 @@ async def test_resolve_banks_tier2_single_csq_no_tone(fm_empty):
     """Tier 2: explicit single entry, no decoded tone → base entry banks."""
     await fm_empty.add({
         'single': 460.125,
-        'banks': ['PUBLIC_SAFETY', 'LAW_ENFORCEMENT'],
+        'banks': ['NET_A', 'NET_B'],
     })
 
     result = fm_empty.resolve_banks(460.125, ctcss_hz=None)
-    assert set(result) == {'PUBLIC_SAFETY', 'LAW_ENFORCEMENT'}
+    assert set(result) == {'NET_A', 'NET_B'}
 
 
 @pytest.mark.asyncio
@@ -1230,13 +1369,13 @@ async def test_resolve_banks_tier2_single_with_tone_no_ctcss_decoded(fm_empty):
         'single': 462.5625,
         'banks': ['COMMERCIAL'],
         'tones': [
-            {'ctcss': 67.0, 'banks': ['FIRE_TAC']},
+            {'ctcss': 67.0, 'banks': ['NET_A']},
         ],
     })
 
     # No ctcss_hz decoded → returns Union of base and tone rules
     result = fm_empty.resolve_banks(462.5625, ctcss_hz=None)
-    assert set(result) == {'COMMERCIAL', 'FIRE_TAC'}
+    assert set(result) == {'COMMERCIAL', 'NET_A'}
 
 
 @pytest.mark.asyncio
@@ -1256,12 +1395,12 @@ async def test_resolve_banks_tier3_range_with_matching_tone(fm_empty):
         'hi': 462.400,
         'banks': ['COMMERCIAL'],
         'tones': [
-            {'ctcss': 67.0, 'label': 'Fire Tac Segment', 'banks': ['FIRE_TAC']},
+            {'ctcss': 67.0, 'label': 'Net A Segment', 'banks': ['NET_A']},
         ],
     })
 
     result = fm_empty.resolve_banks(462.300, ctcss_hz=67.0)
-    assert result == ['FIRE_TAC']
+    assert result == ['NET_A']
 
 
 @pytest.mark.asyncio
@@ -1290,7 +1429,7 @@ async def test_resolve_banks_tier4_range_untagged_fallback(fm_empty):
 async def test_resolve_banks_tier5_unconfigured_returns_no_tags_in_promiscuous(fm_empty):
     """Tier 5: frequency outside all configured entries → no tags (no SEARCH,
     no bank filtering active)."""
-    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    await fm_empty.add({'single': 460.125, 'banks': ['NET_A']})
 
     result = fm_empty.resolve_banks(999.999)
     assert result == []
@@ -1299,7 +1438,7 @@ async def test_resolve_banks_tier5_unconfigured_returns_no_tags_in_promiscuous(f
 @pytest.mark.asyncio
 async def test_resolve_banks_tier5_unconfigured_returns_search_when_active(fm_empty):
     """Tier 5: SEARCH active + unconfigured frequency → ['SEARCH'] returned."""
-    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    await fm_empty.add({'single': 460.125, 'banks': ['NET_A']})
     fm_empty.set_active_banks(['SEARCH'])
 
     result = fm_empty.resolve_banks(999.999)
@@ -1310,10 +1449,10 @@ async def test_resolve_banks_tier5_unconfigured_returns_search_when_active(fm_em
 async def test_resolve_banks_single_takes_precedence_over_range(fm_empty):
     """Single entry (Tier 1/2) always beats a containing range (Tier 3/4)."""
     await fm_empty.add({'lo': 460.000, 'hi': 461.000, 'banks': ['RAILROAD']})
-    await fm_empty.add({'single': 460.500, 'banks': ['PUBLIC_SAFETY']})
+    await fm_empty.add({'single': 460.500, 'banks': ['NET_A']})
 
     result = fm_empty.resolve_banks(460.500)
-    assert result == ['PUBLIC_SAFETY']
+    assert result == ['NET_A']
 
 
 @pytest.mark.asyncio
@@ -1322,13 +1461,13 @@ async def test_resolve_banks_tone_match_tolerance(fm_empty):
     await fm_empty.add({
         'single': 462.5625,
         'banks': ['COMMERCIAL'],
-        'tones': [{'ctcss': 67.0, 'banks': ['FIRE_TAC']}],
+        'tones': [{'ctcss': 67.0, 'banks': ['NET_A']}],
     })
 
     # Exact match
-    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.0) == ['FIRE_TAC']
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.0) == ['NET_A']
     # Within tolerance
-    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.4) == ['FIRE_TAC']
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.4) == ['NET_A']
     # Outside tolerance → falls back to base entry banks (Tier 2)
     assert fm_empty.resolve_banks(462.5625, ctcss_hz=68.0) == ['COMMERCIAL']
 
@@ -1340,11 +1479,11 @@ async def test_resolve_banks_tone_match_tolerance(fm_empty):
 @pytest.mark.asyncio
 async def test_search_tag_in_active_banks_resolves_unconfigured_hits(fm_empty):
     """SEARCH in active_banks causes unconfigured spectrum hits to resolve as ['SEARCH']."""
-    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
-    fm_empty.set_active_banks(['PUBLIC_SAFETY', 'SEARCH'])
+    await fm_empty.add({'single': 460.125, 'banks': ['NET_A']})
+    fm_empty.set_active_banks(['NET_A', 'SEARCH'])
 
     # Configured hit still resolves normally
-    assert fm_empty.resolve_banks(460.125) == ['PUBLIC_SAFETY']
+    assert fm_empty.resolve_banks(460.125) == ['NET_A']
 
     # Unconfigured hit resolves as SEARCH (not UNTAGGED)
     assert fm_empty.resolve_banks(999.000) == ['SEARCH']
@@ -1353,8 +1492,8 @@ async def test_search_tag_in_active_banks_resolves_unconfigured_hits(fm_empty):
 @pytest.mark.asyncio
 async def test_search_tag_not_active_unconfigured_returns_untagged(fm_empty):
     """Without SEARCH in active_banks, unconfigured spectrum hits return UNTAGGED."""
-    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
-    fm_empty.set_active_banks(['PUBLIC_SAFETY'])
+    await fm_empty.add({'single': 460.125, 'banks': ['NET_A']})
+    fm_empty.set_active_banks(['NET_A'])
 
     assert fm_empty.resolve_banks(999.000) == ['UNTAGGED']
 
@@ -1363,7 +1502,7 @@ async def test_search_tag_not_active_unconfigured_returns_untagged(fm_empty):
 async def test_search_tag_alone_in_active_banks(fm_empty):
     """SEARCH as the only active bank: resolve_banks still returns SEARCH for unconfigured
     spectrum and resolves configured entries normally."""
-    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    await fm_empty.add({'single': 460.125, 'banks': ['NET_A']})
     fm_empty.set_active_banks(['SEARCH'])
 
     # resolve_banks: unconfigured hit → SEARCH
@@ -1371,14 +1510,14 @@ async def test_search_tag_alone_in_active_banks(fm_empty):
 
     # resolve_banks: configured single still resolves correctly (SEARCH not in active_banks does
     # not suppress configured resolution; it only affects Tier 5 unconfigured hits)
-    assert fm_empty.resolve_banks(460.125) == ['PUBLIC_SAFETY']
+    assert fm_empty.resolve_banks(460.125) == ['NET_A']
 
 
 @pytest.mark.asyncio
 async def test_search_tag_promiscuous_mode_search_inactive(fm_empty):
     """In promiscuous mode (empty active_banks), SEARCH is inactive and
     unconfigured spectrum returns no tags."""
-    await fm_empty.add({'single': 460.125, 'banks': ['PUBLIC_SAFETY']})
+    await fm_empty.add({'single': 460.125, 'banks': ['NET_A']})
     fm_empty.set_active_banks(None)  # promiscuous
 
     assert fm_empty.resolve_banks(999.000) == []
@@ -1397,7 +1536,7 @@ async def test_resolve_banks_untagged_sentinel_gated_on_bank_filtering(fm_empty)
     assert fm_empty.resolve_banks(999.000) == []
 
     # Bank filtering active: untagged hits resolve to the sentinel
-    fm_empty.set_active_banks(['PUBLIC_SAFETY'])
+    fm_empty.set_active_banks(['NET_A'])
     assert fm_empty.resolve_banks(460.125) == ['UNTAGGED']
     assert fm_empty.resolve_banks(999.000) == ['UNTAGGED']
 
@@ -1411,11 +1550,11 @@ def test_channel_message_str_omits_bank_bracket_when_no_tags() -> None:
     no_banks = ChannelMessage(state='off', rf=460.125, bb=0, channel=3)
     text = str(no_banks)
     assert '[UNTAGGED]' not in text
-    assert '[PUBLIC_SAFETY]' not in text
+    assert '[NET_A]' not in text
 
     tagged = ChannelMessage(state='off', rf=460.125, bb=0, channel=3,
-                            banks=['PUBLIC_SAFETY'])
-    assert '[PUBLIC_SAFETY]' in str(tagged)
+                            banks=['NET_A'])
+    assert '[NET_A]' in str(tagged)
 
 
 # ---------------------------------------------------------------------------
@@ -1426,10 +1565,10 @@ def test_set_active_banks_accepts_bare_string(fm_empty):
     """set_active_banks with a bare string wraps it in a set (isinstance str branch).
     Kills mutant that sets active_banks = None instead of {banks}.
     """
-    fm_empty.set_active_banks("PUBLIC_SAFETY")
-    assert fm_empty.active_banks == {"PUBLIC_SAFETY"}
+    fm_empty.set_active_banks("NET_A")
+    assert fm_empty.active_banks == {"NET_A"}
     # Confirm it actually filters correctly — not promiscuous
-    assert fm_empty.is_bank_active(["PUBLIC_SAFETY"]) is True
+    assert fm_empty.is_bank_active(["NET_A"]) is True
     assert fm_empty.is_bank_active(["RAILROAD"]) is False
 
 
@@ -1439,10 +1578,10 @@ async def test_resolve_banks_single_proximity_threshold(fm_empty):
     must NOT match the entry. Kills mutations that widen the threshold to
     <= 1e-4 or < 1.0001 MHz.
     """
-    await fm_empty.add({'single': 460.1250, 'banks': ['PUBLIC_SAFETY']})
+    await fm_empty.add({'single': 460.1250, 'banks': ['NET_A']})
 
     # Exactly on target → must match
-    assert fm_empty.resolve_banks(460.1250) == ['PUBLIC_SAFETY']
+    assert fm_empty.resolve_banks(460.1250) == ['NET_A']
     # 200 Hz away (0.0002 MHz) → outside 100 Hz window → must NOT match
     assert fm_empty.resolve_banks(460.1252) == []
     assert fm_empty.resolve_banks(460.1248) == []
@@ -1473,12 +1612,12 @@ async def test_resolve_banks_single_tone_tolerance_exact_boundary(fm_empty):
     await fm_empty.add({
         'single': 462.5625,
         'banks': ['COMMERCIAL'],
-        'tones': [{'ctcss': 67.0, 'banks': ['FIRE_TAC']}],
+        'tones': [{'ctcss': 67.0, 'banks': ['NET_A']}],
     })
 
     # 0.49 Hz away — strictly inside window → must match tone
-    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.49) == ['FIRE_TAC']
-    assert fm_empty.resolve_banks(462.5625, ctcss_hz=66.51) == ['FIRE_TAC']
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.49) == ['NET_A']
+    assert fm_empty.resolve_banks(462.5625, ctcss_hz=66.51) == ['NET_A']
     # Exactly 0.5 Hz away — NOT strictly < 0.5 → must NOT match, falls back to base
     assert fm_empty.resolve_banks(462.5625, ctcss_hz=67.5) == ['COMMERCIAL']
     assert fm_empty.resolve_banks(462.5625, ctcss_hz=66.5) == ['COMMERCIAL']
@@ -1495,12 +1634,12 @@ async def test_resolve_banks_range_tone_tolerance_exact_boundary(fm_empty):
         'lo': 462.200,
         'hi': 462.400,
         'banks': ['COMMERCIAL'],
-        'tones': [{'ctcss': 67.0, 'banks': ['FIRE_TAC']}],
+        'tones': [{'ctcss': 67.0, 'banks': ['NET_A']}],
     })
 
     # 0.49 Hz away — strictly inside window → must match tone
-    assert fm_empty.resolve_banks(462.300, ctcss_hz=67.49) == ['FIRE_TAC']
-    assert fm_empty.resolve_banks(462.300, ctcss_hz=66.51) == ['FIRE_TAC']
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=67.49) == ['NET_A']
+    assert fm_empty.resolve_banks(462.300, ctcss_hz=66.51) == ['NET_A']
     # Exactly 0.5 Hz away — NOT strictly < 0.5 → falls back to base range banks
     assert fm_empty.resolve_banks(462.300, ctcss_hz=67.5) == ['COMMERCIAL']
     assert fm_empty.resolve_banks(462.300, ctcss_hz=66.5) == ['COMMERCIAL']
@@ -1539,14 +1678,14 @@ async def test_get_label_uses_tone_tolerance_for_tone_rules(fm_empty):
         'single': 462.5625,
         'label': 'Base',
         'tones': [
-            {'ctcss': 67.0, 'label': 'Fire Tac'},
-            {'ctcss': 100.0, 'label': 'Police'},
+            {'ctcss': 67.0, 'label': 'Net A'},
+            {'ctcss': 100.0, 'label': 'Net B'},
         ],
     })
 
     # 0.49 Hz away — strictly inside → matches the tone label
-    assert fm_empty.get_label(462.5625, 67.49) == 'Fire Tac'
-    assert fm_empty.get_label(462.5625, 99.51) == 'Police'
+    assert fm_empty.get_label(462.5625, 67.49) == 'Net A'
+    assert fm_empty.get_label(462.5625, 99.51) == 'Net B'
     # Exactly 0.5 Hz away — NOT strictly < 0.5 → falls back to entry label
     assert fm_empty.get_label(462.5625, 67.5) == 'Base'
     # Well outside → falls back to entry label
@@ -1591,13 +1730,13 @@ async def test_unknown_active_banks_matches_configured_set(fm_empty):
         'single': 462.5625,
         'banks': ['COMMERCIAL'],
         'tones': [
-            {'ctcss': 67.0, 'banks': ['FIRE_TAC']},
+            {'ctcss': 67.0, 'banks': ['NET_A']},
             {'ctcss': 71.9, 'banks': ['SECURITY']},
         ],
     })
     await fm_empty.add({'single': 467.7125, 'banks': ['OPERATIONS']})
 
-    fm_empty.set_active_banks(['FIRE_TAC', 'OPERATIONS', 'FIRE_TAK', 'NOPE'])
+    fm_empty.set_active_banks(['NET_A', 'OPERATIONS', 'FIRE_TAK', 'NOPE'])
 
     assert fm_empty.unknown_active_banks() == {'FIRE_TAK', 'NOPE'}
 
@@ -1622,7 +1761,7 @@ async def test_load_warns_on_unmatched_active_banks(fm_empty, tmp_path: Path, ca
         "frequencies:\n"
         "  - single: 460.125\n"
         "    label: Patrol\n"
-        "    banks: [FIRE_TAC]\n"
+        "    banks: [NET_A]\n"
     )
 
     fm_empty.config.file_name = freqs_file
@@ -1645,11 +1784,11 @@ async def test_load_no_warning_when_all_active_banks_match(fm_empty, tmp_path: P
         "frequencies:\n"
         "  - single: 460.125\n"
         "    label: Patrol\n"
-        "    banks: [FIRE_TAC]\n"
+        "    banks: [NET_A]\n"
     )
 
     fm_empty.config.file_name = freqs_file
-    fm_empty.set_active_banks(["FIRE_TAC"])
+    fm_empty.set_active_banks(["NET_A"])
 
     with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
         await fm_empty.load()
@@ -1661,13 +1800,13 @@ async def test_load_no_warning_when_all_active_banks_match(fm_empty, tmp_path: P
 async def test_load_warns_on_unmatched_active_banks_without_file(fm_empty, caplog: pytest.LogCaptureFixture):
     """--banks X without -F/--frequencies silently resolves everything to
     UNTAGGED, which never matches X — load() must warn at startup."""
-    fm_empty.set_active_banks(["FIRE_TAC"])
+    fm_empty.set_active_banks(["NET_A"])
 
     with caplog.at_level(logging.WARNING, logger="ham2mon.frequency_manager"):
         await fm_empty.load()
 
     assert any(
-        "FIRE_TAC" in message and "match no configured" in message
+        "NET_A" in message and "match no configured" in message
         for message in caplog.messages
     )
 
@@ -1701,7 +1840,7 @@ async def test_active_bank_without_frequencies_resolves_untagged(fm_empty):
     """Without a frequency file, every hit resolves to UNTAGGED which never
     matches a non-dynamic active bank — the fail-closed no-op that the
     load()-time warning exists to surface."""
-    fm_empty.set_active_banks(["FIRE_TAC"])
+    fm_empty.set_active_banks(["NET_A"])
 
     assert fm_empty.resolve_banks(460.125) == ["UNTAGGED"]
     assert fm_empty.is_bank_active(["UNTAGGED"]) is False

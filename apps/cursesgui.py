@@ -12,7 +12,13 @@ import numpy as np
 import logging
 from pathlib import Path, PurePath
 from frequency_manager import ConfigFrequency, ChannelFrequency, ChannelList, FrequencyList
-from utilities import baseband_to_bin, build_column_edges, index_to_column
+from utilities import (
+    baseband_to_bin,
+    build_column_edges,
+    format_active_banks,
+    format_channel_banks,
+    index_to_column,
+)
 from ui_theme import THEME, ThemeConfiguration
 
 logger = logging.getLogger(f"ham2mon.{__name__}")
@@ -457,9 +463,26 @@ class ChannelWindow(object):
                 ctcss_str = f'{display_ctcss:>5.1f}'
                 win.addnstr(row, col + self.width - 5, ctcss_str , 5, attributes[1] | curses.A_ITALIC)
                 win.addnstr(row, col + self.width - 6, ' ', 1, attributes[0])
-                label_end = self.width - 6
-            else:
-                label_end = self.width
+
+            # Right-align the bank tag block just before the CTCSS field (or
+            # the right border when no CTCSS), reserving its width from the
+            # label region. Empty banks draw nothing, so non-bank users see
+            # no layout shift.
+            ctcss_cols = 6 if display_ctcss is not None else 0
+            bank_end = self.width - ctcss_cols
+            bank_str = format_channel_banks(
+                getattr(channel, "banks", None) or [], max(0, bank_end - 1)
+            )
+            bank_start = bank_end - len(bank_str)
+            label_end = bank_start - 1 if bank_str else bank_end
+
+            if bank_str:
+                bank_attr = (
+                    THEME.get("channel.bank_active")
+                    if channel.active
+                    else THEME.get("channel.bank_inactive")
+                )
+                win.addnstr(row, col + bank_start, bank_str, len(bank_str), bank_attr)
 
             if label_end > label_start:
                 remainder = label_end - label_start
@@ -855,6 +878,9 @@ class RxWindow(object):
         self.freq_max = 148E6
         self.samp_rate = 2E6
         self.freq_entry = 'None'
+        self.banks: set[str] = set()
+        self.bank_labels: dict[str, str] = {}
+        self.bank_entry: str | None = None
         self.squelch_db = -60
         self.volume_db = 0
         self.type_demod = 0
@@ -864,6 +890,9 @@ class RxWindow(object):
         self.activity_dest = ""
         self.gains = None
         self.classifier_params = None
+        # Declared here (initialized in draw_frame like the other *_field
+        # attributes) so the read-only Banks value can be rendered safely.
+        self.banks_field: RxWindow.RxEntry | None = None
 
         self.demod_map = {
             0: 'NBFM',
@@ -1038,6 +1067,8 @@ class RxWindow(object):
         self.frequency_file_name_field = RxWindow.RxEntry(
             "Freq File", 2, 'left', False)
 
+        self.banks_field = RxWindow.RxEntry("Banks", 2, "left", False)
+
         self.activity_type_field = RxWindow.RxEntry(
             "Activity Type", 2, 'left', False)
 
@@ -1081,6 +1112,13 @@ class RxWindow(object):
 
         file_name = self.frequency_file_name.name if self.frequency_file_name else "none"
         self.frequency_file_name_field.set(file_name)
+
+        if self.bank_entry is not None:
+            banks_text = self.bank_entry
+        else:
+            banks_text = format_active_banks(self.banks, self.bank_labels)
+        if self.banks_field is not None:
+            self.banks_field.set(banks_text)
 
         self.activity_type_field.set(self.activity_type)
 
@@ -1156,6 +1194,10 @@ class RxWindow(object):
             # set mode to frequency entry
             self.freq_entry = ''
             return False
+        elif keyb == ord("b") and self.freq_entry == "None":
+            # set mode to bank entry (mutually exclusive with frequency entry)
+            self.start_bank_entry()
+            return False
         elif keyb == 27:  # ESC
             # end frequncy entry mode without seting the frequency
             self.freq_entry = 'None'
@@ -1177,6 +1219,39 @@ class RxWindow(object):
             return False
         else:
             return False
+
+    def start_bank_entry(self) -> None:
+        """Enter bank-entry mode, pre-filled with the current active banks.
+
+        The live entry text is shown in the Banks receiver field; Enter
+        applies it (via the caller), ESC cancels.
+        """
+        self.bank_entry = ",".join(sorted(self.banks))
+
+    def proc_keyb_bank_entry(self, keyb: int) -> bool:
+        """Process keystrokes in bank-entry mode.
+
+        ESC cancels, Enter applies, Backspace deletes, and letters/digits/
+        '_'/'-'/','/space build up the entry. Returns True only when Enter
+        was pressed, so the caller can apply the parsed value. The entry
+        text is consumed (set to None) on both ESC and Enter.
+        """
+        if keyb == 27:  # ESC
+            self.bank_entry = None
+            return False
+        entry = self.bank_entry
+        if entry is None:
+            return False
+        if keyb == ord('\n'):
+            self.bank_entry = None
+            return True
+        if keyb == curses.KEY_BACKSPACE:
+            self.bank_entry = entry[:-1]
+            return False
+        if chr(keyb).isalnum() or chr(keyb) in " _,-":
+            self.bank_entry = entry + chr(keyb)
+            return False
+        return False
 
     def _adjust_gain_stage(self, index: int, delta: float) -> bool:
         if index < len(self.gains):
