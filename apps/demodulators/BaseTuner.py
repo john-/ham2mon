@@ -8,6 +8,7 @@ import time
 from asyncio import Task
 from collections.abc import Callable
 
+import numpy as np
 from frequency_manager import ChannelMessage
 from gnuradio import (
     analog,
@@ -28,6 +29,14 @@ class BaseTuner(gr.hier_block2):
 
     _CTCSS_GRACE_PERIOD_S: float = 0.7  # Seconds to allow CTCSS detector to stabilise before flagging a mismatch
     _CTCSS_DETECTOR_LEN: int = 4000  # Goertzel block size (number of samples) for CTCSS detection
+    _CTCSS_CONFIRM_MIN_S: float = 0.4  # Audio accumulated before the measurement becomes valid
+    _CTCSS_CONFIRM_MAX_S: float = 2.0  # Ring-buffer cap: measure up to this much recent audio
+    _CTCSS_BAND_LO_HZ: float = 67.0  # Full CTCSS PL band lower edge
+    _CTCSS_BAND_HI_HZ: float = 254.1  # Full CTCSS PL band upper edge
+    _CTCSS_LP_HZ: float = 260.0  # Voice-falsing guard: low-pass cutoff ahead of the measurement tap
+    _CTCSS_MIN_PEAK_RATIO: float = 3.0  # Relative-power rule: peak must exceed band median by this
+    _CTCSS_ABSOLUTE_FLOOR: float = 0.0001  # Absolute floor (same as ctcss_level) to reject silence
+    _CTCSS_MATCH_TOLERANCE_HZ: float = 1.0  # Acceptance window around a configured tone
     _channel_lock = threading.Lock()
     _channel_counter: int = 0  # incremented for each new demodulator
 
@@ -115,6 +124,30 @@ class BaseTuner(gr.hier_block2):
         self.connect(self._ctcss_adder, self._ctcss_hub)
 
         self.ctcss_out = self._ctcss_hub      # subclasses: ctcss_out → sink/hier-output
+
+        # Short full-band measurement tap: a low-pass-guarded copy of the decoded
+        # audio drained by _measure_ctcss_tone(). This is the confirmation stage of
+        # the hybrid matcher (the Goertzel chains are the fast gate, this is the
+        # authority for the match decision).
+        #
+        # Only built when CTCSS is enabled at all (max_ctcss_tones > 0). With
+        # max_ctcss_tones == 0 (the default config) the frequency manager rejects
+        # every tones: entry, so _ctcss_enabled can never become True and this tap
+        # would only burn an always-on FIR + vector-sink drain that nothing reads.
+        # Skipping it restores the pre-hybrid topology for the no-CTCSS case.
+        if self.max_ctcss_tones > 0:
+            self._ctcss_confirm_min_len = int(self.audio_rate * self._CTCSS_CONFIRM_MIN_S)
+            self._ctcss_confirm_max_len = int(self.audio_rate * self._CTCSS_CONFIRM_MAX_S)
+            self._ctcss_buffer = np.zeros(self._ctcss_confirm_max_len, dtype=np.float32)
+            self._ctcss_samples_seen = 0
+            self._ctcss_capture_lp = grfilter.fir_filter_fff(
+                1,
+                grfilter.firdes.low_pass(
+                    1, self.audio_rate, self._CTCSS_LP_HZ, 40.0, window.WIN_HAMMING
+                ),
+            )
+            self._ctcss_capture = blocks.vector_sink_f()
+            self.connect(self.ctcss_in, self._ctcss_capture_lp, self._ctcss_capture)
 
         self._ctcss_enabled = False
         self._active_tone_count = 0   # how many of the N chains are configured/active for the current channel
@@ -273,7 +306,14 @@ class BaseTuner(gr.hier_block2):
 
     def is_ctcss_mismatched(self) -> bool:
         """Returns True if there is an active signal (RF squelch open) but none of the
-        channel's configured CTCSS tones currently match (all their squelches closed)."""
+        channel's configured CTCSS tones match the transmitted tone.
+
+        Hybrid matcher: the Goertzel chains stay the fast audio gate, while a short
+        full-band FFT measurement of the decoded audio is the authority for the match
+        decision. A match is latched only when the measured tone (relative-power rule)
+        falls within tolerance of a configured tone -- this rejects adjacent-tone false
+        opens from the chains (e.g. 74.4 vs 71.9, 97.4 vs 100) and disambiguates which
+        tone is present on multi-tone channels."""
         if not self._ctcss_enabled:
             return False
 
@@ -283,33 +323,99 @@ class BaseTuner(gr.hier_block2):
         if self.ctcss_matched:
             return False
 
-        # Check if demodulator RF squelch is open and at least one active CTCSS
-        # chain's squelch is open (i.e. its specific tone is present)
+        # Check if demodulator RF squelch is open and what tone the full-band
+        # measurement actually sees
         rf_open = self.analog_pwr_squelch_cc.unmuted()
-        matched_idx = None
-        if rf_open:
-            for i in range(self._active_tone_count):
-                if self._ctcss_squelches[i].unmuted():
-                    matched_idx = i
-                    break
+        tone_present, measured = self._measure_ctcss_tone()
 
-        # Update matching status
-        if matched_idx is not None:
-            self.ctcss_matched = True
-            if matched_idx < len(self._active_tones):
-                self.matched_ctcss_tone = self._active_tones[matched_idx]
+        # Authority: match only if the measured tone matches a configured tone
+        if rf_open and tone_present and measured is not None:
+            for i in range(self._active_tone_count):
+                if abs(self._active_tones[i] - measured) <= self._CTCSS_MATCH_TOLERANCE_HZ:
+                    self.ctcss_matched = True
+                    self.matched_ctcss_tone = self._active_tones[i]
+                    return False
 
         # If we haven't matched yet, check if we've exceeded the grace period
         if not self.ctcss_matched:
-            # Give the CTCSS chains 0.4 seconds to detect the tone and stabilize
+            # Give the CTCSS chains time to detect the tone and stabilize
             if time.time() - self._ctcss_start_time < self._CTCSS_GRACE_PERIOD_S:
                 return False
-            # If 0.4s passed and still not matched while RF is open, it's a mismatch
+            # If grace period passed and still not matched while RF is open, it's a mismatch
             if rf_open:
                 self.discard_current = True
                 return True
 
         return False
+
+    def _measure_ctcss_tone(self) -> tuple[bool, float | None]:
+        """Short full-band CTCSS measurement of the captured audio.
+
+        Returns (present, measured_hz) using a Hanning-windowed FFT over the most
+        recent captured audio (up to _CTCSS_CONFIRM_MAX_S seconds, ring-buffered; the
+        measurement only becomes valid after _CTCSS_CONFIRM_MIN_S seconds have been
+        accumulated). A tone is declared present only when the in-band (67-254.1 Hz)
+        spectral peak exceeds both an absolute floor and _CTCSS_MIN_PEAK_RATIO * the
+        band median (relative-power rule). The peak frequency is refined with
+        parabolic interpolation.
+
+        The full ring (rather than a tiny recent slice) is measured so that the tone
+        is still visible even once the tail of a short transmission has ended.
+        """
+        # TODO(memory growth): this is the ONLY drain of _ctcss_capture, and it
+        # is unreachable while the demodulator is parked (center_freq == 0, skipped
+        # by the scanner), after ctcss_matched latches for the rest of a long
+        # transmission, or during a whole dwell on a channel with no configured
+        # tones (max_ctcss_tones > 0 but _ctcss_enabled False, so this method is
+        # never reached). The vector sink therefore accumulates for the whole
+        # idle/matched/no-tone stretch (~8k samples/s ≈ ~32 KB/s); that growth is
+        # bounded per-stretch only because _apply_ctcss_config calls
+        # _reset_ctcss_measurement on every retune. Known fix (designed but not
+        # implemented): decoupled always-on ring update plus a scanner drain call
+        # for idle demodulators, which would also let the per-channel-disabled
+        # case drop the always-on FIR tap cost.
+        # See doc/ctcss-matcher-background.md section 4.1.
+        data = self._ctcss_capture.data()
+        self._ctcss_capture.reset()
+        if len(data):
+            arr = np.asarray(data, dtype=np.float32)
+            n = len(arr)
+            self._ctcss_samples_seen += n
+            if n >= self._ctcss_confirm_max_len:
+                self._ctcss_buffer[:] = arr[-self._ctcss_confirm_max_len:]
+            else:
+                self._ctcss_buffer[:-n] = self._ctcss_buffer[n:]
+                self._ctcss_buffer[-n:] = arr
+
+        if self._ctcss_samples_seen < self._ctcss_confirm_min_len:
+            return False, None
+
+        n_used = min(self._ctcss_samples_seen, self._ctcss_confirm_max_len)
+        windowed = self._ctcss_buffer[-n_used:] * np.hanning(n_used).astype(np.float32)
+        spectrum = np.abs(np.fft.rfft(windowed))
+        freqs = np.fft.rfftfreq(n_used, 1.0 / self.audio_rate)
+        lo = int(np.searchsorted(freqs, self._CTCSS_BAND_LO_HZ))
+        hi = int(np.searchsorted(freqs, self._CTCSS_BAND_HI_HZ, side="right"))
+        band = spectrum[lo:hi]
+        if len(band) == 0:
+            return False, None
+
+        median = float(np.median(band))
+        peak_idx = int(np.argmax(band))
+        peak_mag = float(band[peak_idx])
+        floor = max(median, self._CTCSS_ABSOLUTE_FLOOR)
+        if peak_mag < self._CTCSS_MIN_PEAK_RATIO * floor:
+            return False, None
+
+        # Parabolic interpolation of the peak bin for sub-bin frequency accuracy
+        f_est = float(freqs[lo + peak_idx])
+        if 0 < peak_idx < len(band) - 1:
+            y0, y1, y2 = band[peak_idx - 1], band[peak_idx], band[peak_idx + 1]
+            denom = y0 - 2.0 * y1 + y2
+            if abs(denom) > 1e-12:
+                delta = 0.5 * (y0 - y2) / denom
+                f_est += delta * (freqs[lo + peak_idx + 1] - freqs[lo + peak_idx])
+        return True, float(f_est)
 
     def configure_selectors(self) -> None:
         """Applies path routing based on self._ctcss_enabled.
@@ -331,6 +437,26 @@ class BaseTuner(gr.hier_block2):
             except IndexError as e:
                 logger.warning("Failed to configure recording selector: %s", e)
 
+    def _reset_ctcss_measurement(self) -> None:
+        """Clears the full-band CTCSS measurement's state so a new dwell never
+        draws on audio left over from a previous channel/transmission.
+
+        Discards anything the capture tap has accumulated since the last drain,
+        zeroes the ring buffer, and resets the validity-floor counter. Called on
+        every retune (whether or not CTCSS ends up active for the new channel).
+        vector_sink_f.reset() clears the internal buffer without needing data(),
+        so this is cheap and safe.
+
+        No-op when the measurement tap was never built (max_ctcss_tones == 0):
+        _ctcss_enabled can never be True in that configuration, so there is no
+        measurement state to clear.
+        """
+        if not hasattr(self, '_ctcss_capture'):
+            return
+        self._ctcss_capture.reset()
+        self._ctcss_buffer[:] = 0.0
+        self._ctcss_samples_seen = 0
+
     def _apply_ctcss_config(self, ctcss_tones: list[float] | None) -> None:
         """Applies CTCSS configuration parameters and updates routing if started.
 
@@ -351,6 +477,12 @@ class BaseTuner(gr.hier_block2):
         self._active_tone_count = len(tones)
         self._active_tones = tones
         self.matched_ctcss_tone = None
+
+        # Clear the full-band measurement's state so this dwell never draws on
+        # audio left over from the previous channel/transmission. Mirrors the
+        # HPF tap re-apply below: runs on every retune (tones or empty), since
+        # both are "start of a new state" for the measurement.
+        self._reset_ctcss_measurement()
 
         if tones:
             self._ctcss_enabled = True

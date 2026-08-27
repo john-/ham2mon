@@ -649,11 +649,13 @@ async def test_ctcss_matching_logic_mocked():
     self.channel = 1
     self._ctcss_enabled = True
     self._active_tone_count = 2  # simulate a 2-tone channel (e.g. primary + backup PL)
+    self._active_tones = [100.0, 67.0]
     self.ctcss_matched = False
     self.ctcss_checked = False
     self.discard_current = False
     self._ctcss_start_time = time.time()
     self._CTCSS_GRACE_PERIOD_S = BaseTuner._CTCSS_GRACE_PERIOD_S
+    self._CTCSS_MATCH_TOLERANCE_HZ = BaseTuner._CTCSS_MATCH_TOLERANCE_HZ
     self.ctcss_level = 0.0001
 
     # Bind the methods from BaseTuner
@@ -666,6 +668,10 @@ async def test_ctcss_matching_logic_mocked():
     self.analog_pwr_squelch_cc.unmuted.return_value = True
     for squelch in self._ctcss_squelches:
         squelch.unmuted.return_value = False
+
+    # The hybrid matcher's authority is the full-band measurement. Start with "no
+    # tone present"; individual steps below flip it to simulate detection.
+    self._measure_ctcss_tone = lambda: (False, None)
 
     self.notify_scanner = AsyncMock()
     self._close_recording = MagicMock(return_value=None)
@@ -684,11 +690,14 @@ async def test_ctcss_matching_logic_mocked():
 
     # 3. Simulate matching tone detection on the SECOND (backup) tone -> should set
     #    matched=True and return False, proving the check isn't limited to chain 0.
+    #    The full-band measurement is the authority, so it must report the backup tone.
     self.ctcss_matched = False
     self.discard_current = False
+    self._measure_ctcss_tone = lambda: (True, 67.0)
     self._ctcss_squelches[1].unmuted.return_value = True
     assert self.is_ctcss_mismatched() == False
     assert self.ctcss_matched == True
+    assert self.matched_ctcss_tone == 67.0
     assert self.discard_current == False
 
     # 4. Once matched, even if that tone drops (unmuted=False) and grace period exceeded,
@@ -699,8 +708,10 @@ async def test_ctcss_matching_logic_mocked():
 
     # 5. A third, unconfigured chain (index 2, beyond _active_tone_count=2) matching
     #    should NOT count -- is_ctcss_mismatched must only look at active slots.
+    #    The measurement also reports a non-configured tone, so no match can latch.
     self.ctcss_matched = False
     self.discard_current = False
+    self._measure_ctcss_tone = lambda: (True, 88.5)
     self._ctcss_start_time = time.time() - (self._CTCSS_GRACE_PERIOD_S + 0.1)
     self._ctcss_squelches[2].unmuted.return_value = True  # inactive slot -- should be ignored
     assert self.is_ctcss_mismatched() == True
@@ -1511,6 +1522,287 @@ async def test_ctcss_adjacent_tone_rejection(receiver_factory, tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_ctcss_match_high_pl_tone(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that a CTCSS tone in the upper part of the standard PL band (141.3 Hz --
+    above the 55-105 Hz range that a wrongly-tuned detector could miss) matches
+    correctly. The full-band (67-254.1 Hz) measurement is authoritative, so every
+    standard PL code must work.
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_high_tone.iq"
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=1.5,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 141.3,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.2)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [141.3]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    rx.start()
+
+    # Fast decision: matched well before the 0.7s grace period expires
+    await asyncio.sleep(0.8)
+    assert demod.is_ctcss_mismatched() == False
+    assert demod.ctcss_matched == True
+    assert demod.matched_ctcss_tone == 141.3
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    await demod.set_center_freq(0, 144_000_000)
+
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 1, f"Expected 1 WAV (141.3 Hz match), found {wav_files}"
+
+
+@pytest.mark.asyncio
+async def test_ctcss_match_band_edge_tone(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that a CTCSS tone at the very top edge of the PL band (254.1 Hz) matches
+    correctly, proving the measurement covers the full standard CTCSS band rather
+    than a narrow sub-range.
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_band_edge.iq"
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=1.5,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 254.1,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.2)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [254.1]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    rx.start()
+
+    await asyncio.sleep(0.8)
+    assert demod.is_ctcss_mismatched() == False
+    assert demod.ctcss_matched == True
+    assert demod.matched_ctcss_tone == 254.1
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    await demod.set_center_freq(0, 144_000_000)
+
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 1, f"Expected 1 WAV (254.1 Hz match), found {wav_files}"
+
+
+@pytest.mark.asyncio
+async def test_ctcss_adjacent_high_tone_rejection(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that a configured tone (141.3 Hz) is NOT matched when the adjacent standard
+    tone (146.2 Hz, the next EIA code) is transmitted. This is the upper-band
+    counterpart to test_ctcss_adjacent_tone_rejection and exercises the full-band
+    relative-power authority at standard code spacing.
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_adjacent_high.iq"
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=1.5,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 146.2,
+                "ctcss_dev": 500.0,
+                "events": [(0.2, 1.2)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [141.3]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    rx.start()
+
+    await asyncio.sleep(1.0)
+    assert demod._ctcss_squelches[0].unmuted() == False
+    assert demod.is_ctcss_mismatched() == True
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    await demod.set_center_freq(0, 144_000_000)
+
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 0, f"Expected 0 WAV (146.2 Hz rejection), found {wav_files}"
+
+
+@pytest.mark.asyncio
+async def test_ctcss_adjacent_tone_rejection_150hz(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that in-band narrowband audio that is NOT a configured tone does not cause
+    a false match (adjacent-tone rejection). A 150 Hz tone inside the CTCSS band is
+    transmitted while the channel is configured to 100 Hz: the relative-power
+    measurement measures 150 Hz, which matches no configured tone, so the channel
+    reports a mismatch and nothing is recorded. (Broadband voice falsing is covered
+    separately by test_ctcss_voice_falsing_rejection_broadband.)
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_voice_falsing.iq"
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=1.5,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 150.0,  # low-frequency audio inside the PL band, no PL tone
+                "audio_dev": 3000.0,
+                "events": [(0.2, 1.2)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [100.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    rx.start()
+
+    await asyncio.sleep(1.0)
+    assert demod.is_ctcss_mismatched() == True
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    await demod.set_center_freq(0, 144_000_000)
+
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 0, f"Expected 0 WAV (voice falsing), found {wav_files}"
+
+
+@pytest.mark.asyncio
 async def test_ctcss_matched_tone_filename_metadata(receiver_factory, tmp_path, monkeypatch):
     """
     Test that if 'ctcss' is included in file_metadata, the matched tone is appended
@@ -1640,4 +1932,345 @@ async def test_max_ctcss_tones_configurable(receiver_factory, tmp_path, monkeypa
     await demod.set_center_freq(30_000, 144_000_000)
     assert demod._active_tone_count == 1
     assert demod._active_tones == [100.0]  # Second tone ignored
+
+
+@pytest.mark.asyncio
+async def test_ctcss_disabled_no_measurement_tap(receiver_factory, tmp_path):
+    """max_ctcss_tones == 0 (the default config) must not build the full-band
+    measurement tap at all -- no always-on FIR + vector sink -- and a normal
+    tune/detune cycle must not crash even when a reported tone is truncated away.
+    """
+    # Create a dummy IQ file to satisfy file source initialization
+    dummy_file = tmp_path / "dummy.iq"
+    dummy_file.write_bytes(b'\x00' * 8000)
+
+    # Reported tone is truncated away: only 0 tones are supported here
+    def mock_ctcss_info(bb):
+        return [100.0]
+
+    rx = receiver_factory(
+        source_file=str(dummy_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info,
+        max_ctcss_tones=0
+    )
+
+    demod = rx.demodulators[0]
+    assert demod.max_ctcss_tones == 0
+
+    # Performance intent: no measurement infrastructure exists in this config,
+    # so nothing runs an always-on FIR + vector-sink drain.
+    for attr in ("_ctcss_capture", "_ctcss_capture_lp", "_ctcss_buffer",
+                 "_ctcss_samples_seen", "_ctcss_confirm_min_len"):
+        assert not hasattr(demod, attr)
+
+    # Tune/detune exercises _apply_ctcss_config -> _reset_ctcss_measurement on
+    # the guarded path (tone branch on tune, empty branch on detune).
+    await demod.set_center_freq(30_000, 144_000_000)
+    assert demod._ctcss_enabled is False
+    assert demod._active_tone_count == 0
+    assert demod.is_ctcss_mismatched() is False
+    await demod.set_center_freq(0, 144_000_000)
+    assert not hasattr(demod, "_ctcss_capture")
+
+
+@pytest.mark.asyncio
+async def test_ctcss_retune_stale_buffer_no_falsing(receiver_factory, tmp_path, monkeypatch):
+    """
+    Regression test for the stale-confirmation-buffer bug: the full-band
+    measurement ring (_ctcss_buffer/_ctcss_samples_seen) must be reset on every
+    retune, or a match/mismatch on the new channel can be decided from audio left
+    over from the previous channel/transmission.
+
+    Scenario: channel A (+30 kHz, configured 100.0 Hz) carries a wrong-PL
+    transmission (88.5 Hz). The demodulator is then retuned to channel B
+    (+40 kHz, configured 141.3 Hz) and B's valid 141.3 Hz transmission starts
+    within the 2 s measurement-ring window of A's stale audio. B must still
+    match 141.3 Hz -- the retune must clear the ring so B's decision never draws
+    on A's leftover 88.5 Hz samples.
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_retune_stale.iq"
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=3.8,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 88.5,  # wrong PL for channel A (configured 100.0)
+                "ctcss_dev": 500.0,
+                "events": [(0.3, 1.4)]
+            },
+            {
+                "carrier_offset": 40_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 141.3,  # correct PL for channel B
+                "ctcss_dev": 500.0,
+                "events": [(2.3, 3.5)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(rf_mhz):
+        if abs(rf_mhz - 144.03) < 1e-9:
+            return [100.0]
+        return [141.3]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+    rx.start()
+
+    # Poll through channel A's (wrong-PL) transmission so the measurement ring
+    # fills with the stale 88.5 Hz audio and the validity floor is long crossed.
+    for _ in range(14):
+        demod.is_ctcss_mismatched()
+        await asyncio.sleep(0.1)
+
+    # Detune, park briefly, then retune to channel B just before its transmission
+    # starts (still within the 2s measurement-ring window of A's stale audio).
+    await demod.set_center_freq(0, 144_000_000)
+    await asyncio.sleep(0.7)
+    await demod.set_center_freq(40_000, 144_000_000)
+
+    # The retune must have reset the measurement state: no stale samples may
+    # survive into the new channel's dwell.
+    assert demod._ctcss_samples_seen == 0
+    assert np.count_nonzero(demod._ctcss_buffer) == 0
+
+    # Poll through B's transmission: it must match 141.3 Hz from a clean ring --
+    # well before the 0.7s grace period expires, not from A's leftover 88.5 Hz.
+    matched = False
+    for _ in range(10):
+        await asyncio.sleep(0.1)
+        demod.is_ctcss_mismatched()
+        if demod.ctcss_matched:
+            matched = True
+            break
+
+    assert matched, "channel B's 141.3 Hz tone was not matched from a clean measurement ring"
+    assert demod.matched_ctcss_tone == 141.3
+    assert demod.is_ctcss_mismatched() == False
+
+    await demod.set_center_freq(0, 144_000_000)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+
+@pytest.mark.asyncio
+async def test_ctcss_direct_preempt_stale_buffer_no_falsing(receiver_factory, tmp_path, monkeypatch):
+    """
+    Regression test for the stale-confirmation-buffer bug via the scanner's direct
+    preemption path (scanner.py: _assign_channels_to_demodulators calls
+    demodulator.set_center_freq(channel.bb, ...) straight onto a demodulator that
+    is mid-transmission, with no detune to 0 in between). This is the path where
+    the measurement ring is hottest, and -- unlike the detour test -- it cannot be
+    cleared by the empty-tones branch of _apply_ctcss_config, so it uniquely pins
+    that the measurement reset fires on EVERY retune (non-empty -> non-empty too).
+
+    Scenario: channel A (+30 kHz, configured 100.0 Hz) is carrying a wrong-PL
+    transmission (88.5 Hz). While A is still live, the demodulator is preempted
+    directly to channel B (+40 kHz, configured 141.3 Hz). The retune must clear the
+    ring (and any undrained capture), so B's 141.3 Hz match never draws on A's
+    leftover 88.5 Hz samples even though B starts inside the 2 s measurement window.
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    iq_file = tmp_path / "signal_ctcss_direct_preempt.iq"
+    iq_data = generate_test_iq(
+        sample_rate=1.0e6,
+        duration=3.2,
+        channels=[
+            {
+                "carrier_offset": 30_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 88.5,  # wrong PL for channel A (configured 100.0)
+                "ctcss_dev": 500.0,
+                "events": [(0.3, 1.4)]
+            },
+            {
+                "carrier_offset": 40_000,
+                "amplitude": 1.0,
+                "audio_freq": 1000.0,
+                "audio_dev": 3000.0,
+                "ctcss_freq": 141.3,  # correct PL for channel B
+                "ctcss_dev": 500.0,
+                "events": [(1.1, 3.0)]
+            }
+        ],
+        snr_db=30.0
+    )
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(rf_mhz):
+        if abs(rf_mhz - 144.03) < 1e-9:
+            return [100.0]
+        return [141.3]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+    rx.start()
+
+    # Poll through channel A's (wrong-PL) transmission so the measurement ring
+    # fills with live 88.5 Hz audio and the validity floor is long crossed.
+    for _ in range(8):
+        demod.is_ctcss_mismatched()
+        await asyncio.sleep(0.1)
+
+    # Preempt DIRECTLY from A to B mid-transmission -- no set_center_freq(0)
+    # detour, mirroring scanner.py's direct preemption of a live demodulator.
+    await demod.set_center_freq(40_000, 144_000_000)
+
+    # The retune must have reset the measurement state unconditionally: neither
+    # A's stale samples nor any undrained capture may survive into B's dwell.
+    assert demod._ctcss_samples_seen == 0
+    assert np.count_nonzero(demod._ctcss_buffer) == 0
+
+    # Poll through B's transmission: it must match 141.3 Hz from a clean ring,
+    # not from A's leftover 88.5 Hz audio.
+    matched = False
+    for _ in range(10):
+        await asyncio.sleep(0.1)
+        demod.is_ctcss_mismatched()
+        if demod.ctcss_matched:
+            matched = True
+            break
+
+    assert matched, "channel B's 141.3 Hz tone was not matched after direct preemption"
+    assert demod.matched_ctcss_tone == 141.3
+    assert demod.is_ctcss_mismatched() == False
+
+    await demod.set_center_freq(0, 144_000_000)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+
+@pytest.mark.asyncio
+async def test_ctcss_voice_falsing_rejection_broadband(receiver_factory, tmp_path, monkeypatch):
+    """
+    Test that broadband, speech-like modulating audio does not cause a false CTCSS
+    match. A voiced-speech stand-in (harmonic stack + noise, fundamental in-band at
+    180 Hz, harmonics up to 2400 Hz) is transmitted with NO CTCSS tone while the
+    channel is configured to 100 Hz. The 260 Hz low-pass guard strips the >260 Hz
+    harmonics, and the 180 Hz fundamental matches no configured tone, so the
+    channel reports a mismatch and nothing is recorded.
+    """
+    from gnuradio import blocks, gr
+    from receiver import Receiver
+
+    def throttled_init_file_source(self, source_file, ask_samp_rate, center_freq):
+        file_src = blocks.file_source(gr.sizeof_gr_complex, source_file, repeat=False)
+        throttle = blocks.throttle(gr.sizeof_gr_complex, ask_samp_rate)
+        self.connect(file_src, throttle)
+        return throttle, ask_samp_rate, center_freq
+
+    monkeypatch.setattr(Receiver, "_init_file_source", throttled_init_file_source)
+
+    sample_rate = 1.0e6
+    duration = 1.5
+    carrier_offset = 30_000
+    t = np.arange(0, duration, 1.0 / sample_rate)
+
+    audio = np.zeros_like(t)
+    for freq, amp in [(180.0, 1.0), (360.0, 0.7), (720.0, 0.5),
+                      (1080.0, 0.35), (1560.0, 0.25), (2400.0, 0.15)]:
+        audio += amp * np.sin(2.0 * np.pi * freq * t)
+    rng = np.random.default_rng(7)
+    audio += 0.2 * rng.standard_normal(len(t))
+    audio /= float(np.max(np.abs(audio)))
+
+    active = (t >= 0.2) & (t <= 1.2)
+    phase = (2.0 * np.pi * carrier_offset * t
+             + 2.0 * np.pi * 3000.0 * np.cumsum(audio) / sample_rate)
+    iq = np.exp(1j * phase).astype(np.complex128)
+    iq[~active] = 0.0
+    iq /= np.max(np.abs(iq))
+    iq_data = iq.astype(np.complex64)
+
+    iq_file = tmp_path / "signal_ctcss_voice_broadband.iq"
+    iq_data.tofile(iq_file)
+
+    def mock_ctcss_info(bb):
+        return [100.0]
+
+    rx = receiver_factory(
+        source_file=str(iq_file),
+        sample_rate=1_000_000,
+        num_demod=1,
+        type_demod=0,
+        min_recording=0.2,
+        record=True,
+        get_ctcss_info=mock_ctcss_info
+    )
+
+    demod = rx.demodulators[0]
+    await demod.set_center_freq(30_000, 144_000_000)
+    rx.set_squelch(-50)
+
+    rx.start()
+
+    await asyncio.sleep(1.0)
+    assert demod.is_ctcss_mismatched() == True
+    assert demod.ctcss_matched == False
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, rx.wait)
+
+    await demod.set_center_freq(0, 144_000_000)
+
+    wav_files = glob.glob(os.path.join(rx._wav_dir, "*.wav"))
+    assert len(wav_files) == 0, f"Expected 0 WAV (broadband voice falsing), found {wav_files}"
 
