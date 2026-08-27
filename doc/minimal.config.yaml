@@ -7,57 +7,59 @@
 # -------------------------------------------------------------------
 hardware:
   # The hardware driver argument string (e.g., "airspy,linearity", "rtl=0", "hackrf=0", "uhd")
-  args: "uhd"
+  args: "uhd"                                            # CLI: -a/--args
 
   # Center frequencies to monitor in MHz (single frequency or hyphenated range)
-  center_frequencies:
+  center_frequencies:                                    # CLI: -f/--freq
     - "146"
 
   # SDR sample rate in Hz (must be at least 1,000,000 / 1 MHz)
-  sample_rate: 4.0e+6
+  sample_rate: 4.0e+6                                    # CLI: -r/--rate
 
   # Frequency correction offset in PPM (uncomment to apply correction)
-  # freq_correction: 0
+  # freq_correction: 0                                   # CLI: -c/--correction
 
 # ----------------------------------------------------------------------
 # Optional Settings (Commented out default values. Uncomment/edit to customize)
 # ----------------------------------------------------------------------
 
 # gains:
-#   agc: false
-#   rf: 0.0
-#   lna: 8.0
-#   mix: 5.0
-#   if: 16.0
-#   bb: 16.0
-#   att: 8.0
-#   lna_mix_bb: 8.0
-#   tia: 8.0
-#   pga: 8.0
-#   lb: 8.0
+#   agc: false                                           # CLI: --agc
+#   rf: 0.0                                              # CLI: -g/--gain
+#   lna: 8.0                                             # CLI: --lna-gain
+#   mix: 5.0                                             # CLI: -x/--mix-gain
+#   if: 16.0                                             # CLI: -i/--if-gain
+#   bb: 16.0                                             # CLI: -o/--bb-gain
+#   att: 8.0                                             # CLI: --att-gain
+#   lna_mix_bb: 8.0                                      # CLI: --lna-mix-bb-gain
+#   tia: 8.0                                             # CLI: --tia-gain
+#   pga: 8.0                                             # CLI: --pga-gain
+#   lb: 8.0                                              # CLI: --lb-gain
 
 # scanner:
-#   quiet_timeout: 12
-#   active_timeout: 20
-#   auto_priority: false
-#   hold_scan_on: ["V"]     # Classifications to hold range scanning on (e.g., ["V"] for Voice only, ["V", "D"] for Voice & Data; [] to never hold)
+#   quiet_timeout: 12                                    # CLI: --quiet-timeout
+#   active_timeout: 20                                   # CLI: --active-timeout
+#   auto_priority: false                                 # CLI: -P/--auto-priority
+#   hold_scan_on: ["V"]                                  # CLI: --hold-scan-on
+#       Classifications to hold range scanning on (e.g., ["V"] for Voice only, ["V", "D"] for Voice & Data; [] to never hold)
 
 # receiver:
-#   demodulators: 4
-#   mode: 0                  # 0 = NBFM, 1 = AM, 2 = WBFM
-#   squelch_db: -60
-#   threshold_db: 10
-#   channel_spacing: 5000
-#   max_ctcss_tones: 0
+#   demodulators: 4                                      # CLI: -n/--demod
+#   mode: 0                                              # CLI: -d/--demodulator
+#       0 = NBFM, 1 = AM, 2 = WBFM
+#   squelch_db: -60                                      # CLI: -s/--squelch
+#   threshold_db: 10                                     # CLI: -t/--threshold
+#   channel_spacing: 5000                                # CLI: -B/--channel-spacing
+#   max_ctcss_tones: 0                                   # CLI: --max-ctcss-tones
 
 # audio:
-#   play: true
-#   volume_db: 0
-#   record: false
-#   bit_depth: 16
-#   min_recording_sec: 0.0
-#   max_recording_sec: 0.0
-#   file_metadata: []
+#   play: true                                           # CLI: -m/--mute-audio (inverted)
+#   volume_db: 0                                         # CLI: -v/--volume
+#   record: false                                        # CLI: -w/--write
+#   bit_depth: 16                                        # CLI: -b/--bps
+#   min_recording_sec: 0.0                               # CLI: --min-recording
+#   max_recording_sec: 0.0                               # CLI: --max-recording
+#   file_metadata: []                                    # CLI: --file-metadata
 
 # components:
 #   wav_gatekeeper:
@@ -68,22 +70,26 @@ hardware:
 #       threshold: 0.5
 #       min_voice_chunks: 3
 #       max_eval_sec: 3.0
+
 # frequency_policies:
-#   disable_lockout: false
-#   disable_priority: false
-#   active_banks: ["NET_A", "NET_B"]
+#   file: my-frequencies.yaml                            # CLI: -F/--frequencies
+#   disable_lockout: false                               # CLI: --disable-lockout
+#   disable_priority: false                              # CLI: --disable-priority
+#   active_banks: ["NET_A", "NET_B"]                     # CLI: --banks
 
 # display:
-#   min_db: -10.0
-#   max_db: 50.0
-#   theme_file: "default.theme.yaml"
+#   min_db: -10.0                                        # CLI: -N/--min-db
+#   max_db: 50.0                                         # CLI: -M/--max-db
+#   theme_file: "default.theme.yaml"                     # CLI: --theme-file
 
 # channel_activity:
-#   type: none               # none, fixed-field, json-server
-#   dest: "channel-log"
-#   interval_sec: 15
+#   type: none                                           # CLI: -T/--activity-type
+#       none, fixed-field, json-server
+#   dest: "channel-log"                                  # CLI: -L/--activity-dest
+#   interval_sec: 15                                     # CLI: -A/--activity-interval
 
 # logging:
-#   dest: none               # none, file, syslog, stderr
-#   level: warn
-#   file: ""
+#   dest: none                                           # CLI: --log-dest
+#       none, file, syslog, stderr
+#   level: warn                                          # CLI: --log-level
+#   file: ""                                             # CLI: --log-file
