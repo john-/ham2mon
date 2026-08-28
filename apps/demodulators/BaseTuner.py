@@ -185,7 +185,6 @@ class BaseTuner(gr.hier_block2):
             # Close active WAV recording if recording
             results = self._close_recording(rf_center_freq, avg_signal=avg_signal)   # also get activity logging information
         else:
-            self.discard_current = False
             if self.center_freq != 0:
                 # not recording files and center_freq has changed
                 results = ChannelMessage(state='off',
@@ -197,6 +196,8 @@ class BaseTuner(gr.hier_block2):
             else:
                 # center_freq is 0
                 results = None
+
+        self.discard_current = False
 
         await self.notify_scanner(results)  # off events or nothing to note
 

@@ -1,7 +1,7 @@
 import asyncio
 import glob
 import os
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
@@ -725,11 +725,26 @@ async def test_ctcss_matching_logic_mocked():
     self.center_freq = 30000
     self.file_name = "test.wav"
 
-    # Case A: Checked but never matched -> should discard
+    # Capture the discard value at the moment _close_recording consumes it into
+    # the OFF message (the real class reads demod.discard_current there).
+    closed_discard = []
+
+    def capture_close(rf_center_freq, avg_signal=None):
+        closed_discard.append(self.discard_current)
+
+    self._close_recording = MagicMock(side_effect=capture_close)
+
+    # Case A: Checked but never matched -> the completed transmission must be
+    # discarded via its OFF message ...
     self.ctcss_matched = False
     self.discard_current = False
     await self.set_center_freq(0, 144000000)
-    assert self.discard_current == True
+    assert closed_discard[-1] == True
+
+    # ... and the flag must then be RE-ARMED so the next channel's recording is
+    # not wrongly dropped as "mismatched CTCSS" (regression: pre-fix this stayed
+    # latched True forever in recording mode).
+    assert self.discard_current == False
 
     # Case B: Checked and matched -> should not discard
     self.center_freq = 30000
@@ -737,7 +752,93 @@ async def test_ctcss_matching_logic_mocked():
     self.ctcss_matched = True
     self.discard_current = False
     await self.set_center_freq(0, 144000000)
+    assert closed_discard[-1] == False
     assert self.discard_current == False
+
+
+@pytest.mark.asyncio
+async def test_ctcss_mismatch_discard_does_not_leak_to_next_channel():
+    """Regression test: a CTCSS-mismatch discard on a tone channel must be
+    consumed into THAT transmission's OFF message and never leak `discard_current`
+    into the next channel's recording.
+
+    Pre-fix, BaseTuner.set_center_freq only cleared `discard_current` in the
+    non-recording branch; in recording mode the flag stayed latched True after the
+    first mismatch, so every later completed transmission on the same demodulator
+    was wrongly deleted as "Discarded mismatched CTCSS" -- including CSQ and
+    unconfigured channels (e.g. the NS9RC 145.610 MHz Winlink packet seen in the
+    field).
+    """
+    import time
+
+    from demodulators.BaseTuner import BaseTuner
+
+    self = MagicMock()
+    self.channel = 1
+    self.record = True
+    self.max_ctcss_tones = 2
+    self._ctcss_enabled = True
+    self._active_tone_count = 1
+    self._active_tones = [100.0]
+    self.ctcss_matched = False
+    self.ctcss_checked = False
+    self.discard_current = False
+    self._ctcss_start_time = time.time()
+    self._CTCSS_GRACE_PERIOD_S = BaseTuner._CTCSS_GRACE_PERIOD_S
+    self._CTCSS_MATCH_TOLERANCE_HZ = BaseTuner._CTCSS_MATCH_TOLERANCE_HZ
+    self.ctcss_level = 0.0001
+
+    self.is_ctcss_mismatched = BaseTuner.is_ctcss_mismatched.__get__(self)
+    self.set_center_freq = BaseTuner.set_center_freq.__get__(self)
+
+    self._ctcss_squelches = [MagicMock(), MagicMock(), MagicMock()]
+    self.analog_pwr_squelch_cc.unmuted.return_value = True
+    for squelch in self._ctcss_squelches:
+        squelch.unmuted.return_value = False
+    self._measure_ctcss_tone = lambda: (False, None)
+    self.notify_scanner = AsyncMock()
+    self.freq_xlating_fir_filter_ccc = MagicMock()
+    self.get_ctcss_info = None
+
+    # _close_recording copies demod.discard_current into the OFF message; the
+    # fixed set_center_freq then re-arms it. Capture what was read into results.
+    off_messages = []
+
+    def fake_close_recording(rf_center_freq, avg_signal=None):
+        off_messages.append(self.discard_current)
+
+    self._close_recording = MagicMock(side_effect=fake_close_recording)
+
+    # Tone channel A (+30 kHz, configured 100.0 Hz): wrong-PL transmission.
+    self.center_freq = 30000
+    self.file_name = "test.wav"
+
+    # Mismatch after the grace period elapses -> flag must be latched.
+    self._ctcss_start_time = time.time() - (self._CTCSS_GRACE_PERIOD_S + 0.1)
+    assert self.is_ctcss_mismatched() is True
+    assert self.discard_current is True
+
+    # Scanner detunes to park (0): the OFF message carries the discard, then the
+    # flag is re-armed for the next dwell.
+    await self.set_center_freq(0, 144000000)
+    assert off_messages[-1] is True
+    assert self.discard_current is False
+
+    # Tune to CSQ / unconfigured channel B (+40 kHz, no tones). The
+    # empty-tones branch of _apply_ctcss_config clears CTCSS, so the B dwell must
+    # never be gateable by is_ctcss_mismatched.
+    self._ctcss_enabled = False
+    self.center_freq = 40000
+    self.file_name = "testb.wav"
+    await self.set_center_freq(40000, 144000000)
+    assert self.is_ctcss_mismatched() is False
+    assert self.discard_current is False
+
+    # B's transmission completes -> detune. The OFF message must NOT be flagged
+    # as a CTCSS-mismatch discard inherited from A's earlier decision.
+    await self.set_center_freq(0, 144000000)
+    assert off_messages[-1] is False
+    assert self.discard_current is False
 
 
 @pytest.mark.asyncio
