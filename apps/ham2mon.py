@@ -15,11 +15,14 @@ import asyncio
 import errors as err
 import logging
 import logging.handlers
+import sys
 import traceback
 from pathlib import Path
 from os.path import realpath, dirname
 
+import yaml
 import _curses
+from config import config_to_yaml_dict
 from frequency_manager import FrequencyConfiguration, FrequencyManager
 from utilities import parse_bank_entry
 
@@ -322,6 +325,8 @@ if __name__ == '__main__':
 
         if PARSER.list_banks:
             asyncio.run(list_banks())
+        elif PARSER.show_config:
+            yaml.safe_dump(config_to_yaml_dict(PARSER.master_config), sys.stdout, sort_keys=False)
         else:
             wrapper(main)
     except KeyboardInterrupt:

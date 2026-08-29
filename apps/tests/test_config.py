@@ -6,6 +6,7 @@ from config import (
     ConfigError,
     MasterHam2MonConfig,
     build_config_from_dict,
+    config_to_yaml_dict,
     resolve_app_relative_path,
     resolve_config_path,
 )
@@ -334,4 +335,54 @@ def test_all_config_fields_have_cli_mapping_or_are_allowlisted():
                             assert (section_name, sub_f.name) in mapped, f"{section_name}.{sub_f.name} (nested) has no CLI mapping"
                     continue
                 assert (section_name, f.name) in mapped, f"{section_name}.{f.name} has no CLI mapping"
+
+
+# --- --show-config flag & config_to_yaml_dict serializer ---
+
+
+def test_show_config_flag_defaults_false():
+    parser = CLParser([])
+    assert parser.show_config is False
+
+
+def test_show_config_flag_parsing():
+    parser = CLParser(["--show-config"])
+    assert parser.show_config is True
+
+
+def test_config_to_yaml_dict_normalizes_set_and_path():
+    cfg = build_config_from_dict({
+        "scanner": {"hold_scan_on": ["D", "V"]},
+        "frequency_policies": {"file": "/tmp/freqs.yaml"},
+    })
+    serialized = config_to_yaml_dict(cfg)
+    assert serialized["scanner"]["hold_scan_on"] == ["D", "V"]
+    assert isinstance(serialized["frequency_policies"]["file"], str)
+    # Round-trip rebuilds an equivalent config
+    rebuilt = build_config_from_dict(serialized)
+    assert rebuilt.scanner.hold_scan_on == {"D", "V"}
+    assert rebuilt.frequency_policies.file == Path("/tmp/freqs.yaml")
+
+
+def test_config_to_yaml_dict_round_trip_full():
+    cfg = build_config_from_dict({
+        "hardware": {"sample_rate": 4.0e6, "center_frequencies": ["146.0"]},
+        "receiver": {"demodulators": 3, "mode": 1},
+        "scanner": {"auto_priority": True, "hold_scan_on": ["V"]},
+        "audio": {"record": True, "bit_depth": 16},
+    })
+    serialized = config_to_yaml_dict(cfg)
+    rebuilt = build_config_from_dict(serialized)
+    assert rebuilt == cfg
+    assert rebuilt.receiver.demodulators == 3
+    assert rebuilt.receiver.mode == 1
+
+
+def test_show_config_invalid_config_still_validates(capsys):
+    """--show-config still builds/validates the config, so invalid input exits non-zero (SystemExit via parser.error)."""
+    with pytest.raises(SystemExit) as exc_info:
+        CLParser(["--show-config", "--demod", "1", "--demodulator", "9"])
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "Invalid demodulator mode" in captured.err
 

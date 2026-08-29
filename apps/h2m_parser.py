@@ -319,6 +319,10 @@ class CLParser(object):
                           dest="list_banks",
                           help="Print each configured bank with its channel members, then exit without scanning")
 
+        parser.add_argument("--show-config", action="store_true", default=False,
+                          dest="show_config",
+                          help="Dump the fully-resolved configuration as YAML and exit without scanning")
+
         if args is not None:
             options = parser.parse_args(args)
         else:
@@ -346,6 +350,7 @@ class CLParser(object):
 
         self.frequency_params = self._build_frequency_params()
         self.list_banks = bool(options.list_banks)
+        self.show_config = bool(options.show_config)
 
     def _merge_cli_options(self, raw: dict[str, Any], options) -> dict[str, Any]:
         """Layer non-None CLI options onto the raw YAML dict, keyed by CLI_OPTION_MAP."""
@@ -384,48 +389,9 @@ class CLParser(object):
         )
 
 
-def main():
-    """Test the parser"""
-    parser = CLParser()
-    cfg = parser.master_config
+def main() -> None:  # pragma: no cover
 
-    print("hw_args:             " + cfg.hardware.args)
-    print("num_demod:           " + str(cfg.receiver.demodulators))
-    print("type_demod:          " + str(cfg.receiver.mode))
-    single_freqs = [f'{single.freq}' for single in parser.frequency_params.singles]
-    range_freqs = [f'{range.lower_freq}-{range.upper_freq}' for range in parser.frequency_params.ranges]
-    print("single frequencies:  " + str(single_freqs))
-    print("range frequencies:   " + str(range_freqs))
-    print("quiet timeout:       " + str(cfg.scanner.quiet_timeout))
-    print("active timeout:      " + str(cfg.scanner.active_timeout))
-    print("ask_samp_rate:       " + str(cfg.hardware.sample_rate))
-    from config import GAIN_FIELDS
-    for field_name, hw_name in GAIN_FIELDS:
-        val = cfg.gains.get_value(field_name)
-        print('{0: <21}'.format(f"{hw_name} gain:") + str(val))
-    print("agc:                 " + str(cfg.gains.agc))
-    print("squelch_db:          " + str(cfg.receiver.squelch_db))
-    print("volume_db:           " + str(cfg.audio.volume_db))
-    print("threshold_db:        " + str(cfg.receiver.threshold_db))
-    print("record:              " + str(cfg.audio.record))
-    print("play:                " + str(cfg.audio.play))
-    print("frequency_file_name: " + str(cfg.frequency_policies.file))
-    print("activity_dest:       " + str(cfg.channel_activity.dest))
-    print("activity_interval:   " + str(cfg.channel_activity.interval_sec))
-    print("activity_type:       " + str(cfg.channel_activity.type))
-    print("freq_correction:     " + str(cfg.hardware.freq_correction))
-    print("audio_bps:           " + str(cfg.audio.bit_depth))
-    print("max_db:              " + str(cfg.display.max_db))
-    print("min_db:              " + str(cfg.display.min_db))
-    print("channel_spacing:     " + str(cfg.receiver.channel_spacing))
-    print("min_recording:       " + str(cfg.audio.min_recording_sec))
-    print("max_recording:       " + str(cfg.audio.max_recording_sec))
-    print("auto_priority:       " + str(cfg.scanner.auto_priority))
-    print("disable_lockout:     " + str(cfg.frequency_policies.disable_lockout))
-    print("disable_priority:    " + str(cfg.frequency_policies.disable_priority))
-    print("log_level:           " + str(cfg.logging.level))
-    print("log_dest:            " + str(cfg.logging.dest))
-    print("log_file:            " + str(cfg.logging.file))
+    print('For testing this module use pytest')
 
 
 if __name__ == '__main__':

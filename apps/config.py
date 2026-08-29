@@ -5,7 +5,7 @@ Typed configuration models and centralized validation for ham2mon.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, List, Optional
+from typing import Any, ClassVar, List, Optional
 
 import yaml
 
@@ -442,4 +442,37 @@ def build_config_from_dict(raw: dict[str, object]) -> MasterHam2MonConfig:
         logging=logging,
         components=components,
     )
+
+
+def _yaml_normalize(value: object) -> Any:
+    """Recursively convert dataclass values into JSON/YAML-safe primitives.
+
+    ``dataclasses.asdict`` already handles nested dataclasses and containers,
+    but a few field types need explicit normalization so the resulting YAML
+    round-trips cleanly back through ``build_config_from_dict``:
+    - ``set`` (``scanner.hold_scan_on``) -> sorted ``list`` (stable ordering)
+    - ``pathlib.Path`` (``frequency_policies.file``) -> ``str``
+    """
+    if isinstance(value, set):
+        return [_yaml_normalize(v) for v in sorted(value, key=str)]
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _yaml_normalize(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_yaml_normalize(v) for v in value]
+    return value
+
+
+def config_to_yaml_dict(master_config: MasterHam2MonConfig) -> dict[str, Any]:
+    """Serialize a resolved :class:`MasterHam2MonConfig` to a YAML-safe dict.
+
+    Mirrors the field structure of ``build_config_from_dict`` so the output can
+    be re-loaded back into an equivalent config (the foundation for a future
+    ``--save-config``). ``None`` values are kept so the dump is a faithful,
+    complete snapshot of the resolved configuration.
+    """
+    from dataclasses import asdict
+
+    return _yaml_normalize(asdict(master_config))
 

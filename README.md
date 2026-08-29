@@ -164,6 +164,13 @@ uv run apps/ham2mon.py [options]
 
 Not sure how to run ham2mon for what you're trying to do? The [Scanning Guide](./doc/scanning-guide.md) walks through every mode of operation — from a bare sweep with no frequency file to bank-filtered monitoring — what each one is for, and what you'll see on screen.
 
+Use `--show-config` to print the fully-resolved configuration (YAML `config.yaml` merged with CLI overrides) as YAML and exit without starting the SDR or the UI. Because the config is validated as it is built, an invalid configuration exits with a non-zero status and an error message instead of printing anything:
+
+```bash
+uv run apps/ham2mon.py --show-config
+uv run apps/ham2mon.py -C my/config.yaml --show-config
+```
+
 ## Console Operation:
 The following is an example of the option switches for UHD with NBFM demodulation, although omission of any will use default values (shown below) that are optimal for the B200:
 
